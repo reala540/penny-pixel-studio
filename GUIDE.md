@@ -200,11 +200,15 @@ On GitHub, open your repo → **Settings** → **Secrets and variables** → **A
 
 ✅ **Check:** the Secrets list shows the names (GitHub never shows the values again, which is normal).
 
-### Step 9. Set a GitHub spending stop (safety)
+### Step 9. GitHub spending stop (only needed for a private repo)
 
-GitHub → your profile picture → **Settings** → **Billing and licensing** → **Budgets and alerts**. Make sure Actions
-has a **$0 budget** with **"Stop usage when budget limit is reached"** ticked. Then GitHub can never charge you; the
-studio just pauses if the free minutes run out.
+**Public repo:** skip this. GitHub Actions is free and unlimited for public repos on the standard runners
+(`ubuntu-latest`), which is all the studio uses. Do check that https://github.com/settings/billing shows no warning
+or lock, because a locked account can't run any workflow, even on a public repo.
+
+**Private repo:** GitHub → your profile picture → **Settings** → **Billing and licensing** → **Budgets and alerts**.
+Make sure Actions has a **$0 budget** with **"Stop usage when budget limit is reached"** ticked. Then GitHub can never
+charge you; the studio just pauses if the 2,000 free minutes a month run out.
 
 ---
 
