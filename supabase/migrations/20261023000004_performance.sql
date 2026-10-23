@@ -11,10 +11,6 @@ create index if not exists research_claims_version_idx on public.research_claims
 create index if not exists job_attempts_job_idx on public.job_attempts (job_id);
 create index if not exists manual_tasks_post_idx on public.manual_tasks (scheduled_post_id);
 
--- Evaluate auth.uid() once per statement instead of once per row.
-drop policy if exists owner_select_self on public.app_owner;
-create policy owner_select_self on public.app_owner
-  for select to authenticated using (user_id = (select auth.uid()));
-drop policy if exists owner_insert on public.approvals;
-create policy owner_insert on public.approvals
-  for insert to authenticated with check (public.is_owner() and decided_by = (select auth.uid()));
+-- Evaluate auth.uid() once per statement instead of once per row (ALTER keeps the policy in place).
+alter policy owner_select_self on public.app_owner using (user_id = (select auth.uid()));
+alter policy owner_insert on public.approvals with check (public.is_owner() and decided_by = (select auth.uid()));
