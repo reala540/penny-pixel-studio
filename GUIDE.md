@@ -157,13 +157,30 @@ Dashboard → Settings → AI writers.
 
 | Name | Where | Why |
 |---|---|---|
-| `PEXELS_API_KEY` | [pexels.com/api](https://www.pexels.com/api/) | Free photos (license saved automatically) |
-| `PIXABAY_API_KEY` | [pixabay.com/api/docs](https://pixabay.com/api/docs/) (log in, the key is on the page) | Backup photos |
-| `FRED_API_KEY` | [fred.stlouisfed.org → My Account → API Keys](https://fredaccount.stlouisfed.org/apikeys) | Real economic numbers for Penny |
-| `YOUTUBE_API_KEY` | Google Cloud Console → *APIs & Services → Credentials → Create credentials → API key* (enable "YouTube Data API v3" first) | See what's popular |
+| `PIXABAY_API_KEY` | [pixabay.com/api/docs](https://pixabay.com/api/docs/): sign up free, log in, and the key is in the green box on that page | Free photos (license saved automatically) |
+| `FRED_API_KEY` | [fredaccount.stlouisfed.org/apikeys](https://fredaccount.stlouisfed.org/apikeys) → **+ Request API Key** → write one line ("Personal finance explainer videos"), tick the terms box, then submit | Real economic numbers for Penny |
+| `YOUTUBE_API_KEY` | See **Step 7a** below | See what's popular |
+| `PEXELS_API_KEY` *(skip for now)* | Pexels paused new keys in Sept 2026. If they reopen, get one at [pexels.com/api](https://www.pexels.com/api/) | Extra photos |
 | `SEC_USER_AGENT` | Just type your name and email, like `Penny Pixel Studio you@example.com` | Required politeness for company filings |
 
-No photo keys? That's fine. The studio makes its own original picture cards instead.
+No photo keys at all? That's fine. The studio also searches **Openverse** (free, no key, public-domain photos
+only), and if nothing fits it makes its own original picture cards.
+
+### Step 7a. Get the YouTube API key (about 5 minutes)
+
+1. Go to [console.cloud.google.com](https://console.cloud.google.com) and sign in with the Google account that owns
+   your channels.
+2. Top bar → project picker → **New Project** → name it `penny-pixel-studio` → **Create**. Make sure it's selected.
+   (If you already made this project for the YouTube login in Part G, use the same one.)
+3. Left menu → **APIs & Services → Library** → search **YouTube Data API v3** → open it → **Enable**.
+4. Left menu → **APIs & Services → Credentials** → **+ Create credentials → API key**. Copy the key it shows.
+5. Click **Edit API key** (or the key's name):
+   - Under **API restrictions** choose **Restrict key** → tick only **YouTube Data API v3**.
+   - Leave **Application restrictions** on **None** (GitHub's computers change address).
+   - **Save**.
+6. Save it as the GitHub secret `YOUTUBE_API_KEY`.
+
+It's free: 10,000 "units" a day. Each search costs 100, and the studio uses about 10–20 a week.
 
 ---
 

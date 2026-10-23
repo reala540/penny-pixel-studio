@@ -72,7 +72,7 @@ Anything uncertain becomes *Needs a look* with the reasons listed; it is never a
 - Scene-level cache: changing scene 4 re-renders scene 4 and the final join only.
 - Presets: 16:9 1080p and 9:16 1080×1920; previews 854×480 and 480×854.
 - On-brand cards (title, stat, chart, list, steps, comparison, quote, licensed stock photo), word-timed highlighted captions (ASS/libass), gentle motion, loudness normalisation, optional licensed music with ducking.
-- Stock photos only from Pexels/Pixabay APIs, each with a license record. Publishing is blocked if a photo has no license record.
+- Stock photos only from the Pixabay/Pexels APIs or Openverse (public-domain CC0/PDM only, no key), each with a license record. Publishing is blocked if a photo has no license record.
 - Thumbnails: three deterministic templates (bold-left, big-number, split-contrast) plus a phone-feed preview.
 - Masters: GitHub artifacts for 14 days; the recipe is permanent. YouTube is not treated as the archive.
 

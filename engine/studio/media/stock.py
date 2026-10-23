@@ -1,6 +1,7 @@
-"""Licensed stock photos from Pexels / Pixabay (free APIs). Every download gets a license record.
+"""Licensed stock photos from Pixabay / Pexels (free keys) and Openverse (no key). Every download gets a license record.
 
-If no key is configured, the caller falls back to original typographic cards.
+Openverse is limited to public-domain images (CC0 / PDM), so no credit line is needed and commercial use is allowed.
+If nothing is found, the caller falls back to original typographic cards.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ def find_photo(query: str, out_dir: Path, orientation: str = "landscape",
                client: httpx.Client | None = None) -> StockPhoto | None:
     client = client or httpx.Client(timeout=30, follow_redirects=True)
     out_dir.mkdir(parents=True, exist_ok=True)
-    for fn in (_pexels, _pixabay):
+    for fn in (_pixabay, _pexels, _openverse):
         try:
             hit = fn(client, query, orientation)
         except Exception:
@@ -78,3 +79,23 @@ def _pixabay(client, query, orientation):
         "source_url": h["pageURL"], "provider": "pixabay", "creator": h.get("user"),
         "license": "Pixabay Content License (free commercial use)", "attribution_required": False,
         "attribution_text": f"Image by {h.get('user')} on Pixabay"}
+
+
+def _openverse(client, query, orientation):
+    r = client.get("https://api.openverse.org/v1/images/", headers={"User-Agent": "penny-pixel-studio/2.1"}, params={
+        "q": query[:200], "license": "cc0,pdm", "mature": "false", "page_size": 10,
+        "aspect_ratio": "wide" if orientation == "landscape" else "tall"})
+    r.raise_for_status()
+    min_side = 1080
+    for h in r.json().get("results") or []:
+        if (h.get("license") or "").lower() not in ("cc0", "pdm") or not h.get("url"):
+            continue
+        if min(h.get("width") or 0, h.get("height") or 0) < min_side:
+            continue
+        name = "CC0 1.0 (public domain dedication)" if h["license"].lower() == "cc0" else "Public Domain Mark 1.0"
+        return h["url"], {
+            "source_url": h.get("foreign_landing_url") or h["url"], "provider": f"openverse:{h.get('source') or 'unknown'}",
+            "creator": h.get("creator"), "license": f"{name}, via Openverse (free commercial use)",
+            "attribution_required": False,
+            "attribution_text": f"{h.get('title') or 'Image'} by {h.get('creator') or 'unknown'} ({name})"}
+    return None

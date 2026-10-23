@@ -49,7 +49,7 @@ scripts.
 | Cloudflare Pages + Workers | Free plan | Worker does light work only (10 ms CPU per request) |
 | YouTube Data API | 10,000 units/day | Upload ≈1,600, thumbnail 50, search 100 |
 | Kokoro TTS | Unlimited (runs in the job) | Apache-2.0, commercial use allowed |
-| Pexels / Pixabay | Free API keys | Licenses recorded per photo |
+| Pixabay / Pexels / Openverse | Free API keys (Pexels paused new keys Sept 2026); Openverse needs none | Licenses recorded per photo; Openverse limited to CC0/PDM |
 | FRED, SEC EDGAR, Google News/Trends RSS, Hacker News, Reddit RSS, Wikipedia | Free | FRED needs a free key; SEC needs a contact user agent |
 | Telegram Bot API | Free | |
 | **X API** | **Pay-per-use, capped at $1.00/month** | ≈$0.015 per post at the time of writing; links blocked (≈$0.20 each). Check X's current minimum credit purchase before buying |
