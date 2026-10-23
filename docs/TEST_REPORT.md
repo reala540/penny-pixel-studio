@@ -6,7 +6,7 @@
 |---|---|---|
 | Engine (`engine/tests`, pytest) | **36 passed** (9 min) | Router fallback, quotas, circuit breakers, JSON repair, 402 handling; quality gates; claim verification; scoring and experiments; timezone scheduling; migrations, RLS, immutability, budget cap, job runner; full journeys (below) |
 | Worker (`worker/test`, vitest) | **15 passed** + `tsc` clean | Owner-only dispatch, non-owner rejection, OAuth state encryption and forged-state rejection, Telegram secret/link/pause/resume-confirm, cron only wakes GitHub when work is due, pause respected, Python↔Worker token encryption compatibility |
-| Dashboard (vitest + `tsc` + `vite build`) | **4 passed**, build clean | Timezone/day helpers, rescheduling math, status tones |
+| Dashboard (vitest + `tsc` + `vite build`) | **5 passed**, build clean | Timezone/day helpers, rescheduling math, status tones, safe external links |
 | Browser click-through (Playwright, real PostgREST on the real schema) | **passed, 0 console errors** | Sign-in + ownership claim, approve package (7 posts scheduled via `approve_project`), edit caption, reschedule (09:15 Nairobi saved as 06:15 UTC), pause publishing; screenshots of all 6 pages, desktop and mobile, light and dark; no horizontal overflow on mobile |
 | Live Supabase project `penny-pixel-studio` | migrations 1–3 applied; 34 tables, RLS on all, 54 policies, private bucket | Security advisor: only intentional findings (token table has no client policy by design; owner-only RPC functions check `is_owner()`) |
 
@@ -47,3 +47,9 @@ This build environment's network only reaches package registries. So:
 - Migration 4 (performance indexes) timed out through the Supabase connector; it is applied automatically by
   `studio migrate` in the first-time setup workflow.
 - Model names and free limits come from community lists dated Oct 2026; providers change them often.
+
+## Security review
+
+A focused security review of the whole branch found no high-confidence vulnerabilities. One hardening fix was
+applied: links from outside research feeds are only stored and shown if they are `http(s)` URLs, so a hostile feed
+can't plant a `javascript:` link in the dashboard.

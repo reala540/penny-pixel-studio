@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { localDay, moveToDay, statusTone, weekDays } from "./format";
+import { localDay, moveToDay, safeUrl, statusTone, weekDays } from "./format";
 
 describe("time helpers", () => {
   it("uses the owner's timezone for the local day", () => {
@@ -16,6 +16,14 @@ describe("time helpers", () => {
   it("moves a post to another day keeping its local time", () => {
     const moved = moveToDay("2026-10-26T15:00:00Z", "2026-10-28", "Africa/Nairobi");
     expect(moved).toBe("2026-10-28T15:00:00.000Z");
+  });
+});
+
+describe("safeUrl", () => {
+  it("only allows web links", () => {
+    expect(safeUrl("https://example.org/a")).toBe("https://example.org/a");
+    expect(safeUrl("javascript:alert(1)")).toBeUndefined();
+    expect(safeUrl("data:text/html,x")).toBeUndefined();
   });
 });
 

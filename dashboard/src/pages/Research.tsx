@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Empty, ErrorNote, HostTag, Loading, PageHeader, StatusBadge, useToast } from "../components/ui";
 import { must } from "../lib/api";
+import { safeUrl } from "../lib/format";
 import { supabase } from "../lib/supabase";
 import type { Channel, Idea } from "../lib/types";
 
@@ -64,7 +65,7 @@ export default function Research() {
                     <ul className="mt-3 space-y-1">
                       {i.source_ids.map((sid) => byId.get(sid)).filter(Boolean).map((s: any) => (
                         <li key={s.id} className="text-xs">
-                          <a href={s.url} target="_blank" rel="noreferrer" className="text-pixel underline-offset-2 hover:underline">{s.publisher ?? "Source"}: {s.title}</a>
+                          <a href={safeUrl(s.url)} target="_blank" rel="noreferrer" className="text-pixel underline-offset-2 hover:underline">{s.publisher ?? "Source"}: {s.title}</a>
                           <span className="text-muted"> · {s.credibility.replace(/_/g, " ")}{s.published_at ? ` · ${new Date(s.published_at).toLocaleDateString("en-GB")}` : ""}</span>
                         </li>
                       ))}

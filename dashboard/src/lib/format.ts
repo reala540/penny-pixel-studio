@@ -108,6 +108,11 @@ export function moveToDay(iso: string, day: string, tz: string): string {
   return new Date(original.getTime() + shiftDays * 86_400_000).toISOString();
 }
 
+/** Links from outside feeds are untrusted: only allow http(s) URLs as hrefs. */
+export function safeUrl(url: string | null | undefined): string | undefined {
+  return url && /^https?:\/\//i.test(url) ? url : undefined;
+}
+
 export function wordCount(text: string): number {
   return text.trim() ? text.trim().split(/\s+/).length : 0;
 }

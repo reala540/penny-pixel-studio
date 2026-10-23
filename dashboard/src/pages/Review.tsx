@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Confirm, Empty, ErrorNote, HostTag, Loading, PageHeader, StatusBadge, useToast } from "../components/ui";
 import { must, queueJob, useTimezone } from "../lib/api";
-import { estSeconds, fmtDateTime, fmtDuration, HOST, KIND_NAME, PLATFORM_NAME } from "../lib/format";
+import { safeUrl, estSeconds, fmtDateTime, fmtDuration, HOST, KIND_NAME, PLATFORM_NAME } from "../lib/format";
 import { signedUrl, supabase } from "../lib/supabase";
 import type { Claim, Project, ScriptBody, Variant } from "../lib/types";
 
@@ -281,7 +281,7 @@ function Facts({ claims }: { claims: Claim[] }) {
             {c.checker_notes ? ` · ${c.checker_notes}` : ""}
           </p>
           {c.research_sources && (
-            <a href={c.research_sources.url} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs font-medium text-pixel underline-offset-2 hover:underline">
+            <a href={safeUrl(c.research_sources.url)} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs font-medium text-pixel underline-offset-2 hover:underline">
               {c.research_sources.publisher ?? "Source"}: {c.research_sources.title}
             </a>
           )}

@@ -53,6 +53,8 @@ def collect(conn, fetcher: Fetcher | None = None) -> dict:
 
 
 def store_source(conn, it: SourceItem, fresh_days: dict) -> int:
+    if not it.url.lower().startswith(("https://", "http://")):
+        return 0  # untrusted feeds: only web links are stored (no javascript:, data:, file: ...)
     # the text decides first; the query/feed topic is only the tie-breaker
     topic = classify_topic(f"{it.title} {it.summary}", default=it.topic if it.topic in ("ai", "money") else "both")
     base = it.published_at or datetime.now(timezone.utc)
