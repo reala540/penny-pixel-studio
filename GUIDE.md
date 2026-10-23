@@ -144,7 +144,10 @@ writing better and give backups.
 | `NVIDIA_API_KEY` | [build.nvidia.com](https://build.nvidia.com) | Join the free Developer Program → *Get API Key* |
 | `MISTRAL_API_KEY` | [console.mistral.ai/api-keys](https://console.mistral.ai/api-keys) | *Create new key* (free plan) |
 | `OPENROUTER_API_KEY` | [openrouter.ai/keys](https://openrouter.ai/keys) | *Create Key* |
-| `CLOUDFLARE_AI_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` | Cloudflare → *My Profile → API Tokens* → *Create Token* → template **Workers AI** | Your Account ID is on the right side of the Cloudflare home page |
+| `CLOUDFLARE_AI_TOKEN` | Cloudflare → *My Profile → API Tokens* → *Create Token* → template **Workers AI** | *Use template → Continue to summary → Create Token*, then copy the token |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare home page → your account → **Account ID** (right side) | Copy the 32-character ID. Save this as its own secret |
+
+Each row is **one** secret: one name, one value. Names have no spaces.
 
 Optional extras (add later if you like): `AION_API_KEY`, `OLLAMA_API_KEY`, `ZAI_API_KEY`, `CEREBRAS_API_KEY`,
 `SAMBANOVA_API_KEY`. See `docs/PROVIDERS_AND_LIMITS.md`. These start switched off; switch them on in
