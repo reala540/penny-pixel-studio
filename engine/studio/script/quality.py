@@ -1,0 +1,119 @@
+"""Deterministic quality gates. These never call an AI: they are the rules the AI must satisfy."""
+
+from __future__ import annotations
+
+import re
+from collections import Counter
+
+from .. import config
+from .models import Script, ShortScript, est_seconds
+
+MIN_LONG_SECONDS = 240  # real videos: 4+ minutes (tests lower this to keep renders quick)
+
+NUMBER_RE = re.compile(r"(?<![\w.])(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*(%|percent|k|m|bn|billion|million|thousand)?",
+                       re.IGNORECASE)
+
+
+def numbers_in(text: str) -> set[str]:
+    """Normalised numbers mentioned in text: '1,200' -> '1200', '4.5%' -> '4.5'."""
+    out = set()
+    for m in NUMBER_RE.finditer(text):
+        n = m.group(1).replace(",", "")
+        if "." in n:
+            n = n.rstrip("0").rstrip(".")
+        out.add(n)
+    return out
+
+
+def banned_hits(text: str) -> list[str]:
+    low = text.lower()
+    return [p for p in config.brand().get("banned_phrases", []) if p.lower() in low]
+
+
+def remove_banned(text: str) -> str:
+    """Last-resort cleanup for a few phrases (the voice editor should already have removed them)."""
+    replacements = {"let's dive in": "here's the plan", "it's important to note that": "", "in conclusion,": "so,",
+                    "game-changer": "big shift", "game changer": "big shift", "seamlessly": "smoothly",
+                    "cutting-edge": "new", "delve into": "look at", "delve": "dig"}
+    for k, v in replacements.items():
+        text = re.sub(re.escape(k), v, text, flags=re.IGNORECASE)
+    return re.sub(r"\s{2,}", " ", text).strip()
+
+
+def sentence_stats(text: str) -> dict:
+    sentences = [s for s in re.split(r"(?<=[.!?])\s+", text.strip()) if s]
+    lengths = [len(s.split()) for s in sentences]
+    starts = Counter(" ".join(s.split()[:2]).lower() for s in sentences)
+    limit = max(4, int(len(sentences) * 0.08) + 1)  # a few repeats are natural in a long script
+    repeated = [k for k, v in starts.items() if v >= limit]
+    return {"sentences": len(sentences), "avg_words": round(sum(lengths) / max(len(lengths), 1), 1),
+            "max_words": max(lengths or [0]), "repeated_openers": repeated}
+
+
+def check_long(script: Script, channel: str) -> list[str]:
+    issues: list[str] = []
+    cfg = config.services()["render"]
+    ch = config.brand()["channels"][channel]
+    speed = float(ch["voice_profile"].get("tts_speed", 1.0))
+    dur = script.duration(speed)
+    if not 6 <= len(script.scenes) <= 40:
+        issues.append(f"Needs 6-40 scenes, has {len(script.scenes)}")
+    if dur < MIN_LONG_SECONDS:
+        issues.append(f"Too short: about {dur / 60:.1f} min (aim for 5-8 min)")
+    if dur > cfg["max_long_minutes"] * 60:
+        issues.append(f"Too long: about {dur / 60:.1f} min (max {cfg['max_long_minutes']})")
+    if len(script.hook.split()) > 45:
+        issues.append("Hook is longer than 45 words")
+    if not script.cta.strip():
+        issues.append("Missing call to action")
+    issues += _common(script.full_text() + " " + script.hook + " " + script.cta, channel)
+    for i, sc in enumerate(script.scenes, 1):
+        if est_seconds(sc.narration, speed) > 45:
+            issues.append(f"Scene {i} is too long for one visual (split it)")
+        if sc.visual.type == "chart" and not sc.visual.chart:
+            issues.append(f"Scene {i} says chart but has no chart data")
+    claim_keys = {c.key for c in script.claims}
+    for i, sc in enumerate(script.scenes, 1):
+        unknown = [k for k in sc.claim_keys if k not in claim_keys]
+        if unknown:
+            issues.append(f"Scene {i} references unknown claims {unknown}")
+    for i, sc in enumerate(script.scenes, 1):
+        nums = numbers_in(sc.narration) - {"1", "2", "3", "4", "5", "10"}
+        if nums and not sc.claim_keys:
+            issues.append(f"Scene {i} states numbers {sorted(nums)} without a claim/source")
+    return issues
+
+
+def check_short(short: ShortScript, channel: str) -> list[str]:
+    issues: list[str] = []
+    speed = float(config.brand()["channels"][channel]["voice_profile"].get("tts_speed", 1.0))
+    dur = sum(est_seconds(s.narration, speed) for s in short.scenes) + est_seconds(short.hook, speed)
+    max_s = config.services()["render"]["max_short_seconds"]
+    if dur > max_s:
+        issues.append(f"Short too long: ~{dur:.0f}s (max {max_s})")
+    if dur < 20:
+        issues.append(f"Short too thin: ~{dur:.0f}s")
+    if not 2 <= len(short.scenes) <= 8:
+        issues.append("Short needs 2-8 scenes")
+    issues += _common(" ".join(s.narration for s in short.scenes) + " " + short.hook + " " + short.caption, channel,
+                      require_disclaimer=False)
+    return issues
+
+
+def _common(text: str, channel: str, require_disclaimer: bool = True) -> list[str]:
+    issues = []
+    hits = banned_hits(text)
+    if hits:
+        issues.append(f"Generic phrases: {', '.join(hits)}")
+    stats = sentence_stats(text)
+    if stats["avg_words"] > 22:
+        issues.append(f"Sentences too long on average ({stats['avg_words']} words)")
+    if stats["repeated_openers"]:
+        issues.append(f"Repetitive sentence openings: {stats['repeated_openers']}")
+    if channel == "money":
+        low = text.lower()
+        if re.search(r"guarantee(d)? (return|profit|income)|will (definitely|certainly) (rise|grow|double)", low):
+            issues.append("Promises returns or predicts prices")
+        if require_disclaimer and "not personal" not in low and "not financial advice" not in low and "general education" not in low:
+            issues.append("Money script must say it is general education, not personal advice")
+    return issues

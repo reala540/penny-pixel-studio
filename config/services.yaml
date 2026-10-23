@@ -1,0 +1,66 @@
+# Non-AI services: limits, costs and safety switches. All values are editable estimates —
+# verify on each provider's site. The app never upgrades anything to a paid plan.
+
+budgets:
+  x_api:
+    monthly_cap_usd: 1.00          # owner-approved maximum
+    cost_per_post_usd: 0.015       # verify on X's pricing page
+    cost_per_post_with_url_usd: 0.20
+    allow_links: false             # links are blocked to keep cost down
+    hard_stop: true
+
+quotas:
+  youtube_data_api:
+    daily_units: 10000
+    upload_units: 1600
+    thumbnail_units: 50
+    search_units: 100
+  github_actions:
+    monthly_minutes: 2000          # private repo, GitHub Free
+    reserve_minutes: 200           # never plan past this safety margin
+  supabase:
+    storage_bytes: 1073741824      # 1 GB
+    database_bytes: 524288000      # 500 MB
+    storage_reserve_fraction: 0.2
+  cloudflare_workers_ai:
+    daily_neurons: 10000
+
+retention:
+  preview_days_after_decision: 7
+  failed_asset_days: 3
+  master_artifact_days: 14          # GitHub artifact retention for final renders
+  recipe: forever                   # recipes are small and can rebuild any video
+
+render:
+  long:
+    width: 1920
+    height: 1080
+    fps: 30
+    crf: 23
+    preset: veryfast
+  short:
+    width: 1080
+    height: 1920
+    fps: 30
+    crf: 23
+    preset: veryfast
+  preview:
+    long: { width: 854, height: 480, crf: 30 }
+    short: { width: 480, height: 854, crf: 30 }
+  max_long_minutes: 9
+  max_short_seconds: 58
+
+publishing:
+  ai_disclosure:
+    description_line: "Narrated with an AI voice. Researched with AI tools and reviewed by a human before publishing."
+    label_synthetic_media: false   # set true if a video shows realistic AI-generated people, places or events
+  youtube:
+    api_audited: false      # until Google's audit passes, API uploads are locked to private
+    category_id: "27"       # Education
+    default_language: "en"
+  tiktok:
+    direct_post_approved: false   # until TikTok audit passes, use inbox drafts
+  facebook:
+    graph_version: "v23.0"
+  x:
+    enabled: true

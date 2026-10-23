@@ -1,0 +1,12 @@
+.venv/
+.work/
+node_modules/
+dist/
+.wrangler/
+__pycache__/
+*.pyc
+*.egg-info/
+.env
+.env.*
+!.env.example
+backup/

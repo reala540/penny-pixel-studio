@@ -1,0 +1,71 @@
+# Free research sources. Each adapter respects the source's terms; no scraping of pages
+# that forbid it. Keys are optional: an adapter without its key is skipped and reported.
+
+freshness_days:
+  ai: 10        # AI news ages fast
+  money: 30     # economic data is refreshed monthly
+  evergreen: 365
+
+adapters:
+  google_news_rss:
+    enabled: true
+    queries:
+      ai: ["new AI tool", "AI model release", "AI at work", "AI regulation"]
+      money: ["personal finance", "inflation", "interest rates", "salary negotiation", "job market"]
+    hl: "en-US"
+    gl: "US"
+  google_trends_rss:
+    enabled: true
+    geo: ["US", "KE", "GB"]
+  hacker_news:
+    enabled: true
+    min_points: 150
+    keywords: ["AI", "LLM", "model", "GPT", "Claude", "Gemini", "open source", "agent"]
+  official_feeds:
+    enabled: true
+    feeds:
+      - { name: "Google AI Blog", url: "https://blog.google/technology/ai/rss/", topic: ai, credibility: official }
+      - { name: "OpenAI News", url: "https://openai.com/news/rss.xml", topic: ai, credibility: official }
+      - { name: "Hugging Face Blog", url: "https://huggingface.co/blog/feed.xml", topic: ai, credibility: official }
+      - { name: "Federal Reserve press releases", url: "https://www.federalreserve.gov/feeds/press_all.xml", topic: money, credibility: official }
+      - { name: "BLS latest numbers", url: "https://www.bls.gov/feed/bls_latest.rss", topic: money, credibility: primary_data }
+      - { name: "Central Bank of Kenya", url: "https://www.centralbank.go.ke/feed/", topic: money, credibility: official }
+  reddit_rss:
+    enabled: true
+    subreddits:
+      ai: ["artificial", "ChatGPT", "LocalLLaMA"]
+      money: ["personalfinance", "financialindependence", "careerguidance"]
+  youtube_search:
+    enabled: true
+    key_env: YOUTUBE_API_KEY       # plain API key (not OAuth). Each search costs 100 quota units.
+    max_searches_per_batch: 8
+  fred:
+    enabled: true
+    key_env: FRED_API_KEY
+    series:
+      - { id: CPIAUCSL, name: "US consumer price index" }
+      - { id: FEDFUNDS, name: "US federal funds rate" }
+      - { id: UNRATE, name: "US unemployment rate" }
+      - { id: MORTGAGE30US, name: "30-year mortgage rate" }
+  sec_edgar:
+    enabled: true
+    user_agent_env: SEC_USER_AGENT   # SEC requires "Name email@example.com"
+    companies: ["NVDA", "MSFT", "GOOGL", "AAPL", "META"]
+  wikipedia:
+    enabled: true
+
+scoring_weights:
+  audience_relevance: 0.15
+  search_demand: 0.12
+  trend_momentum: 0.12
+  freshness: 0.10
+  originality: 0.15
+  evidence: 0.12
+  brand_fit: 0.10
+  competition: 0.04
+  monetization: 0.04
+  feasibility: 0.03
+  history: 0.03
+
+experiment_share: 0.30     # ~30% of picks reserved for experiments
+similarity_threshold: 0.82 # above this, a topic counts as a repeat

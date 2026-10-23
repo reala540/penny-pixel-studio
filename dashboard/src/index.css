@@ -1,0 +1,124 @@
+@import "@fontsource-variable/bricolage-grotesque";
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Colour tokens (RGB triplets so Tailwind can apply opacity). */
+:root {
+  --bg: 238 240 244;
+  --surface: 255 255 255;
+  --sunken: 228 231 237;
+  --ink: 27 31 42;
+  --muted: 92 99 117;
+  --line: 214 218 226;
+  --pixel: 59 54 168;
+  --pixel-soft: 229 228 250;
+  --cyan: 25 179 207;
+  --penny: 14 90 69;
+  --penny-soft: 222 240 232;
+  --gold: 227 167 47;
+  --alert: 197 48 80;
+  --alert-soft: 251 228 233;
+  --ok: 14 122 84;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: 18 21 29;
+    --surface: 26 30 41;
+    --sunken: 34 39 52;
+    --ink: 231 233 239;
+    --muted: 155 162 180;
+    --line: 50 56 72;
+    --pixel: 150 146 255;
+    --pixel-soft: 44 42 92;
+    --cyan: 72 205 230;
+    --penny: 98 196 160;
+    --penny-soft: 22 58 47;
+    --gold: 240 190 90;
+    --alert: 255 120 145;
+    --alert-soft: 70 28 40;
+    --ok: 98 196 160;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: 18 21 29;
+  --surface: 26 30 41;
+  --sunken: 34 39 52;
+  --ink: 231 233 239;
+  --muted: 155 162 180;
+  --line: 50 56 72;
+  --pixel: 150 146 255;
+  --pixel-soft: 44 42 92;
+  --cyan: 72 205 230;
+  --penny: 98 196 160;
+  --penny-soft: 22 58 47;
+  --gold: 240 190 90;
+  --alert: 255 120 145;
+  --alert-soft: 70 28 40;
+  --ok: 98 196 160;
+  color-scheme: dark;
+}
+
+html,
+body {
+  background: rgb(var(--bg));
+  color: rgb(var(--ink));
+  font-family: "IBM Plex Sans", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  font-family: "Bricolage Grotesque Variable", system-ui, sans-serif;
+  font-variation-settings: "wdth" 96;
+  letter-spacing: -0.01em;
+}
+
+:focus-visible {
+  outline: 2px solid rgb(var(--pixel));
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn bg-ink text-surface hover:bg-ink/85;
+  }
+  .btn-quiet {
+    @apply btn border border-line bg-surface text-ink hover:bg-sunken;
+  }
+  .btn-danger {
+    @apply btn border border-alert/40 bg-surface text-alert hover:bg-alert-soft;
+  }
+  .field {
+    @apply w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink placeholder:text-muted focus:border-pixel focus:outline-none;
+  }
+  .section-title {
+    @apply font-display text-xl font-semibold text-ink;
+  }
+}

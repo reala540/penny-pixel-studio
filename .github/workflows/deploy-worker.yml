@@ -1,0 +1,79 @@
+name: Deploy Worker (Cloudflare)
+
+# Run this from the Actions tab after adding the secrets listed in GUIDE.md step 9.
+# It deploys the Worker, copies the secrets it needs, and points your Telegram bot at it.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["worker/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
+      GITHUB_TOKEN: ${{ secrets.WORKER_GITHUB_TOKEN }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_WEBHOOK_SECRET: ${{ secrets.TELEGRAM_WEBHOOK_SECRET }}
+      GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+      GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+      FACEBOOK_APP_ID: ${{ secrets.FACEBOOK_APP_ID }}
+      FACEBOOK_APP_SECRET: ${{ secrets.FACEBOOK_APP_SECRET }}
+      TIKTOK_CLIENT_KEY: ${{ secrets.TIKTOK_CLIENT_KEY }}
+      TIKTOK_CLIENT_SECRET: ${{ secrets.TIKTOK_CLIENT_SECRET }}
+      X_CLIENT_ID: ${{ secrets.X_CLIENT_ID }}
+      X_CLIENT_SECRET: ${{ secrets.X_CLIENT_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check required settings
+        run: |
+          missing=""
+          for v in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID SUPABASE_SERVICE_ROLE_KEY SUPABASE_ANON_KEY TOKEN_ENCRYPTION_KEY; do
+            [ -z "${!v}" ] && missing="$missing $v"
+          done
+          [ -z "${{ secrets.SUPABASE_URL }}" ] && missing="$missing SUPABASE_URL"
+          [ -z "${{ vars.DASHBOARD_URL }}" ] && missing="$missing DASHBOARD_URL(variable)"
+          if [ -n "$missing" ]; then echo "::error::Missing:$missing (see GUIDE.md step 9)"; exit 1; fi
+      - name: Install
+        working-directory: worker
+        run: npm ci
+      - name: Deploy
+        working-directory: worker
+        run: |
+          npx wrangler deploy \
+            --var SUPABASE_URL:${{ secrets.SUPABASE_URL }} \
+            --var DASHBOARD_URL:${{ vars.DASHBOARD_URL }} \
+            --var GITHUB_REPO:${{ github.repository }} \
+            --var GITHUB_REF:${{ github.ref_name }} | tee deploy.log
+      - name: Copy secrets into the Worker
+        working-directory: worker
+        run: |
+          for name in SUPABASE_SERVICE_ROLE_KEY SUPABASE_ANON_KEY TOKEN_ENCRYPTION_KEY GITHUB_TOKEN TELEGRAM_BOT_TOKEN \
+                      TELEGRAM_WEBHOOK_SECRET GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET FACEBOOK_APP_ID FACEBOOK_APP_SECRET \
+                      TIKTOK_CLIENT_KEY TIKTOK_CLIENT_SECRET X_CLIENT_ID X_CLIENT_SECRET; do
+            if [ -n "${!name}" ]; then printf '%s' "${!name}" | npx wrangler secret put "$name" > /dev/null && echo "set $name"; fi
+          done
+      - name: Point the Telegram bot at the Worker
+        if: env.TELEGRAM_BOT_TOKEN != '' && env.TELEGRAM_WEBHOOK_SECRET != ''
+        working-directory: worker
+        run: |
+          url=$(grep -oE 'https://[a-z0-9.-]+\.workers\.dev' deploy.log | head -1)
+          if [ -z "$url" ]; then echo "::warning::Could not find the Worker address in the deploy output"; exit 0; fi
+          curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
+            --data-urlencode "url=${url}/telegram/webhook" \
+            --data-urlencode "secret_token=${TELEGRAM_WEBHOOK_SECRET}" \
+            --data-urlencode 'allowed_updates=["message"]' | grep -q '"ok":true' && echo "Telegram webhook set"
+          echo "### Your Worker address" >> $GITHUB_STEP_SUMMARY
+          echo "$url" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,254 @@
+# Free AI provider pool. Limits and model names change often: verify them on each
+# provider's site and edit here. Nothing in this file is assumed to be permanent.
+#
+# commercial_use:
+#   verified  - owner checked the provider's terms allow monetized use
+#   assumed   - free tier with no known non-commercial restriction; please verify (dashboard shows a warning)
+#   no        - not allowed for monetized channels; router never uses it
+#
+# Providers whose key env var is empty are skipped automatically.
+# Tier 1 is enabled by default; tiers 2–3 are present but disabled until you add keys and enable them.
+
+roles:
+  research_summarizer: "Turns raw sources into a fact sheet with citations"
+  brainstormer:        "Pitches content angles (several models in parallel for variety)"
+  angle_selector:      "Judges pitches and picks the most original, evidence-backed angle"
+  scriptwriter:        "Writes the structured scene-by-scene script"
+  voice_editor:        "Rewrites in the channel host's voice and removes generic phrasing"
+  critic:              "Scores hook, originality, flow; requests targeted fixes"
+  claim_checker:       "Checks each claim against the actual source text"
+  repurposer:          "Titles, descriptions, tags, captions, Shorts scripts, X and Facebook posts"
+  embeddings:          "Vectors for the repetition check"
+
+providers:
+  # ---------------- Tier 1 ----------------
+  gemini:
+    tier: 1
+    enabled: true
+    base_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
+    key_env: GEMINI_API_KEY
+    commercial_use: assumed
+    notes: "Free-tier prompts may be used by Google to improve products. Free tier unavailable in some regions."
+    models:
+      - id: gemini-2.5-pro
+        roles: [angle_selector, scriptwriter]
+        daily_requests: 50
+        context: 1000000
+        priority: 10
+      - id: gemini-2.5-flash
+        roles: [research_summarizer, scriptwriter, critic, repurposer]
+        daily_requests: 1000
+        context: 1000000
+        priority: 20
+      - id: gemini-embedding-001
+        roles: [embeddings]
+        daily_requests: 1000
+        kind: embeddings
+        priority: 10
+
+  groq:
+    tier: 1
+    enabled: true
+    base_url: "https://api.groq.com/openai/v1"
+    key_env: GROQ_API_KEY
+    commercial_use: assumed
+    models:
+      - id: openai/gpt-oss-120b
+        roles: [brainstormer, critic, repurposer, claim_checker]
+        daily_requests: 1000
+        context: 131000
+        priority: 20
+      - id: moonshotai/kimi-k2-instruct-0905
+        roles: [brainstormer, voice_editor]
+        daily_requests: 1000
+        context: 131000
+        priority: 30
+
+  nvidia:
+    tier: 1
+    enabled: true
+    base_url: "https://integrate.api.nvidia.com/v1"
+    key_env: NVIDIA_API_KEY
+    commercial_use: assumed
+    notes: "Free with NVIDIA Developer Program membership; check terms for production use."
+    models:
+      - id: z-ai/glm-5.2
+        roles: [claim_checker, angle_selector, brainstormer]
+        daily_requests: 2000
+        context: 200000
+        priority: 15
+      - id: nvidia/nemotron-3-super-120b-a12b
+        roles: [brainstormer, critic, research_summarizer]
+        daily_requests: 2000
+        context: 262000
+        priority: 25
+
+  mistral:
+    tier: 1
+    enabled: true
+    base_url: "https://api.mistral.ai/v1"
+    key_env: MISTRAL_API_KEY
+    commercial_use: assumed
+    notes: "Free mode prompts may be used for training unless you opt out in the console."
+    models:
+      - id: mistral-medium-latest
+        roles: [voice_editor, brainstormer]
+        daily_requests: 500
+        context: 256000
+        priority: 10
+      - id: mistral-large-latest
+        roles: [scriptwriter, voice_editor]
+        daily_requests: 300
+        context: 256000
+        priority: 30
+
+  cloudflare:
+    tier: 1
+    enabled: true
+    base_url: "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/v1"
+    key_env: CLOUDFLARE_AI_TOKEN
+    commercial_use: assumed
+    notes: "10,000 neurons/day shared across all Workers AI usage, including images."
+    models:
+      - id: "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+        roles: [repurposer, critic]
+        daily_requests: 300
+        context: 24000
+        priority: 50
+      - id: "@cf/baai/bge-base-en-v1.5"
+        roles: [embeddings]
+        daily_requests: 2000
+        kind: embeddings
+        priority: 20
+
+  openrouter:
+    tier: 1
+    enabled: true
+    base_url: "https://openrouter.ai/api/v1"
+    key_env: OPENROUTER_API_KEY
+    commercial_use: assumed
+    notes: "Only models ending in ':free'. Default 50 requests/day per free model."
+    models:
+      - id: nvidia/nemotron-3-ultra-550b-a55b:free
+        roles: [brainstormer, scriptwriter, critic]
+        daily_requests: 50
+        context: 1000000
+        priority: 60
+      - id: google/gemma-4-31b-it:free
+        roles: [repurposer, voice_editor]
+        daily_requests: 50
+        context: 262000
+        priority: 60
+
+  # ---------------- Tier 2 (enable after adding keys) ----------------
+  aion:
+    tier: 2
+    enabled: false
+    base_url: "https://api.aionlabs.ai/v1"
+    key_env: AION_API_KEY
+    commercial_use: assumed
+    notes: "20K tokens/day — use for hooks and narrative openings only."
+    models:
+      - id: aion-labs/aion-3.0
+        roles: [brainstormer]
+        daily_requests: 15
+        daily_tokens: 20000
+        context: 128000
+        priority: 40
+
+  ollama:
+    tier: 2
+    enabled: false
+    base_url: "https://ollama.com/v1"
+    key_env: OLLAMA_API_KEY
+    commercial_use: assumed
+    notes: "Session and weekly limits (unpublished)."
+    models:
+      - id: deepseek-v4-pro
+        roles: [scriptwriter, research_summarizer]
+        daily_requests: 40
+        context: 1000000
+        priority: 40
+      - id: kimi-k3
+        roles: [scriptwriter, brainstormer]
+        daily_requests: 40
+        context: 1000000
+        priority: 45
+
+  zai:
+    tier: 2
+    enabled: false
+    base_url: "https://open.bigmodel.cn/api/paas/v4"
+    key_env: ZAI_API_KEY
+    commercial_use: assumed
+    notes: "One concurrent request."
+    models:
+      - id: glm-4.7-flash
+        roles: [brainstormer, critic]
+        daily_requests: 200
+        context: 200000
+        priority: 50
+
+  cerebras:
+    tier: 2
+    enabled: false
+    base_url: "https://api.cerebras.ai/v1"
+    key_env: CEREBRAS_API_KEY
+    commercial_use: assumed
+    models:
+      - id: zai-glm-4.7
+        roles: [claim_checker, critic]
+        daily_requests: 100
+        context: 128000
+        priority: 40
+
+  sambanova:
+    tier: 2
+    enabled: false
+    base_url: "https://api.sambanova.ai/v1"
+    key_env: SAMBANOVA_API_KEY
+    commercial_use: assumed
+    models:
+      - id: DeepSeek-V3.1
+        roles: [brainstormer]
+        daily_requests: 20
+        context: 128000
+        priority: 60
+
+  # ---------------- Tier 3 (no-key emergency backups) ----------------
+  llm7:
+    tier: 3
+    enabled: false
+    base_url: "https://api.llm7.io/v1"
+    key_env: LLM7_API_KEY
+    key_optional: true
+    commercial_use: assumed
+    notes: "Catalog rotates frequently."
+    models:
+      - id: gpt-oss-20b
+        roles: [repurposer, critic]
+        daily_requests: 200
+        context: 128000
+        priority: 90
+
+  ovh:
+    tier: 3
+    enabled: false
+    base_url: "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1"
+    key_env: OVH_API_KEY
+    key_optional: true
+    commercial_use: assumed
+    notes: "Anonymous tier: 2 requests/minute per IP per model."
+    models:
+      - id: gpt-oss-120b
+        roles: [repurposer, critic, brainstormer]
+        daily_requests: 100
+        context: 128000
+        priority: 95
+
+# Excluded on purpose (documented in docs/FREE_TIER_LIMITS.md):
+#   cohere       - free tier is non-commercial only
+#   siliconflow  - identity verification with mainland-Chinese documents
+#   modelscope   - Alibaba Cloud binding + real-name verification
+#   xai/deepseek - trial/credit based, not permanently free
+#   huggingface  - $0.10/month credit is too small

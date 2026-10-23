@@ -1,0 +1,247 @@
+// Penny & Pixel Studio — Cloudflare Worker (free plan; light work only, 10 ms CPU per request).
+//   /api/dispatch      owner-only: start a GitHub Actions workflow (queue, research, produce, publish)
+//   /api/oauth/start   owner-only: returns the platform sign-in URL
+//   /oauth/:p/callback platform redirects here; tokens are encrypted and stored
+//   /telegram/webhook  Telegram bot commands (verified secret header, linked owner chat only)
+//   cron (15 min)      dispatches GitHub only when a post is due or a job is queued
+
+import { randomToken, timingSafeEqual } from "./crypto";
+import { handleCallback, startUrl } from "./oauth";
+import { Env, Supabase } from "./supabase";
+
+const WORKFLOWS: Record<string, string> = {
+  queue: "queue.yml",
+  research: "weekly-research.yml",
+  produce: "weekly-produce.yml",
+  publish: "publish.yml",
+};
+
+function cors(env: Env): Record<string, string> {
+  return {
+    "Access-Control-Allow-Origin": env.DASHBOARD_URL || "*",
+    "Access-Control-Allow-Headers": "authorization, content-type",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    Vary: "Origin",
+  };
+}
+
+function json(env: Env, data: unknown, status = 200): Response {
+  return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json", ...cors(env) } });
+}
+
+export async function dispatch(env: Env, workflow: keyof typeof WORKFLOWS | string, inputs: Record<string, string> = {}): Promise<boolean> {
+  const file = WORKFLOWS[workflow];
+  if (!file || !env.GITHUB_REPO || !env.GITHUB_TOKEN) return false;
+  const r = await fetch(`https://api.github.com/repos/${env.GITHUB_REPO}/actions/workflows/${file}/dispatches`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.GITHUB_TOKEN}`,
+      Accept: "application/vnd.github+json",
+      "User-Agent": "penny-pixel-studio",
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+    body: JSON.stringify({ ref: env.GITHUB_REF || "main", inputs }),
+  });
+  return r.status === 204;
+}
+
+async function telegram(env: Env, chatId: string | number, text: string): Promise<void> {
+  if (!env.TELEGRAM_BOT_TOKEN) return;
+  await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: chatId, text: text.slice(0, 4000), parse_mode: "HTML", disable_web_page_preview: true }),
+  });
+}
+
+const HELP = [
+  "<b>Penny &amp; Pixel Studio</b>",
+  "/status – production health",
+  "/week – this week's posting plan",
+  "/review – items waiting for you",
+  "/failed – recent problems",
+  "/budget – X spending this month",
+  "/pause – stop all publishing now",
+  "/resume confirm – start publishing again",
+].join("\n");
+
+function esc(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+export async function handleTelegram(env: Env, req: Request): Promise<Response> {
+  const secret = req.headers.get("X-Telegram-Bot-Api-Secret-Token") ?? "";
+  if (!env.TELEGRAM_WEBHOOK_SECRET || !timingSafeEqual(secret, env.TELEGRAM_WEBHOOK_SECRET)) {
+    return new Response("forbidden", { status: 403 });
+  }
+  const update = (await req.json().catch(() => ({}))) as any;
+  const msg = update.message;
+  if (!msg?.text || !msg.chat?.id) return new Response("ok");
+  const chatId = String(msg.chat.id);
+  const db = new Supabase(env);
+  const linked = await db.setting<string>("telegram_chat_id");
+  const [cmd, ...args] = msg.text.trim().split(/\s+/);
+  const dash = env.DASHBOARD_URL.replace(/\/$/, "");
+
+  if (cmd === "/link") {
+    const code = await db.setting<string>("telegram_link_code");
+    if (code && args[0] && timingSafeEqual(args[0], code)) {
+      await db.putSetting("telegram_chat_id", chatId);
+      await db.putSetting("telegram_link_code", null);
+      await db.audit("telegram_linked", { chat: chatId });
+      await telegram(env, chatId, "Linked! You'll get studio updates here.\n\n" + HELP);
+    } else {
+      await telegram(env, chatId, "That code didn't match. Get a fresh code in Dashboard → Settings → Telegram.");
+    }
+    return new Response("ok");
+  }
+  if (!linked || linked !== chatId) {
+    await telegram(env, chatId, "This bot is private. Link it from Dashboard → Settings → Telegram.");
+    return new Response("ok");
+  }
+
+  switch (cmd) {
+    case "/start":
+    case "/help":
+      await telegram(env, chatId, HELP);
+      break;
+    case "/status": {
+      const projects = await db.select<{ status: string }>("content_projects", "select=status&order=created_at.desc&limit=200");
+      const posts = await db.select<{ status: string }>("scheduled_posts", "select=status&order=scheduled_at.desc&limit=200");
+      const count = (rows: { status: string }[]) =>
+        Object.entries(rows.reduce<Record<string, number>>((a, r) => ((a[r.status] = (a[r.status] ?? 0) + 1), a), {}))
+          .map(([k, v]) => `${k.replace(/_/g, " ")}: ${v}`)
+          .join("\n") || "nothing yet";
+      const paused = await db.setting<boolean>("paused");
+      await telegram(env, chatId, `<b>Status</b>${paused ? " (PAUSED)" : ""}\n\n<b>Videos</b>\n${count(projects)}\n\n<b>Posts</b>\n${count(posts)}`);
+      break;
+    }
+    case "/week": {
+      const now = new Date();
+      const end = new Date(now.getTime() + 7 * 86400_000);
+      const rows = await db.select<any>(
+        "scheduled_posts",
+        `select=scheduled_at,status,content_variants(title,kind),social_accounts(label)&scheduled_at=gte.${now.toISOString()}&scheduled_at=lte.${end.toISOString()}&order=scheduled_at.asc&limit=40`,
+      );
+      const tz = (await db.setting<string>("timezone")) ?? "Africa/Nairobi";
+      const lines = rows.map((r) => {
+        const when = new Date(r.scheduled_at).toLocaleString("en-GB", { timeZone: tz, weekday: "short", hour: "2-digit", minute: "2-digit" });
+        return `${when} · ${esc(r.social_accounts?.label ?? "")} · ${esc(r.content_variants?.title ?? r.content_variants?.kind ?? "")} (${r.status.replace(/_/g, " ")})`;
+      });
+      await telegram(env, chatId, `<b>Next 7 days</b>\n${lines.join("\n") || "Nothing scheduled."}\n\n<a href="${dash}/calendar">Open calendar</a>`);
+      break;
+    }
+    case "/review": {
+      const rows = await db.select<any>("content_projects", "select=title,status&status=in.(ready_for_review,needs_attention)&order=created_at.desc&limit=20");
+      await telegram(env, chatId, `<b>Waiting for you: ${rows.length}</b>\n${rows.map((r) => `• ${esc(r.title)}${r.status === "needs_attention" ? " ⚠️" : ""}`).join("\n")}\n\n<a href="${dash}/review">Open Review Studio</a>`);
+      break;
+    }
+    case "/failed": {
+      const since = new Date(Date.now() - 7 * 86400_000).toISOString();
+      const jobs = await db.select<any>("generation_jobs", `select=job_type,error_message&status=in.(failed,blocked)&created_at=gte.${since}&limit=10`);
+      const posts = await db.select<any>("scheduled_posts", `select=last_error,status&status=in.(failed,blocked,needs_review,needs_manual)&updated_at=gte.${since}&limit=10`);
+      const lines = [...jobs.map((j) => `• ${j.job_type}: ${esc(String(j.error_message ?? "").slice(0, 120))}`), ...posts.map((p) => `• post ${p.status.replace(/_/g, " ")}: ${esc(String(p.last_error ?? "").slice(0, 120))}`)];
+      await telegram(env, chatId, `<b>Problems (7 days)</b>\n${lines.join("\n") || "None 🎉"}`);
+      break;
+    }
+    case "/budget": {
+      const month = new Date().toISOString().slice(0, 7) + "-01";
+      const res = await db.select<any>("budget_reservations", `select=amount_usd,status&service=eq.x_api&month=eq.${month}`);
+      const cap = (await db.select<any>("budgets", "select=monthly_cap_usd&service=eq.x_api"))[0]?.monthly_cap_usd ?? 1;
+      const spent = res.filter((r) => r.status === "committed").reduce((a, r) => a + Number(r.amount_usd), 0);
+      await telegram(env, chatId, `<b>X budget</b>\nSpent: $${spent.toFixed(3)} of $${Number(cap).toFixed(2)} this month.`);
+      break;
+    }
+    case "/pause":
+      await db.putSetting("paused", true);
+      await db.audit("paused", { via: "telegram" }, "telegram");
+      await telegram(env, chatId, "⏸ All publishing is paused. Send /resume confirm to start again.");
+      break;
+    case "/resume":
+      if (args[0] !== "confirm") {
+        await telegram(env, chatId, "To resume publishing, send: /resume confirm");
+        break;
+      }
+      await db.putSetting("paused", false);
+      await db.audit("resumed", { via: "telegram" }, "telegram");
+      await telegram(env, chatId, "▶️ Publishing resumed.");
+      break;
+    default:
+      await telegram(env, chatId, HELP);
+  }
+  return new Response("ok");
+}
+
+async function ownerOrNull(env: Env, req: Request): Promise<string | null> {
+  const auth = req.headers.get("Authorization") ?? "";
+  return new Supabase(env).ownerFromToken(auth.startsWith("Bearer ") ? auth.slice(7) : null);
+}
+
+export async function handleFetch(req: Request, env: Env): Promise<Response> {
+  const url = new URL(req.url);
+  if (req.method === "OPTIONS") return new Response(null, { headers: cors(env) });
+  if (url.pathname === "/health") return json(env, { ok: true });
+
+  if (url.pathname === "/api/dispatch" && req.method === "POST") {
+    const owner = await ownerOrNull(env, req);
+    if (!owner) return json(env, { error: "not authorised" }, 401);
+    const body = (await req.json().catch(() => ({}))) as { workflow?: string };
+    if (!body.workflow || !(body.workflow in WORKFLOWS)) return json(env, { error: "unknown workflow" }, 400);
+    const ok = await dispatch(env, body.workflow);
+    await new Supabase(env).audit("dispatch", { workflow: body.workflow, ok }, "owner");
+    return json(env, { ok }, ok ? 200 : 502);
+  }
+
+  if (url.pathname === "/api/oauth/start" && req.method === "POST") {
+    const owner = await ownerOrNull(env, req);
+    if (!owner) return json(env, { error: "not authorised" }, 401);
+    const body = (await req.json().catch(() => ({}))) as { account_id?: string };
+    if (!body.account_id) return json(env, { error: "account_id required" }, 400);
+    const acc = await new Supabase(env).select<{ id: string; platform: string }>("social_accounts", `id=eq.${encodeURIComponent(body.account_id)}&select=id,platform`);
+    if (!acc.length) return json(env, { error: "unknown account" }, 404);
+    return json(env, { url: await startUrl(env, req, acc[0].platform as any, acc[0].id) });
+  }
+
+  if (url.pathname === "/api/telegram/link-code" && req.method === "POST") {
+    const owner = await ownerOrNull(env, req);
+    if (!owner) return json(env, { error: "not authorised" }, 401);
+    const code = randomToken(6).replace(/[^A-Za-z0-9]/g, "").slice(0, 8).toUpperCase();
+    await new Supabase(env).putSetting("telegram_link_code", code);
+    return json(env, { code });
+  }
+
+  const cb = url.pathname.match(/^\/oauth\/(youtube|facebook|tiktok|x)\/callback$/);
+  if (cb && req.method === "GET") return handleCallback(env, req, cb[1] as any);
+
+  if (url.pathname === "/telegram/webhook" && req.method === "POST") return handleTelegram(env, req);
+
+  return json(env, { error: "not found" }, 404);
+}
+
+/** Cron: only spend GitHub minutes when there is real work. */
+export async function handleCron(env: Env): Promise<Record<string, boolean>> {
+  const db = new Supabase(env);
+  const out: Record<string, boolean> = {};
+  const soon = new Date(Date.now() + 10 * 60_000).toISOString();
+  const due = await db.select("scheduled_posts", `select=id&status=eq.scheduled&scheduled_at=lte.${soon}&limit=1`);
+  const paused = await db.setting<boolean>("paused");
+  const last = (await db.setting<string>("last_publish_dispatch")) ?? "1970-01-01T00:00:00Z";
+  if (due.length && !paused && Date.now() - Date.parse(last) > 12 * 60_000) {
+    out.publish = await dispatch(env, "publish");
+    if (out.publish) await db.putSetting("last_publish_dispatch", new Date().toISOString());
+  }
+  const queued = await db.select("generation_jobs", "select=id&status=eq.queued&requested_by=eq.owner&limit=1");
+  const lastQ = (await db.setting<string>("last_queue_dispatch")) ?? "1970-01-01T00:00:00Z";
+  if (queued.length && Date.now() - Date.parse(lastQ) > 12 * 60_000) {
+    out.queue = await dispatch(env, "queue");
+    if (out.queue) await db.putSetting("last_queue_dispatch", new Date().toISOString());
+  }
+  return out;
+}
+
+export default {
+  fetch: (req: Request, env: Env) => handleFetch(req, env),
+  scheduled: async (_event: ScheduledEvent, env: Env, ctx: ExecutionContext) => {
+    ctx.waitUntil(handleCron(env));
+  },
+};

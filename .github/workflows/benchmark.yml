@@ -1,0 +1,57 @@
+# Generated layout: every workflow gets the same secrets (unset ones are simply empty).
+name: Benchmark
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: studio-bench
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+  SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+  TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
+  TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+  GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+  NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+  MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+  CLOUDFLARE_AI_TOKEN: ${{ secrets.CLOUDFLARE_AI_TOKEN }}
+  OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+  AION_API_KEY: ${{ secrets.AION_API_KEY }}
+  OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+  ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+  CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+  SAMBANOVA_API_KEY: ${{ secrets.SAMBANOVA_API_KEY }}
+  YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+  FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+  SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+  PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+  PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
+  GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+  GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+  TIKTOK_CLIENT_KEY: ${{ secrets.TIKTOK_CLIENT_KEY }}
+  TIKTOK_CLIENT_SECRET: ${{ secrets.TIKTOK_CLIENT_SECRET }}
+  X_CLIENT_ID: ${{ secrets.X_CLIENT_ID }}
+  X_CLIENT_SECRET: ${{ secrets.X_CLIENT_SECRET }}
+  DASHBOARD_URL: ${{ vars.DASHBOARD_URL }}
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-engine
+      - run: studio benchmark | tee benchmark.json
+      - run: |
+          echo '### Benchmark' >> $GITHUB_STEP_SUMMARY
+          echo '```json' >> $GITHUB_STEP_SUMMARY
+          python -c "import json;d=json.load(open('benchmark.json'));d.pop('files',None);print(json.dumps(d,indent=2))" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

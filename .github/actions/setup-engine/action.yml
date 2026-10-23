@@ -1,0 +1,26 @@
+name: Set up studio engine
+description: Python, FFmpeg, fonts and cached Kokoro voice models
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+        cache: pip
+        cache-dependency-path: engine/pyproject.toml
+    - name: System packages (FFmpeg, Inter font)
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq ffmpeg fonts-inter fonts-dejavu-core > /dev/null
+    - name: Cache voice models and rendered scenes
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/studio
+          .work/render/shared
+        key: studio-cache-${{ runner.os }}-${{ github.run_id }}
+        restore-keys: studio-cache-${{ runner.os }}-
+    - name: Install engine
+      shell: bash
+      run: pip install -q -e engine
