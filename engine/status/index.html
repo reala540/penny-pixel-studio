@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Penny &amp; Pixel Engine</title>
+<meta name="description" content="Live status of the Penny & Pixel Studio engine workflows on GitHub Actions.">
+<style>
+  :root {
+    --bg: #eef0f4; --surface: #fff; --ink: #1b1f2a; --muted: #5c6375; --line: #d6dae2;
+    --pixel: #3b36a8; --penny: #0e5a45; color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #12151d; --surface: #1a1e29; --ink: #e7e9ef; --muted: #9ba2b4; --line: #323848;
+      --pixel: #9692ff; --penny: #5fd3a8; color-scheme: dark; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 40px 16px 64px; }
+  h1 { font-size: 1.9rem; line-height: 1.2; margin: 0 0 6px; letter-spacing: -0.01em; }
+  h1 span { color: var(--pixel); }
+  .lead { color: var(--muted); margin: 0 0 28px; }
+  section { background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+    padding: 20px; margin-bottom: 18px; }
+  h2 { font-size: 1.05rem; margin: 0 0 14px; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 10px 0; border-top: 1px solid var(--line); }
+  li:first-child { border-top: 0; padding-top: 0; }
+  li small { display: block; color: var(--muted); font-size: 0.85rem; }
+  img { height: 20px; display: block; }
+  a { color: var(--pixel); }
+  .btns { display: flex; flex-wrap: wrap; gap: 10px; }
+  .btn { display: inline-block; padding: 10px 16px; border-radius: 10px; background: var(--pixel); color: #fff;
+    text-decoration: none; font-weight: 600; }
+  .btn.alt { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+  p { margin: 0 0 10px; }
+  .note { color: var(--muted); font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Penny <span>&amp;</span> Pixel Engine</h1>
+  <p class="lead">The engine researches, writes, records and renders on GitHub Actions. This page shows whether each job is healthy.</p>
+
+  <section>
+    <h2>Weekly jobs</h2>
+    <ul id="jobs"></ul>
+  </section>
+
+  <section>
+    <h2>Where things live</h2>
+    <p>Review and approve your week in the dashboard. Run a job by hand from the Actions tab.</p>
+    <div class="btns">
+      <a class="btn" href="https://dashboard-beta-ten-13.vercel.app">Open dashboard</a>
+      <a class="btn alt" href="https://github.com/reala540/penny-pixel-studio/actions">Open Actions</a>
+    </div>
+  </section>
+
+  <p class="note">"no status" means that job hasn't run yet. Badges refresh every few minutes.</p>
+</main>
+<script>
+  const repo = "https://github.com/reala540/penny-pixel-studio/actions/workflows/";
+  const jobs = [
+    ["weekly-research.yml", "Saturday research", "Sources, idea pitches and the shortlist"],
+    ["weekly-produce.yml", "Sunday production", "Scripts, voices, previews, thumbnails, Shorts"],
+    ["publish.yml", "Publish due posts", "Posts approved items at their scheduled time"],
+    ["queue.yml", "Owner requests", "Jobs you start from the dashboard or Telegram"],
+    ["maintenance.yml", "Daily maintenance", "Cleanup, token health checks, backups"],
+    ["ci.yml", "Tests", "Engine, Worker and dashboard test suites"],
+    ["deploy-worker.yml", "Deploy Worker", "Cloudflare Worker for connections and Telegram"],
+    ["setup.yml", "First-time setup", "Database, starting config and AI key checks"],
+    ["benchmark.yml", "Benchmark", "Measures render speed for the capacity planner"],
+  ];
+  const list = document.getElementById("jobs");
+  for (const [file, name, what] of jobs) {
+    const li = document.createElement("li");
+    li.innerHTML = `<div><strong></strong><small></small></div>
+      <a><img alt="" loading="lazy"></a>`;
+    li.querySelector("strong").textContent = name;
+    li.querySelector("small").textContent = what;
+    const a = li.querySelector("a");
+    a.href = repo + file;
+    const img = li.querySelector("img");
+    img.src = repo + file + "/badge.svg?branch=main";
+    img.alt = name + " status";
+    list.appendChild(li);
+  }
+</script>
+</body>
+</html>
