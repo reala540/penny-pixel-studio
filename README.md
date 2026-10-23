@@ -26,7 +26,7 @@ Cost: $0, except optional X posting, which is hard-capped at $1/month.
 | Folder | What |
 |---|---|
 | `engine/` | Python engine (`studio` CLI): research, AI router, script pipeline, video rendering, publishing |
-| `dashboard/` | React + TypeScript + Tailwind dashboard (Cloudflare Pages) |
+| `dashboard/` | React + TypeScript + Tailwind dashboard (live on Vercel: https://dashboard-beta-ten-13.vercel.app) |
 | `worker/` | Cloudflare Worker: OAuth connect, Telegram bot, owner-only dispatch, 15-minute cron |
 | `supabase/migrations/` | Database schema, Row Level Security, owner actions |
 | `config/` | Brand, accounts and schedule, AI providers, research sources, budgets and limits |

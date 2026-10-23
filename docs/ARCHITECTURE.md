@@ -7,7 +7,7 @@
           anon key + session     │                                       │ bot webhook
           (RLS decides)          ▼                                       ▼
  ┌────────────────────┐   ┌──────────────┐  dispatch / OAuth / link  ┌──────────────────────┐
- │ Cloudflare Pages    │──▶│  Supabase     │◀──────────────────────────│ Cloudflare Worker     │
+ │ Vercel (dashboard)  │──▶│  Supabase     │◀──────────────────────────│ Cloudflare Worker     │
  │ React dashboard     │   │  Postgres+RLS │   service role (server)   │ cron */15, OAuth,     │
  └────────────────────┘   │  Auth, Storage│                            │ Telegram, dispatch    │
                           └──────▲───────┘                            └──────────┬───────────┘

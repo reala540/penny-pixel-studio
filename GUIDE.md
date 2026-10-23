@@ -20,7 +20,7 @@ Think of the studio as a little TV station with robot helpers:
 |---|---|---|
 | 🧠 **The Engine** | Finds news, writes scripts with free AI, records Penny's and Pixel's voices, makes videos and thumbnails, posts them | GitHub (it wakes up on a schedule) |
 | 🗄 **The Memory** | Remembers every idea, script, video, post and setting | Supabase |
-| 🖥 **The Dashboard** | The website where *you* watch, edit and approve | Cloudflare Pages |
+| 🖥 **The Dashboard** | The website where *you* watch, edit and approve | Vercel |
 | 🛎 **The Doorbell** | Connects your accounts, listens to Telegram, wakes the Engine when a post is due | Cloudflare Worker |
 | 📱 **The Messenger** | Sends you "your week is ready" and "posted ✅" messages | Telegram |
 
@@ -95,7 +95,9 @@ Your code lives in a **private** GitHub repository (a "repo" is a folder on GitH
 
 ## Part C — Connect the Memory (Supabase)
 
-Your Supabase project **penny-pixel-studio** is already created, and its tables and security rules are installed.
+Your Supabase project **penny-pixel-studio** is already created: tables, security rules and performance indexes are
+installed, and your brand, both channels, the five accounts, the AI provider list, the $1 X budget and default settings
+are already loaded.
 
 ### Step 4. Copy four things from Supabase
 
@@ -173,7 +175,7 @@ On GitHub, open your repo → **Settings** → **Secrets and variables** → **A
    - `TOKEN_ENCRYPTION_KEY`
    - every AI and research key from steps 6 and 7
 2. Open the **Variables** tab → **New repository variable**:
-   - Name `DASHBOARD_URL`, value `https://penny-pixel-studio.pages.dev`. You'll get the real address in step 10; come
+   - Name `DASHBOARD_URL`, value `https://dashboard-beta-ten-13.vercel.app` (your live dashboard).
      back and fix it if it's different.
 
 ✅ **Check:** the Secrets list shows the names (GitHub never shows the values again, which is normal).
@@ -210,27 +212,22 @@ and tells you. To make more, see "Extra free power" at the end.
 
 ---
 
-## Part G — Put the Dashboard online (Cloudflare Pages)
+## Part G — Your Dashboard is already online (Vercel)
 
-### Step 12. Create the Pages site
+### Step 12. Open your dashboard
 
-1. Cloudflare dashboard → **Workers & Pages** → **Create** → **Pages** → **Connect to Git** → pick your
-   `penny-pixel-studio` repo.
-2. Fill in:
-   - **Project name:** `penny-pixel-studio`
-   - **Production branch:** `main`
-   - **Framework preset:** *None*
-   - **Build command:** `npm ci && npm run build`
-   - **Build output directory:** `dist`
-   - **Root directory (advanced):** `dashboard`
-3. **Environment variables** (add these three):
-   - `VITE_SUPABASE_URL` = your SUPABASE_URL
-   - `VITE_SUPABASE_ANON_KEY` = your SUPABASE_ANON_KEY (the *anon* one, not service_role!)
-   - `VITE_WORKER_URL` = leave empty for now (step 14 gives it to you)
-4. Press **Save and Deploy**.
+**Already done for you:** the dashboard is live on Vercel at
+**https://dashboard-beta-ten-13.vercel.app** (Vercel project `dashboard`, linked to your GitHub repo). Every push to
+`main` updates it automatically. Its Supabase settings (`VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`) are already
+saved in Vercel → project **dashboard** → **Settings → Environment Variables**.
 
-✅ **Check:** Cloudflare shows a link like `https://penny-pixel-studio.pages.dev`. Put it in the GitHub variable
-`DASHBOARD_URL` (step 8) if it's different.
+> ℹ️ Vercel's free Hobby plan is meant for non-commercial use. While you're starting out that's fine. When the
+> channels start earning money, either upgrade Vercel or move the dashboard to Cloudflare Pages (free for commercial
+> use): Cloudflare → Workers & Pages → Create → Pages → connect the repo, root directory `dashboard`, build command
+> `npm ci && npm run build`, output `dist`, and the same two environment variables.
+
+✅ **Check:** open the link. You see the Penny & Pixel sign-in page. Your privacy page is at
+https://dashboard-beta-ten-13.vercel.app/privacy and terms at https://dashboard-beta-ten-13.vercel.app/terms.
 
 ### Step 13. Make yourself the owner
 
@@ -238,7 +235,9 @@ and tells you. To make more, see "Extra free power" at the end.
 2. Click the link in the confirmation email, then sign in.
 3. **Now lock the door:** Supabase → **Authentication** → **Sign In / Providers** → turn **off** "Allow new users to
    sign up".
-4. Also in Supabase → **Authentication → URL Configuration**: set **Site URL** to your dashboard link.
+4. Also in Supabase → **Authentication → URL Configuration**: set **Site URL** to `https://dashboard-beta-ten-13.vercel.app`
+   and add the same address under **Redirect URLs**. (Do this *before* step 1, so the confirmation email links to your
+   dashboard.)
 
 The first person to sign in becomes the owner, and the database refuses everyone after that. That's why you do step 3
 right away.
@@ -273,8 +272,8 @@ right away.
 2. Actions → **Deploy Worker (Cloudflare)** → **Run workflow**.
 3. When it's green, open the run: the summary shows **Your Worker address**, like
    `https://penny-pixel-studio.yourname.workers.dev`.
-4. Cloudflare Pages → your project → **Settings → Environment variables** → set `VITE_WORKER_URL` to that address →
-   **Deployments → Retry deployment**.
+4. Vercel → project **dashboard** → **Settings → Environment Variables** → add `VITE_WORKER_URL` with that address
+   (all environments) → **Deployments** → newest one → **⋯ → Redeploy**.
 
 ### Step 17. Link Telegram
 
@@ -410,9 +409,10 @@ This takes 1–3 hours. You'll get a Telegram message when it's ready.
 
 | Problem | Fix |
 |---|---|
-| The dashboard says "Almost there" | `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` are missing in Cloudflare Pages. Add them and redeploy |
+| The dashboard says "Almost there" | `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` are missing in Vercel. Add them and redeploy |
 | "This studio already has an owner" | You signed in with a different email than the owner. Sign out and use the owner email |
-| Connect buttons are grey | `VITE_WORKER_URL` is not set in Cloudflare Pages (step 16.4) |
+| Connect buttons are grey | `VITE_WORKER_URL` is not set in Vercel (step 16.4) |
+| Vercel says a deployment is "Blocked" | On the free plan the commit author must be you. Commit with your GitHub account (atonymutembei@gmail.com) |
 | A GitHub run is red | Open it → read the last red lines. Most often a secret name is misspelled |
 | "No free AI provider available" | Your AI keys are missing or used up for today. Add more keys (step 6) or wait until tomorrow |
 | No Telegram messages | Check `TELEGRAM_BOT_TOKEN` in GitHub and run **Deploy Worker** again, then `/link` again |

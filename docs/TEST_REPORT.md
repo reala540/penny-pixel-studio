@@ -53,3 +53,13 @@ This build environment's network only reaches package registries. So:
 A focused security review of the whole branch found no high-confidence vulnerabilities. One hardening fix was
 applied: links from outside research feeds are only stored and shown if they are `http(s)` URLs, so a hostile feed
 can't plant a `javascript:` link in the dashboard.
+
+## Live deployment checks (23 Oct 2026)
+
+| Check | Result |
+|---|---|
+| Supabase `penny-pixel-studio` | 4/4 migrations applied and recorded; 34 tables with RLS; 54 policies; 11 extra indexes; private `studio` bucket; starting configuration loaded (1 brand, 2 channels, 5 accounts + connection rows, 13 AI providers, 21 models, $1 X budget, 6 settings) |
+| Vercel project `dashboard` | Production build from `main` **READY** (vite build 4 s); live at https://dashboard-beta-ten-13.vercel.app |
+| Live routes | `/`, `/review`, `/privacy` return 200 with the SPA and security headers (X-Frame-Options DENY, nosniff, HSTS, referrer and permissions policy) |
+| Live bundle | Points at `https://eazmczmnunzrmrpsrhvx.supabase.co` |
+| Git history | All commits authored by reala540 <atonymutembei@gmail.com> (required by Vercel Hobby; earlier deployments were blocked for a different author) |

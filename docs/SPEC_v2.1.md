@@ -27,7 +27,7 @@ Targets are goals. Quality gates and the capacity planner may lower them; they n
 
 | Component | Service (free) | Notes |
 |---|---|---|
-| Dashboard | Cloudflare Pages | Static React app; holds only the public anon key |
+| Dashboard | Vercel (Hobby) — Cloudflare Pages is the free commercial-use alternative | Static React app; holds only the public anon key |
 | Light backend | Cloudflare Workers | OAuth connect flows, Telegram webhook, owner-only "run now" dispatch, 15-minute cron that wakes GitHub only when work is due (10 ms CPU limit respected: no heavy work) |
 | Database, login, files | Supabase | Postgres + RLS, Auth (single owner), private Storage bucket `studio` |
 | Research, AI, rendering, publishing | GitHub Actions (private repo) | Python engine `studio`; optional self-hosted runner on the owner's computer |
