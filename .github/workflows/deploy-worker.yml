@@ -1,6 +1,6 @@
 name: Deploy Worker (Cloudflare)
 
-# Run this from the Actions tab after adding the secrets listed in GUIDE.md step 9.
+# Run this from the Actions tab after adding the secrets listed in GUIDE.md Part H.
 # It deploys the Worker, copies the secrets it needs, and points your Telegram bot at it.
 on:
   workflow_dispatch:
@@ -44,8 +44,7 @@ jobs:
             [ -z "${!v}" ] && missing="$missing $v"
           done
           [ -z "${{ secrets.SUPABASE_URL }}" ] && missing="$missing SUPABASE_URL"
-          [ -z "${{ vars.DASHBOARD_URL }}" ] && missing="$missing DASHBOARD_URL(variable)"
-          if [ -n "$missing" ]; then echo "::error::Missing:$missing (see GUIDE.md step 9)"; exit 1; fi
+          if [ -n "$missing" ]; then echo "::error::Missing:$missing (add them as repository secrets, see GUIDE.md Part H)"; exit 1; fi
       - name: Install
         working-directory: worker
         run: npm ci
@@ -54,7 +53,7 @@ jobs:
         run: |
           npx wrangler deploy \
             --var SUPABASE_URL:${{ secrets.SUPABASE_URL }} \
-            --var DASHBOARD_URL:${{ vars.DASHBOARD_URL }} \
+            --var DASHBOARD_URL:${{ vars.DASHBOARD_URL || 'https://dashboard-beta-ten-13.vercel.app' }} \
             --var GITHUB_REPO:${{ github.repository }} \
             --var GITHUB_REF:${{ github.ref_name }} | tee deploy.log
       - name: Copy secrets into the Worker

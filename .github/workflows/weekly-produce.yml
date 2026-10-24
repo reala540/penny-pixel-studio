@@ -42,7 +42,7 @@ env:
   TIKTOK_CLIENT_SECRET: ${{ secrets.TIKTOK_CLIENT_SECRET }}
   X_CLIENT_ID: ${{ secrets.X_CLIENT_ID }}
   X_CLIENT_SECRET: ${{ secrets.X_CLIENT_SECRET }}
-  DASHBOARD_URL: ${{ vars.DASHBOARD_URL }}
+  DASHBOARD_URL: ${{ vars.DASHBOARD_URL || 'https://dashboard-beta-ten-13.vercel.app' }}
 
 jobs:
   run:
