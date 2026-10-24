@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import resource
 import sys
 import time
@@ -262,6 +263,38 @@ def cmd_status(a):
         })
 
 
+def explain_error(e: BaseException) -> str:
+    """A plain-language reason for a failed run, with any password hidden."""
+    text = str(e.code if isinstance(e, SystemExit) else e) or type(e).__name__
+    text = re.sub(r"(postgres(?:ql)?://[^:/@\s]+:)[^@\s]+@", r"\1***@", text)
+    low = text.lower()
+    hints = [
+        ("password authentication failed", "The database password in SUPABASE_DB_URL is wrong. Reset it in Supabase "
+         "(Project Settings > Database) and update the secret."),
+        ("tenant or user not found", "SUPABASE_DB_URL has the wrong user or region. Copy it again from Supabase: "
+         "Connect > Connection string > Session pooler."),
+        ("network is unreachable", "GitHub can't reach the direct database address. Use the Session pooler address "
+         "from Supabase (Connect > Connection string > Session pooler)."),
+        ("could not translate host name", "The host in SUPABASE_DB_URL is wrong or unreachable. Use the Session pooler "
+         "address from Supabase (Connect > Connection string > Session pooler)."),
+        ("invalid dsn", "SUPABASE_DB_URL isn't a valid address. If the password has symbols like @ # / ? %, reset it "
+         "to letters and numbers only."),
+        ("missing \"=\"", "SUPABASE_DB_URL isn't a valid address. It must start with postgresql:// and contain no spaces "
+         "or [brackets]."),
+    ]
+    for needle, hint in hints:
+        if needle in low:
+            return f"{hint} (Details: {text[:300]})"
+    return text[:500]
+
+
+def _annotate(e: BaseException) -> None:
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        return
+    msg = explain_error(e).replace("%", "%25").replace("\r", "").replace("\n", " ")
+    print(f"::error title=studio failed::{msg}", flush=True)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="studio", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -286,6 +319,10 @@ def main(argv: list[str] | None = None) -> int:
     started = time.monotonic()
     try:
         a.fn(a)
+    except (SystemExit, Exception) as e:
+        if not (isinstance(e, SystemExit) and e.code in (None, 0)):
+            _annotate(e)
+        raise
     finally:
         if os.environ.get("GITHUB_ACTIONS") == "true" and config.runtime().db_url:
             try:

@@ -277,7 +277,8 @@ right away.
 1. In Telegram, search for **@BotFather** → send `/newbot` → name it "Penny & Pixel Studio" → pick a username ending in
    `bot`.
 2. BotFather gives you a token like `123456:ABC...`. That's **TELEGRAM_BOT_TOKEN**.
-3. Make up a long random password with letters and numbers (no spaces). That's **TELEGRAM_WEBHOOK_SECRET**.
+3. Make up a long random password using **only letters and numbers** (no spaces, no symbols like `! @ # $ .`), for example
+   `PennyPixelHook2026x8842`. Telegram refuses anything else. That's **TELEGRAM_WEBHOOK_SECRET**.
 
 ### Step 15. Make two tokens for the Doorbell
 
