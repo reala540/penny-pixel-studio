@@ -1,5 +1,6 @@
 import { Activity, Bot, CalendarDays, Clapperboard, Compass, KeyRound, Library, Lightbulb, ListChecks, LogOut, Settings, CircleHelp, Wrench } from "lucide-react";
-import { Suspense } from "react";
+import { ChevronDown } from "lucide-react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { useSetting } from "../lib/api";
 import { supabase } from "../lib/supabase";
@@ -45,35 +46,64 @@ export default function Layout() {
   const paused = useSetting<boolean>("paused", false).data;
   const { mode } = useUiMode();
   const NAV = mode === "simple" ? ALL_NAV.filter((n) => SIMPLE_PATHS.has(n.to)) : ALL_NAV;
+  const scroller = useRef<HTMLDivElement>(null);
+  const [more, setMore] = useState(false);
+  const measure = useCallback(() => {
+    const el = scroller.current;
+    setMore(Boolean(el && el.scrollHeight - el.scrollTop - el.clientHeight > 4));
+  }, []);
+  useEffect(() => {
+    measure();
+    const el = scroller.current;
+    if (!el) return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    Array.from(el.children).forEach((c) => ro.observe(c));
+    window.addEventListener("resize", measure);
+    return () => { ro.disconnect(); window.removeEventListener("resize", measure); };
+  }, [measure, mode]);
   return (
     <div className="min-h-screen md:grid md:grid-cols-[232px_1fr]">
       <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-50 focus:rounded focus:bg-surface focus:px-3 focus:py-2">
         Skip to content
       </a>
       <div className="hidden border-r border-line bg-surface md:block">
-      <aside className="sticky top-0 flex h-screen flex-col px-4 py-5">
-        <Brand />
-        <nav aria-label="Main" className="mt-8 flex flex-1 flex-col gap-1">
-          {NAV.map(({ to, label, icon: Icon, end }) => (
-            <NavLink key={to} to={to} end={end}
-              className={({ isActive }) => `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium ${isActive ? "bg-ink text-surface" : "text-muted hover:bg-sunken hover:text-ink"}`}>
-              <Icon size={18} aria-hidden />
-              {label}
-            </NavLink>
-          ))}
-        </nav>
-        <div className="flex flex-col gap-1 border-t border-line pt-3">
-          <RunningNow />
-          <AutoPostBadge />
-          <div className="px-1 pt-1"><ModeSwitch compact /></div>
-          <div className="px-1 pb-2 pt-1"><ThemeControl compact /></div>
-          <NavLink to="/help" className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-muted hover:bg-sunken hover:text-ink">
-            <CircleHelp size={18} aria-hidden /> Help
-          </NavLink>
-          <button onClick={() => supabase.auth.signOut()} className="flex items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-muted hover:bg-sunken hover:text-ink">
-            <LogOut size={18} aria-hidden /> Sign out
-          </button>
+      <aside aria-label="Sidebar" className="sticky top-0 flex h-screen flex-col">
+        {/* Scrolls on short screens or when zoomed in; the arrow at the bottom shows there's more below. */}
+        <div ref={scroller} onScroll={measure} className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 py-4">
+          <Brand />
+          <nav aria-label="Main" className="mt-5 flex flex-col gap-0.5">
+            {NAV.map(({ to, label, icon: Icon, end }) => (
+              <NavLink key={to} to={to} end={end}
+                className={({ isActive }) => `flex items-center gap-3 rounded-lg px-3 py-1.5 text-sm font-medium [@media(min-height:900px)]:py-2 ${isActive ? "bg-ink text-surface" : "text-muted hover:bg-sunken hover:text-ink"}`}>
+                <Icon size={18} aria-hidden />
+                {label}
+              </NavLink>
+            ))}
+          </nav>
+          <div className="min-h-4 flex-1" aria-hidden />
+          <div className="flex flex-col gap-1 border-t border-line pt-3">
+            <RunningNow />
+            <AutoPostBadge />
+            <div className="px-1 pt-1"><ModeSwitch compact /></div>
+            <div className="flex items-center justify-between gap-2 px-1 pt-1">
+              <ThemeControl compact />
+              <NavLink to="/help" className="flex items-center gap-1.5 whitespace-nowrap rounded-lg px-2 py-1.5 text-sm text-muted hover:bg-sunken hover:text-ink">
+                <CircleHelp size={17} aria-hidden /> Help
+              </NavLink>
+            </div>
+            <button onClick={() => supabase.auth.signOut()} className="flex items-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-left text-sm text-muted hover:bg-sunken hover:text-ink">
+              <LogOut size={17} aria-hidden /> Sign out
+            </button>
+          </div>
         </div>
+        {more && (
+          <button type="button" onClick={() => scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" })}
+            className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 bg-gradient-to-t from-surface via-surface/95 to-transparent pb-2 pt-6 text-xs font-medium text-muted hover:text-ink"
+            aria-label="Scroll the menu down to see more">
+            More <ChevronDown size={14} aria-hidden />
+          </button>
+        )}
       </aside>
       </div>
 
@@ -83,6 +113,7 @@ export default function Layout() {
           <div className="flex items-center gap-1">
             <ThemeControl compact />
             <NavLink to="/help" aria-label="Help" className="rounded-lg p-2 text-muted"><CircleHelp size={20} /></NavLink>
+            <button onClick={() => supabase.auth.signOut()} aria-label="Sign out" className="rounded-lg p-2 text-muted"><LogOut size={20} /></button>
           </div>
         </div>
         <div className="grid grid-cols-2 gap-2 border-b border-line bg-surface px-4 py-2 md:hidden"><RunningNow /><AutoPostBadge /></div>
