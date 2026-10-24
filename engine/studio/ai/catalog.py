@@ -97,3 +97,13 @@ def effective_model(catalog: dict, provider: str, model_id: str) -> str | None:
     if model_id not in missing:
         return model_id
     return missing[model_id]
+
+
+_SUGGESTED = re.compile(r"(?:update your code to use|use instead|has been replaced by|migrate to)\s+(?:models/)?([A-Za-z0-9._:/-]+[A-Za-z0-9])",
+                        re.I)
+
+
+def suggested_replacement(error_text: str) -> str | None:
+    """Providers often name the replacement when they retire a model; use it."""
+    m = _SUGGESTED.search(error_text or "")
+    return m.group(1) if m else None

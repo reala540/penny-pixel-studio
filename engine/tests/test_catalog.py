@@ -38,3 +38,10 @@ def test_unlisted_provider_keeps_configured_models(monkeypatch):
                                    "models": [{"id": "m1", "roles": ["critic"]}]}}}
     client = httpx.Client(transport=httpx.MockTransport(lambda req: httpx.Response(404)))
     assert catalog.refresh(cfg, client) == {"testp": {"listed": False, "missing": {}}}
+
+
+def test_reads_the_replacement_a_provider_suggests():
+    msg = ('404 "message": "This model models/gemini-2.5-pro is no longer available to new users. '
+           'Please update your code to use models/gemini-3.1-pro-preview for the latest features"')
+    assert catalog.suggested_replacement(msg) == "gemini-3.1-pro-preview"
+    assert catalog.suggested_replacement("404 not found") is None

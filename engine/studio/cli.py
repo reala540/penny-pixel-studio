@@ -231,10 +231,6 @@ def cmd_providers(a):
 
     cfg = config.providers()
     found = catalog.refresh(cfg)
-    if config.runtime().db_url:
-        with _conn() as conn:
-            db.set_setting(conn, "model_catalog", {"checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                                                   "providers": found})
     router = Router(MemoryUsageStore())
     results = []
     for name, p in (cfg.get("providers") or {}).items():
@@ -255,6 +251,18 @@ def cmd_providers(a):
                 # Thinking models spend tokens reasoning before they answer, so leave room.
                 res = router.complete("test", "Reply with the single word: ready", only=cand, max_tokens=600, temperature=0)
             except Exception as exc:
+                hint = catalog.suggested_replacement(str(exc))
+                if hint and hint != model:  # the provider told us the new name: remember it and try it
+                    found.setdefault(name, {"listed": False, "missing": {}})["missing"][m["id"]] = hint
+                    cand = Candidate(name, hint, p["base_url"].rstrip("/"), key or None, 0, None, None)
+                    try:
+                        res = router.complete("test", "Reply with the single word: ready", only=cand, max_tokens=600,
+                                              temperature=0)
+                        results.append({"provider": name, "model": hint, "status": "ok", "reply": res.text[:40],
+                                        "note": f"using {hint} (replaces {m['id']})"})
+                        break
+                    except Exception as exc2:
+                        exc = exc2
                 errors.append(f"{model}: {_short_error(exc)}")
                 raw.append(f"{model}: {str(exc)[-400:]}")
                 continue
@@ -264,6 +272,10 @@ def cmd_providers(a):
         else:
             results.append({"provider": name, "status": "failed", "error": "; ".join(errors)[:300] or "no chat model",
                             "swaps": swaps, "details": raw})
+    if config.runtime().db_url:
+        with _conn() as conn:
+            db.set_setting(conn, "model_catalog", {"checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                                   "providers": found})
     _print(results)
     _report_providers(results)
 

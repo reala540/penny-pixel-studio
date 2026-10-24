@@ -30,12 +30,12 @@ providers:
     commercial_use: assumed
     notes: "Free-tier prompts may be used by Google to improve products. Free tier unavailable in some regions."
     models:
-      - id: gemini-2.5-pro
+      - id: gemini-3.1-pro-preview
         roles: [angle_selector, scriptwriter]
         daily_requests: 50
         context: 1000000
         priority: 10
-      - id: gemini-2.5-flash
+      - id: gemini-3.8-flash
         roles: [research_summarizer, scriptwriter, critic, repurposer]
         daily_requests: 1000
         context: 1000000
