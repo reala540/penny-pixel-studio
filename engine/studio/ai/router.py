@@ -67,6 +67,11 @@ class AIResult:
                 "in": self.input_tokens, "out": self.output_tokens}
 
 
+def family(provider: str) -> str:
+    """The company behind a provider: extra accounts added as "cloudflare2", "cloudflare3"… belong to "cloudflare"."""
+    return re.sub(r"\d+$", "", provider)
+
+
 def extract_json(text: str) -> Any:
     """Parse JSON from a model reply, tolerating code fences and surrounding prose."""
     cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.MULTILINE).strip()
@@ -154,7 +159,9 @@ class Router:
                 out.append(Candidate(name, model_id, p["base_url"].rstrip("/"), key,
                                      int(mov.get("priority") or m.get("priority", 100)), limit, tok_limit,
                                      m.get("kind", "chat"), p.get("commercial_use", "assumed")))
-        out.sort(key=lambda c: (c.priority + 50 * self.usage.error_rate(c.provider, c.model), c.provider))
+        # Equal rank: the model used least today goes first, so the work rotates instead of one model doing it all.
+        out.sort(key=lambda c: (c.priority + 50 * self.usage.error_rate(c.provider, c.model),
+                                self.usage.requests_today(c.provider, c.model), c.provider))
         return out
 
     def available(self, role: str) -> bool:
@@ -305,7 +312,9 @@ class Router:
                 + json.dumps(schema.model_json_schema())
             )
         tried: list[dict] = []
-        cands = [only] if only else [c for c in self.candidates(role) if c.provider not in (exclude or set())]
+        # "cloudflare2" is another account at the same company: it can't independently check "cloudflare"'s work.
+        avoid = {family(p) for p in (exclude or set())}
+        cands = [only] if only else [c for c in self.candidates(role) if family(c.provider) not in avoid]
         if not cands:
             raise QuotaError(f"No free AI provider available for role '{role}'. Add API keys or wait for quotas to reset.")
         last_error: Exception | None = None

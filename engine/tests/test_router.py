@@ -136,3 +136,32 @@ def test_extract_json_variants():
     assert extract_json('{"a":1}') == {"a": 1}
     assert extract_json('Sure! ```json\n{"a": 2}\n``` hope that helps') == {"a": 2}
     assert extract_json('prefix {"a": 3} suffix') == {"a": 3}
+
+
+def test_equal_rank_rotates_to_the_least_used_model():
+    usage = MemoryUsageStore()
+    r = Router(usage, client=httpx.Client(transport=httpx.MockTransport(lambda req: reply("x"))), provider_config=cfg(
+        first={"enabled": True, "base_url": "https://first.test/v1", "key_env": "FIRST_KEY", "commercial_use": "assumed",
+               "models": [{"id": "f1", "roles": ["critic"], "priority": 20}]}))
+    assert [c.provider for c in r.candidates("critic")] == ["first", "second"]  # a tie: alphabetical
+    r.complete("critic", "hi")
+    assert [c.provider for c in r.candidates("critic")] == ["second", "first"]  # first was used, second goes next
+    r.complete("critic", "hi")
+    assert [c.provider for c in r.candidates("critic")] == ["first", "second"]
+
+
+def test_extra_accounts_of_one_company_are_not_independent():
+    seen = []
+
+    def handler(req):
+        seen.append(req.url.host)
+        return reply("ok")
+
+    r = Router(MemoryUsageStore(), client=httpx.Client(transport=httpx.MockTransport(handler)), provider_config={"providers": {
+        "cloudflare2": {"enabled": True, "base_url": "https://cf2.test/v1", "key_env": "FIRST_KEY", "commercial_use": "assumed",
+                        "models": [{"id": "llama", "roles": ["critic"], "priority": 1}]},
+        "other": {"enabled": True, "base_url": "https://other.test/v1", "key_env": "SECOND_KEY", "commercial_use": "assumed",
+                  "models": [{"id": "o1", "roles": ["critic"], "priority": 50}]},
+    }})
+    res = r.complete("critic", "check this", exclude={"cloudflare"})  # the writer was the main Cloudflare account
+    assert res.provider == "other" and seen == ["other.test"]
