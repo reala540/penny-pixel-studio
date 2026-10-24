@@ -134,11 +134,25 @@ export async function testCredential(env: Env, body: Json): Promise<Json> {
     result = { ok: false, status: 0, message: "Add CLOUDFLARE_ACCOUNT_ID to the Worker (run Deploy Worker) to test Workers AI keys", models: [] };
   } else {
     try {
-      const r = await fetch(`${base}/models`, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(15000) });
+      let r = await fetch(`${base}/models`, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(15000) });
       const data = (await r.json().catch(() => ({}))) as { data?: Array<{ id?: string }>; models?: Array<{ name?: string }> };
       const models = (data.data ?? []).map((m) => m.id ?? "").concat((data.models ?? []).map((m) => (m.name ?? "").replace(/^models\//, "")))
         .filter(Boolean).slice(0, 200);
-      const message = r.ok ? `Key works · ${models.length} models listed`
+      // Some providers (e.g. Cloudflare Workers AI) have no model list: ask one of this provider's models for a word instead.
+      let chatModel = "";
+      if (r.status === 404 || r.status === 405) {
+        const cfg = await db.select<{ model: string }>("ai_model_configs",
+          `provider=eq.${encodeURIComponent(rows[0].provider)}&enabled=eq.true&select=model&order=priority.asc&limit=1`);
+        if (cfg.length) {
+          chatModel = cfg[0].model;
+          r = await fetch(`${base}/chat/completions`, {
+            method: "POST", signal: AbortSignal.timeout(30000),
+            headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ model: chatModel, messages: [{ role: "user", content: "Reply with the single word: ready" }], max_tokens: 5 }),
+          });
+        }
+      }
+      const message = r.ok ? (chatModel ? `Key works · ${chatModel} answered` : `Key works · ${models.length} models listed`)
         : r.status === 401 || r.status === 403 ? "The provider rejected this key"
         : r.status === 429 ? "Key is valid but rate-limited right now"
         : `Provider answered ${r.status}`;

@@ -399,6 +399,25 @@ describe("AI API Manager", () => {
     expect(JSON.parse(String(patch.init!.body)).health).toBe("healthy");
   });
 
+  it("tests a key with one short message when the provider has no model list (Cloudflare)", async () => {
+    owner();
+    const id = "22222222-2222-4222-8222-222222222222";
+    const blob = await encryptJson(KEY_B64, { key: KEY });
+    routes.push((u) => (u.includes(`ai_credentials?id=eq.${id}&select=provider`) ? ok([{ provider: "cloudflare2" }]) : undefined));
+    routes.push((u) => (u.includes("ai_providers?name=eq.cloudflare2") ? ok([{ name: "cloudflare2", base_url: "https://cf.test/accounts/abc/ai/v1" }]) : undefined));
+    routes.push((u) => (u.includes("ai_credential_secrets?credential_id") ? ok([{ ciphertext: blob }]) : undefined));
+    routes.push((u) => (u.includes("ai_model_configs?provider=eq.cloudflare2") ? ok([{ model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast" }]) : undefined));
+    routes.push((u) => (u === "https://cf.test/accounts/abc/ai/v1/models" ? ok({}, 405) : undefined));
+    routes.push((u, i) => (u === "https://cf.test/accounts/abc/ai/v1/chat/completions" && i?.method === "POST"
+      ? (String((i?.headers as any)?.Authorization) === `Bearer ${KEY}` && JSON.parse(String(i.body)).model === "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+        ? ok({ choices: [{ message: { content: "ready" } }] }) : ok({}, 401)) : undefined));
+    const out = (await (await call("/api/credentials/test", { id })).json()) as any;
+    expect(out).toMatchObject({ ok: true, message: "Key works · @cf/meta/llama-3.3-70b-instruct-fp8-fast answered" });
+    expect(JSON.stringify(out)).not.toContain(KEY);
+    const patch = calls.find((c) => c.url.includes(`ai_credentials?id=eq.${id}`) && c.init?.method === "PATCH")!;
+    expect(JSON.parse(String(patch.init!.body)).health).toBe("healthy");
+  });
+
   it("only accepts public https provider addresses", async () => {
     owner();
     for (const base of ["http://api.example.com/v1", "https://127.0.0.1/v1", "https://localhost/v1", "https://user:pw@api.example.com"]) {
