@@ -243,7 +243,8 @@ def cmd_providers(a):
             results.append({"provider": name, "status": "no key", "env": p.get("key_env")})
             continue
         swaps = {k: v for k, v in (found.get(name) or {}).get("missing", {}).items()}
-        errors = []
+        errors: list[str] = []
+        raw: list[str] = []
         for m in (x for x in p["models"] if x.get("kind", "chat") == "chat"):
             model = catalog.effective_model(found, name, m["id"])
             if model is None:
@@ -255,13 +256,14 @@ def cmd_providers(a):
                 res = router.complete("test", "Reply with the single word: ready", only=cand, max_tokens=600, temperature=0)
             except Exception as exc:
                 errors.append(f"{model}: {_short_error(exc)}")
+                raw.append(f"{model}: {str(exc)[-400:]}")
                 continue
             note = f"using {model}" + (f" (replaces {m['id']})" if model != m["id"] else "")
             results.append({"provider": name, "model": model, "status": "ok", "note": note, "reply": res.text[:40]})
             break
         else:
             results.append({"provider": name, "status": "failed", "error": "; ".join(errors)[:300] or "no chat model",
-                            "swaps": swaps})
+                            "swaps": swaps, "details": raw})
     _print(results)
     _report_providers(results)
 
