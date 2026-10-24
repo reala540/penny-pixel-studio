@@ -1,14 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Pause, Play } from "lucide-react";
+import { ChevronLeft, ChevronRight, Pause, Play, PlusCircle } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import ClearButton from "../components/ClearButton";
+import { AutoPostBadge } from "../components/AutoPostToggle";
 import Rundown from "../components/Rundown";
 import { Confirm, ErrorNote, HostTag, Loading, PageHeader, StatusBadge, useToast } from "../components/ui";
 import { must, useAccounts, useSaveSetting, useSetting, useTimezone } from "../lib/api";
 import { useCleared, visibleAfterClear } from "../lib/clear";
 import { fixFor } from "../lib/labels";
-import { localDay, weekDays } from "../lib/format";
+import { jobTitle, useRunningJobs } from "../lib/activity";
+import { fmtDateTime, localDay, statusText, weekDays } from "../lib/format";
+import { useKeyCheck, useReadiness } from "../lib/readiness";
+import { projectPath } from "../lib/routes";
 import { signedUrl, supabase } from "../lib/supabase";
 import type { Post, Project } from "../lib/types";
 
@@ -21,6 +25,7 @@ export default function Home() {
   const base = new Date(Date.now() + offset * 7 * 86_400_000);
   const days = weekDays(base, tz);
   const accounts = useAccounts();
+  const ready = useReadiness();
   const posts = useQuery({
     queryKey: ["posts", days[0]],
     queryFn: async () => {
@@ -29,13 +34,6 @@ export default function Home() {
       return (await must(supabase.from("scheduled_posts").select(POST_SELECT).gte("scheduled_at", from).lte("scheduled_at", to).neq("status", "cancelled"))) as unknown as Post[];
     },
   });
-  const waiting = useQuery({
-    queryKey: ["waiting"],
-    queryFn: async () =>
-      (await must(supabase.from("content_projects").select("id, title, status, channel_slug, format, parent_project_id, quality_report")
-        .in("status", ["ready_for_review", "needs_attention"]).is("parent_project_id", null).order("created_at", { ascending: false }).limit(8))) as Project[],
-  });
-
   const week = posts.data ?? [];
   const counts = {
     total: week.length,
@@ -43,17 +41,19 @@ export default function Home() {
     done: week.filter((p) => p.status === "published").length,
     problems: week.filter((p) => ["failed", "blocked", "needs_review", "needs_manual"].includes(p.status)).length,
   };
-
   return (
     <>
-      <PageHeader
-        title="This week on air"
-        intro={summaryLine(counts)}
-        actions={<PauseButton />}
-      />
-      <section aria-labelledby="rundown-title" className="mb-10">
+      <PageHeader title="Home" intro={summaryLine(counts)}
+        actions={<CreateButton canCreate={ready.canCreate} reason={ready.blockers[0]?.text} />} />
+      <div className="-mt-3 mb-6 max-w-md"><AutoPostBadge /></div>
+      <NeedsYou readiness={ready} />
+      <div className="mt-8 grid grid-cols-1 gap-8 lg:grid-cols-2">
+        <BeingMade />
+        <NextPosts tz={tz} />
+      </div>
+      <section aria-labelledby="rundown-title" className="mt-10">
         <div className="mb-3 flex items-center justify-between gap-3">
-          <h2 id="rundown-title" className="section-title">Rundown</h2>
+          <h2 id="rundown-title" className="section-title">This week</h2>
           <WeekPicker offset={offset} setOffset={setOffset} />
         </div>
         <ErrorNote error={posts.error || accounts.error} />
@@ -63,39 +63,166 @@ export default function Home() {
         <p className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted">
           <span className="inline-flex items-center gap-1.5"><HostTag channel="ai" /> AI topics</span>
           <span className="inline-flex items-center gap-1.5"><HostTag channel="money" /> Money topics</span>
-          <span>Dashed outline: waiting for your approval</span>
+          <span>Dashed outline: waiting for approval</span>
           <span>Red outline: needs attention</span>
         </p>
       </section>
+      <div className="mt-10 grid grid-cols-1 gap-8 lg:grid-cols-[1.3fr_1fr]">
+        <details className="rounded-xl border border-line bg-surface">
+          <summary className="cursor-pointer px-4 py-3 text-sm font-semibold">Studio health <span className="font-normal text-muted">· AI services, X spending, problems this week</span></summary>
+          <div className="border-t border-line p-3"><Health /></div>
+        </details>
+        <div className="flex flex-col items-start gap-3">
+          <TelegramHint />
+          <PauseButton />
+        </div>
+      </div>
+    </>
+  );
+}
 
-      <div className="grid grid-cols-1 gap-10 lg:grid-cols-[1.3fr_1fr]">
-        <section aria-labelledby="waiting-title" className="min-w-0">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 id="waiting-title" className="section-title">Waiting for you</h2>
-            <Link to="/review" className="btn-quiet">Open Review Studio</Link>
-          </div>
-          {waiting.isLoading ? <Loading /> : (waiting.data ?? []).length === 0 ? (
-            <p className="text-sm text-muted">Nothing to review. New videos arrive on Sunday evening.</p>
-          ) : (
+function CreateButton({ canCreate, reason }: { canCreate: boolean; reason?: string }) {
+  if (canCreate) return <Link to="/create" className="btn-primary"><PlusCircle size={16} aria-hidden />Create content</Link>;
+  return (
+    <span className="flex flex-col items-end gap-1">
+      <button className="btn-primary" disabled aria-describedby="create-blocked"><PlusCircle size={16} aria-hidden />Create content</button>
+      <span id="create-blocked" className="text-xs text-alert">{reason ?? "The studio can't create right now."}</span>
+    </span>
+  );
+}
+
+function TelegramHint() {
+  const linked = useSetting<string | null>("telegram_chat_id", null);
+  const [hidden, setHidden] = useState(() => { try { return localStorage.getItem("studio-hide-telegram-hint") === "1"; } catch { return false; } });
+  if (linked.isLoading || linked.data || hidden) return null;
+  return (
+    <p className="flex items-start gap-2 rounded-lg bg-sunken px-3 py-2 text-sm">
+      <span>Recommended: get alerts on your phone. <Link to="/settings/notifications" className="text-pixel underline">Link Telegram</Link> (optional).</span>
+      <button className="text-xs text-muted hover:text-ink" aria-label="Hide this tip" onClick={() => { setHidden(true); try { localStorage.setItem("studio-hide-telegram-hint", "1"); } catch { /* private mode */ } }}>Hide</button>
+    </p>
+  );
+}
+
+type Need = { key: string; tone: "bad" | "info" | "warn"; text: string; action: React.ReactNode };
+
+function NeedsYou({ readiness }: { readiness: ReturnType<typeof useReadiness> }) {
+  const keyCheck = useKeyCheck();
+  const toast = useToast();
+  const data = useQuery({
+    queryKey: ["home-needs-you"],
+    refetchInterval: 30_000,
+    queryFn: async () => {
+      const since = new Date(Date.now() - 3 * 86_400_000).toISOString();
+      const [jobs, posts, review, accounts] = await Promise.all([
+        must(supabase.from("generation_jobs").select("id, job_type, error_message, input, project_id, updated_at, content_projects(title)").eq("status", "failed")
+          .in("job_type", ["produce_idea", "run_mission", "run_production", "run_research", "generate_ideas", "regenerate_script", "rerender_preview", "weekly_production", "weekly_research"])
+          .gte("updated_at", since).order("updated_at", { ascending: false }).limit(4)),
+        must(supabase.from("scheduled_posts").select("id, status, last_error, scheduled_at, social_accounts(label)").in("status", ["failed", "blocked", "needs_review"]).gte("updated_at", since).limit(5)),
+        must(supabase.from("content_projects").select("id, title, status, channel_slug").in("status", ["ready_for_review", "needs_attention"]).is("parent_project_id", null).order("created_at", { ascending: false }).limit(6)),
+        must(supabase.from("social_accounts").select("id, label, enabled, oauth_connections(status)")),
+      ]);
+      return { jobs: jobs as any[], posts: posts as any[], review: review as any[], accounts: accounts as any[] };
+    },
+  });
+  const cleared = useCleared();
+  const needs: Need[] = [];
+  for (const b of readiness.blockers) needs.push({ key: b.text, tone: "bad", text: b.text, action: <Link className="btn-quiet" to={b.to}>Fix it</Link> });
+  if (readiness.checkedAt && readiness.stale || !readiness.checkedAt) {
+    needs.push({ key: "stale", tone: "warn", text: readiness.checkedAt ? `The AI key check is ${hoursAgo(readiness.checkedAt)} old; results may have changed.` : "The AI keys haven't been checked yet.",
+      action: <button className="btn-quiet" disabled={keyCheck.running || keyCheck.run.isPending} onClick={() => keyCheck.run.mutate(undefined, { onSuccess: () => toast("Testing the AI keys. Results appear in a few minutes."), onError: (e) => toast((e as Error).message, "bad") })}>{keyCheck.running ? "Testing…" : "Test again"}</button> });
+  }
+  if (readiness.uncoveredRoles.length && readiness.checkedAt) {
+    needs.push({ key: "roles", tone: "warn", text: `No AI service that passed the last check does: ${readiness.uncoveredRoles.join(", ")}. Packages may stop at that step.`, action: <Link className="btn-quiet" to="/settings/ai">Check AI services</Link> });
+  }
+  for (const j of visibleAfterClear(data.data?.jobs ?? [], cleared.map, "rundown_problems", (x) => x.updated_at)) {
+    const fix = fixFor(j.error_message);
+    needs.push({ key: j.id, tone: "bad", text: `${jobTitle(j)} didn't work: ${String(j.error_message ?? "").slice(0, 140)}`,
+      action: j.project_id ? <Link className="btn-quiet" to={projectPath(j.project_id)}>Open</Link> : fix ? <Link className="btn-quiet" to={fix.to}>{fix.label}</Link> : null });
+  }
+  for (const p of data.data?.posts ?? []) {
+    needs.push({ key: p.id, tone: "bad", text: `${p.social_accounts?.label ?? "A post"}: ${statusText(p.status)}${p.last_error ? `: ${String(p.last_error).slice(0, 100)}` : ""}`, action: <Link className="btn-quiet" to={`/calendar?post=${p.id}`}>Open in Calendar</Link> });
+  }
+  for (const a of data.data?.accounts ?? []) {
+    const st = (Array.isArray(a.oauth_connections) ? a.oauth_connections[0] : a.oauth_connections)?.status;
+    if (a.enabled && ["expired", "needs_reauth", "error"].includes(st)) needs.push({ key: a.id, tone: "bad", text: `${a.label} needs reconnecting before it can post.`, action: <Link className="btn-quiet" to="/settings/accounts">Reconnect</Link> });
+  }
+  for (const r of data.data?.review ?? []) {
+    needs.push({ key: r.id, tone: "info", text: `"${r.title}" ${r.status === "needs_attention" ? "needs a look" : "is ready for review"}`, action: <Link className="btn-primary" to={projectPath(r.id)}>Review</Link> });
+  }
+  return (
+    <section aria-labelledby="needs-title">
+      <h2 id="needs-title" className="section-title mb-3">Needs you</h2>
+      {data.isLoading || readiness.loading ? <Loading /> : (
+        <>
+          <ErrorNote error={data.error} />
+          {needs.length === 0 ? <p className="rounded-xl border border-dashed border-line px-4 py-3 text-sm text-muted">Nothing needs you right now.</p> : (
             <ul className="divide-y divide-line rounded-xl border border-line bg-surface">
-              {(waiting.data ?? []).map((p) => (
-                <li key={p.id}>
-                  <Link to={`/review/${p.id}`} className="flex items-center gap-3 px-4 py-3 hover:bg-sunken">
-                    <HostTag channel={p.channel_slug} />
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium">{p.title}</span>
-                    <StatusBadge status={p.status} />
-                  </Link>
+              {needs.map((n) => (
+                <li key={n.key} className="flex flex-wrap items-center gap-3 px-4 py-3">
+                  <span className={`h-2 w-2 shrink-0 rounded-full ${n.tone === "bad" ? "bg-alert" : n.tone === "warn" ? "bg-gold" : "bg-pixel"}`} aria-hidden />
+                  <span className="min-w-0 flex-1 text-sm">{n.text}</span>
+                  {n.action}
                 </li>
               ))}
             </ul>
           )}
-        </section>
-        <div className="min-w-0 space-y-10">
-          <ManualTasks />
-          <Health />
-        </div>
-      </div>
-    </>
+          <div className="mt-4"><ManualTasks /></div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function hoursAgo(iso: string): string {
+  const h = Math.round((Date.now() - Date.parse(iso)) / 3_600_000);
+  return h < 48 ? `${h} hours` : `${Math.round(h / 24)} days`;
+}
+
+function BeingMade() {
+  const running = useRunningJobs();
+  const jobs = running.data ?? [];
+  return (
+    <section aria-labelledby="making-title">
+      <h2 id="making-title" className="section-title mb-3">Being made now</h2>
+      {running.isLoading ? <Loading /> : jobs.length === 0 ? <p className="text-sm text-muted">Nothing is being made right now.</p> : (
+        <ul className="space-y-2">
+          {jobs.slice(0, 4).map((j) => (
+            <li key={j.id} className="rounded-xl border border-line bg-surface px-4 py-3 text-sm">
+              <p className="font-medium">{jobTitle(j)}</p>
+              <p className="text-muted">{j.status === "queued" ? "Waiting to start (within 15 minutes)" : j.progress?.label ?? "Working…"}</p>
+            </li>
+          ))}
+        </ul>
+      )}
+      <Link to="/activity" className="mt-2 inline-block text-sm text-pixel hover:underline">See Activity</Link>
+    </section>
+  );
+}
+
+function NextPosts({ tz }: { tz: string }) {
+  const next = useQuery({
+    queryKey: ["next-posts"],
+    queryFn: async () => (await must(supabase.from("scheduled_posts").select("id, scheduled_at, status, social_accounts(label), content_variants(title, kind, content_projects(title))")
+      .in("status", ["scheduled", "pending_approval"]).gte("scheduled_at", new Date().toISOString()).order("scheduled_at").limit(5))) as any[],
+  });
+  return (
+    <section aria-labelledby="next-title">
+      <h2 id="next-title" className="section-title mb-3">Next posts</h2>
+      {next.isLoading ? <Loading /> : (next.data ?? []).length === 0 ? <p className="text-sm text-muted">Nothing planned yet. <Link to="/create" className="text-pixel underline">Create content</Link> to fill your week.</p> : (
+        <ul className="divide-y divide-line rounded-xl border border-line bg-surface text-sm">
+          {(next.data ?? []).map((p) => (
+            <li key={p.id}>
+              <Link to={`/calendar?post=${p.id}`} className="flex flex-wrap items-center gap-3 px-4 py-2.5 hover:bg-sunken">
+                <span className="w-28 tabular text-muted">{fmtDateTime(p.scheduled_at, tz)}</span>
+                <span className="min-w-0 flex-1 truncate">{p.social_accounts?.label} · {p.content_variants?.title || p.content_variants?.content_projects?.title}</span>
+                <StatusBadge status={p.status} />
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+      <Link to="/calendar" className="mt-2 inline-block text-sm text-pixel hover:underline">Open calendar</Link>
+    </section>
   );
 }
 
@@ -117,7 +244,7 @@ function summaryLine(c: { total: number; waiting: number; done: number; problems
   return parts.join(", ") + ".";
 }
 
-function PauseButton() {
+export function PauseButton() {
   const paused = useSetting<boolean>("paused", false).data ?? false;
   const save = useSaveSetting();
   const toast = useToast();

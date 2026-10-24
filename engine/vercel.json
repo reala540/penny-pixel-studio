@@ -1,5 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "git": { "deploymentEnabled": { "feat/dashboard-reorg-b1": false } },
   "framework": null,
   "installCommand": "echo 'Static status page: no install needed'",
   "buildCommand": "echo 'Static status page: no build needed'",

@@ -44,7 +44,7 @@ export default function Rundown({ accounts, posts, days, tz, today }: {
               <th scope="row" className="px-3 py-2 align-top text-sm font-medium">
                 {a.label}
                 {a.oauth_connections?.status !== "connected" && (
-                  <Link to="/settings" className="mt-0.5 block text-xs font-normal text-alert underline-offset-2 hover:underline">Not connected</Link>
+                  <Link to="/settings/accounts" className="mt-0.5 block text-xs font-normal text-alert underline-offset-2 hover:underline">Not connected</Link>
                 )}
               </th>
               {days.map((d) => {

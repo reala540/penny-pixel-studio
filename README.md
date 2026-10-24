@@ -1,4 +1,4 @@
-# Penny & Pixel Studio — AI Content Studio v2.5
+# Penny & Pixel Studio — AI Content Studio v2.6
 
 A free-first, mostly automated content studio for two faceless YouTube channels (**Penny & Pixel AI** with host
 Pixel, **Penny & Pixel Money** with host Penny), a Facebook Page, TikTok and X.
@@ -7,6 +7,14 @@ Pixel, **Penny & Pixel Money** with host Penny), a Facebook Page, TikTok and X.
 - Specification: [docs/SPEC_v2.1.md](docs/SPEC_v2.1.md) · Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) ·
   Providers and free limits: [docs/PROVIDERS_AND_LIMITS.md](docs/PROVIDERS_AND_LIMITS.md) ·
   Mission Control: [docs/CONTROL_ROOM.md](docs/CONTROL_ROOM.md) · Ideas, themes and API keys: [docs/IDEAS_AND_API_KEYS.md](docs/IDEAS_AND_API_KEYS.md) · Auto Review & Post: [docs/AUTO_REVIEW_AND_POST.md](docs/AUTO_REVIEW_AND_POST.md) · Setup, Activity and schedule: [docs/SETUP_ACTIVITY_SCHEDULE.md](docs/SETUP_ACTIVITY_SCHEDULE.md) · What was tested: [docs/TEST_REPORT.md](docs/TEST_REPORT.md)
+
+## New in v2.6
+
+- **Five pages**: Home, Create, Content, Calendar, Activity (Settings, Help, theme and Sign out at the bottom; **More** on a phone). Old links and platform sign-in returns redirect to the new pages.
+- **Create one package from one idea** (`produce_idea` job): only the chosen idea is made, posts are planned and auto-reviewed for that package only, two presses make one package, and a failed step resumes without remaking finished work or posts. Publishing pause doesn't block it.
+- **Honest readiness**: Create is blocked only by real problems (Worker, database, GitHub, no passing AI service). A key check older than 24 hours is flagged with **Test again**, and jobs no passing service covers are named.
+- **Approval mode shown before Create package** and in the menu: *You approve* or *Auto Review & Post*.
+- **Migration 9** (`20261026000009_produce_selected_idea.sql`): links a generated idea to its research idea once, and allows one package per idea. Apply it after merging with **Actions → First-time setup → keys_only** (or `studio migrate`); it's safe to repeat. Existing data was checked read-only: no duplicates block it.
 
 ## New in v2.5
 

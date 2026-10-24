@@ -56,7 +56,11 @@ export function useIdeaActions() {
     onSuccess: refresh,
   });
   const generate = useMutation({
-    mutationFn: (trigger: "manual" | "regenerate") => queueJob("generate_ideas", { input: { trigger } }),
+    // `channel` uses the job's existing override: ideas for one channel only
+    mutationFn: (arg: "manual" | "regenerate" | { trigger: "manual" | "regenerate"; channel?: "ai" | "money" }) => {
+      const { trigger, channel } = typeof arg === "string" ? { trigger: arg, channel: undefined } : arg;
+      return queueJob("generate_ideas", { input: { trigger, ...(channel ? { overrides: { channels: [channel] } } : {}) } });
+    },
     onSuccess: refresh,
   });
   const refine = useMutation({

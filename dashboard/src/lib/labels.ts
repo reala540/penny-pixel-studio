@@ -20,11 +20,11 @@ export function fixFor(text: string | null | undefined): { label: string; to: st
   const t = (text ?? "").toLowerCase();
   if (!t) return null;
   if (/fresh|content expired|expired facts|stale|recheck/.test(t)) return { label: "Re-check the facts", to: "/calendar" };
-  if (/reconnect|expired|needs_reauth|invalid_grant|token .*(expired|revoked)|login/.test(t)) return { label: "Reconnect the account", to: "/settings#accounts" };
-  if (/telegram/.test(t)) return { label: "Fix Telegram", to: "/setup#telegram" };
-  if (/api key|no key|unauthori[sz]ed|401|403|invalid key|no ai provider|quota|rate limit|429/.test(t)) return { label: "Check AI keys", to: "/api" };
-  if (/review|approval|needs your/.test(t)) return { label: "Open Review", to: "/review" };
+  if (/reconnect|expired|needs_reauth|invalid_grant|token .*(expired|revoked)|login/.test(t)) return { label: "Reconnect the account", to: "/settings/accounts" };
+  if (/telegram/.test(t)) return { label: "Fix Telegram", to: "/settings/notifications" };
+  if (/api key|no key|unauthori[sz]ed|401|403|invalid key|no ai provider|quota|rate limit|429/.test(t)) return { label: "Check AI keys", to: "/settings/ai" };
+  if (/review|approval|needs your/.test(t)) return { label: "Open Content", to: "/content?tab=needs-you" };
   if (/post|publish|upload/.test(t)) return { label: "Open Calendar", to: "/calendar" };
-  if (/worker|dispatch|github/.test(t)) return { label: "Run the setup check", to: "/setup" };
+  if (/worker|dispatch|github/.test(t)) return { label: "Run the setup check", to: "/settings/setup" };
   return { label: "See what to do", to: "/help" };
 }

@@ -1,14 +1,17 @@
-import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, CircleAlert, CircleCheck, Info, LoaderCircle } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { ArrowRight, BookOpenCheck, CircleAlert, CircleCheck, Info, LoaderCircle, Search, Sparkles } from "lucide-react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import ClearButton from "../components/ClearButton";
-import { Empty, ErrorNote, Loading, PageHeader } from "../components/ui";
+import { Confirm, Empty, ErrorNote, Loading, PageHeader, useToast } from "../components/ui";
 import { buildTimeline, Category, inFilter, Item, jobTitle, useRunningJobs, type AuditRow, type JobRow, type NoteRow } from "../lib/activity";
-import { must, useTimezone } from "../lib/api";
+import { must, runWorkflow, useSetting, useTimezone } from "../lib/api";
 import { useCleared, visibleAfterClear } from "../lib/clear";
 import { fixFor } from "../lib/labels";
 import { supabase } from "../lib/supabase";
+
+const ControlRoom = lazy(() => import("./ControlRoom"));
+const TECH_KEY = "studio-tech-details";
 
 const FILTERS: [Category | "all" | "errors", string][] = [
   ["all", "Everything"], ["ideas", "Ideas"], ["research", "Research"], ["production", "Making videos"],
@@ -59,6 +62,7 @@ export default function Activity() {
           body={<>This hides the {items.length} event{items.length === 1 ? "" : "s"} listed now. Work in progress stays, new events keep appearing, and the audit log is never cleared. You can undo this.</>}
           onClear={() => cleared.clear("activity")} />} />
 
+      <QuickActions />
       <HowItWorks />
 
       <section aria-labelledby="now-title" className="mb-8">
@@ -107,7 +111,60 @@ export default function Activity() {
           </ol>
         )}
       </section>
+      <TechnicalDetails />
     </>
+  );
+}
+
+function TechnicalDetails() {
+  const [open, setOpen] = useState(() => { try { return localStorage.getItem(TECH_KEY) === "open"; } catch { return false; } });
+  return (
+    <details className="mt-10 rounded-xl border border-line bg-surface" open={open}
+      onToggle={(e) => { const o = (e.target as HTMLDetailsElement).open; setOpen(o); try { localStorage.setItem(TECH_KEY, o ? "open" : "closed"); } catch { /* private mode */ } }}>
+      <summary className="cursor-pointer px-4 py-3 text-sm font-semibold">Technical details <span className="font-normal text-muted">· AI calls, who's working, model council, jobs, readiness</span></summary>
+      {open && <div className="border-t border-line p-2"><Suspense fallback={<Loading label="Loading technical details" />}><ControlRoom embedded /></Suspense></div>}
+    </details>
+  );
+}
+
+type Workflow = "research" | "produce" | "publish";
+const ACTIONS: { w: Workflow; icon: typeof Search; label: string; text: string; confirm: [string, string, string] }[] = [
+  { w: "research", icon: Search, label: "Research this week", text: "Collects fresh sources and pitches ideas for both channels.",
+    confirm: ["Research this week now?", "The studio collects fresh sources and adds ideas to Content → Ideas. Nothing is made or posted.", "Start research"] },
+  { w: "produce", icon: Sparkles, label: "Make this week's videos (batch)", text: "Makes every shortlisted idea for the week, up to your free capacity.",
+    confirm: ["Make this week's videos?", "Makes every shortlisted idea for the week, up to your free capacity. Each package waits for approval (or Auto Review & Post).", "Start batch"] },
+  { w: "publish", icon: BookOpenCheck, label: "Publish approved & due posts", text: "Publishes every approved post whose time has come.",
+    confirm: ["Publish approved posts that are due?", "Only posts that are approved and whose time has come are published, with every usual check.", "Publish due posts"] },
+];
+
+/** The single home of "run something now". */
+function QuickActions() {
+  const toast = useToast();
+  const paused = useSetting<boolean>("paused", false).data === true;
+  const [ask, setAsk] = useState<Workflow | null>(null);
+  const run = useMutation({
+    mutationFn: (w: Workflow) => runWorkflow(w),
+    onSuccess: (_d, w) => toast(`${ACTIONS.find((a) => a.w === w)!.label} started. It shows under Running now.`),
+    onError: (e) => toast((e as Error).message, "bad"),
+  });
+  const current = ACTIONS.find((a) => a.w === ask);
+  return (
+    <section id="quick-actions" aria-labelledby="qa-title" className="mb-8 scroll-mt-6">
+      <h2 id="qa-title" className="section-title mb-3">Quick actions</h2>
+      <div className="grid gap-2 sm:grid-cols-3">
+        {ACTIONS.map(({ w, icon: Icon, label, text }) => (
+          <button key={w} className="flex items-start gap-3 rounded-xl border border-line bg-surface p-4 text-left hover:bg-sunken disabled:opacity-60"
+            disabled={run.isPending} onClick={() => setAsk(w)}>
+            <Icon size={18} className="mt-0.5 shrink-0 text-pixel" aria-hidden />
+            <span><span className="block text-sm font-semibold">{label}</span><span className="block text-xs text-muted">{text}</span>
+              {paused && w === "produce" && <span className="mt-1 block text-xs text-alert">While publishing is paused the weekly batch is skipped (as before). Single packages from Create still work.</span>}
+              {paused && w === "publish" && <span className="mt-1 block text-xs text-alert">Publishing is paused: nothing will be posted.</span>}</span>
+          </button>
+        ))}
+      </div>
+      <Confirm open={Boolean(current)} title={current?.confirm[0] ?? ""} body={current?.confirm[1] ?? ""} confirmLabel={current?.confirm[2] ?? ""}
+        onCancel={() => setAsk(null)} onConfirm={() => { const w = ask!; setAsk(null); run.mutate(w); }} />
+    </section>
   );
 }
 
@@ -139,7 +196,7 @@ function RunningRow({ job, tz }: { job: JobRow; tz: string }) {
 function TimelineRow({ item, tz }: { item: Item; tz: string }) {
   const Icon = item.tone === "bad" ? CircleAlert : item.tone === "good" ? CircleCheck : Info;
   const fix = item.error ? fixFor(`${item.title} ${item.detail ?? ""}`) : null;
-  const internal = item.link && item.link.includes("/review/") ? `/review/${item.link.split("/review/")[1]}` : null;
+  const internal = item.link && item.link.includes("/review/") ? `/content/${item.link.split("/review/")[1]}` : null;
   return (
     <li className="flex gap-3 px-4 py-3">
       <Icon size={17} className={`mt-0.5 shrink-0 ${item.tone === "bad" ? "text-alert" : item.tone === "good" ? "text-penny" : "text-muted"}`} aria-hidden />
@@ -181,11 +238,11 @@ function useToday(tz: string) {
 }
 
 const STAGES: { label: string; to: string; explain: string }[] = [
-  { label: "Ideas", to: "/ideas", explain: "Find topics people care about now" },
-  { label: "Research", to: "/research", explain: "Collect dated sources and facts" },
-  { label: "Write", to: "/activity", explain: "Script in the host's voice" },
-  { label: "Check", to: "/activity", explain: "Facts, quality, freshness, licences" },
-  { label: "Review", to: "/review", explain: "You (or Auto Review) approve" },
+  { label: "Ideas", to: "/content/ideas", explain: "Find topics people care about now" },
+  { label: "Research", to: "/content/ideas?source=research", explain: "Collect dated sources and facts" },
+  { label: "Write", to: "/content?tab=in-progress", explain: "Script in the host's voice" },
+  { label: "Check", to: "/content?tab=in-progress", explain: "Facts, quality, freshness, licences" },
+  { label: "Review", to: "/content?tab=needs-you", explain: "You (or Auto Review) approve" },
   { label: "Post", to: "/calendar", explain: "Goes out at its scheduled time" },
 ];
 

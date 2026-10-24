@@ -187,10 +187,14 @@ def ensure_project(conn, channel: str, fmt: str, title: str, week: date, idea_id
     return p
 
 
-def produce_project(conn, router: Router, storage, idea: dict, week: date) -> dict:
+def produce_project(conn, router: Router, storage, idea: dict, week: date, *, project: dict | None = None,
+                    stage=None) -> dict:
+    """One idea's package. Every stage is resumable: finished stages are skipped when it runs again.
+    `project` reuses an existing package; `stage(label, step, total)` reports progress (the guided Create flow)."""
     channel = idea["channel_slug"]
-    project = ensure_project(conn, channel, "long", idea["title"], week, idea_id=idea["id"])
+    project = project or ensure_project(conn, channel, "long", idea["title"], week, idea_id=idea["id"])
     pid = project["id"]
+    report = stage or (lambda *_: None)
     sources = _sources_for(conn, list(idea["source_ids"]))
     idea_d = {"title": idea["title"], "angle": idea.get("angle") or ""}
     holder: dict = {}
@@ -211,6 +215,7 @@ def produce_project(conn, router: Router, storage, idea: dict, week: date) -> di
         holder["facts"] = result.facts.model_dump()
         return {"script_version_id": str(sv["id"]), "facts": holder["facts"], "needs_attention": result.needs_attention}
 
+    report("Writing the script and checking the facts", 1, 4)
     st = jobs.run_stage(conn, "script", f"script:{pid}", do_script, project_id=pid)
     if not st.ok:
         db.run(conn, "update content_projects set status=%s where id=%s",
@@ -240,16 +245,19 @@ def produce_project(conn, router: Router, storage, idea: dict, week: date) -> di
                (db.j({"package": pdata}), db.j(qr), pid))
         return {"children": children}
 
+    report("Making the Shorts, titles and post texts", 2, 4)
     pk = jobs.run_stage(conn, "package", f"package:{pid}", do_package, project_id=pid)
     if not pk.ok:
         return {"project_id": str(pid), "status": pk.status, "error": pk.job.get("error_message")}
 
     out = {"project_id": str(pid), "children": pk.output["children"]}
+    report(f"Rendering previews (1 video, {len(pk.output['children'])} Shorts)", 3, 4)
     render_preview(conn, storage, pid, script.model_dump(), channel, "long")
     for cid in pk.output["children"]:
         csv = db.one(conn, """select sv.body from content_projects p join script_versions sv
                               on sv.id=p.current_script_version_id where p.id=%s""", (cid,))
         render_preview(conn, storage, cid, csv["body"], channel, "short")
+    report("Making thumbnails", 4, 4)
     make_thumbnails(conn, storage, pid, channel)
     final_status(conn, pid)
     for cid in pk.output["children"]:
@@ -389,8 +397,10 @@ def _produce_batch(conn, router: Router, storage, week: date, *, channel: str | 
     for slug, n in plan["long_per_channel"].items():
         if selected_channel and slug != selected_channel:
             continue
-        ideas = db.all_(conn, """select * from content_ideas where batch_week=%s and channel_slug=%s
-                                 and status in ('shortlisted','selected') order by is_experiment, score desc limit %s""",
+        ideas = db.all_(conn, """select * from content_ideas i where batch_week=%s and channel_slug=%s
+                                 and status in ('shortlisted','selected')
+                                 and not exists (select 1 from content_projects p where p.idea_id = i.id)
+                                 order by is_experiment, score desc limit %s""",
                         (week, slug, n))
         for n_done, idea in enumerate(ideas, 1):
             jobs.progress(conn, f"Making {slug} video {n_done} of {len(ideas)}: {idea['title']}", n_done, len(ideas))
@@ -509,3 +519,169 @@ def _assign(conn, acc: dict, projects: list[dict], kind: str, slots: list[dateti
                    (v["id"], acc["id"], when, f"post:{v['id']}"))
         n += 1
     return n
+
+
+# ----------------------------------------------------------------------------- one selected idea (guided Create)
+
+STAGES = ("script", "package", "render_preview", "thumbnails")
+DECIDED = ("approved", "scheduled", "published", "rejected", "archived")
+
+
+def idea_for_production(conn, *, content_idea_id=None, generated_idea_id=None, channel: str | None = None) -> dict:
+    """The research idea to make. A generated idea is converted once, keeping its stored sources as the evidence;
+    the row lock makes two simultaneous requests get the same research idea."""
+    if content_idea_id:
+        idea = db.one(conn, "select * from content_ideas where id=%s", (content_idea_id,))
+        if not idea:
+            raise ValueError("That idea no longer exists.")
+        if channel in ("ai", "money") and idea["channel_slug"] != channel:
+            raise ValueError("That idea belongs to the other channel.")
+        return idea
+    if not generated_idea_id:
+        raise ValueError("Choose an idea first.")
+    with db.transaction(conn):
+        g = db.one(conn, "select * from generated_ideas where id=%s for update", (generated_idea_id,))
+        if not g:
+            raise ValueError("That idea no longer exists.")
+        if g["content_idea_id"]:
+            return db.one(conn, "select * from content_ideas where id=%s", (g["content_idea_id"],))
+        if g["status"] == "rejected":
+            raise ValueError("That idea was marked Not for me. Restore it first.")
+        ch = g["channel_slug"] if g["channel_slug"] in ("ai", "money") else channel
+        if ch not in ("ai", "money"):
+            raise ValueError("Choose Pixel or Penny for this idea.")
+        if channel in ("ai", "money") and channel != ch:
+            raise ValueError("That idea belongs to the other channel.")
+        wanted = [s.get("source_id") for s in (g["trend_signals"] or []) if s.get("source_id")]
+        stored = {str(r["id"]) for r in db.all_(conn, "select id from research_sources where id::text = any(%s)", (wanted,))}
+        source_ids = [i for i in dict.fromkeys(wanted) if i in stored]  # keep the idea's own order
+        if not source_ids:
+            raise ValueError("This idea has no stored sources to check facts against. Use Research it deeper first.")
+        idea = db.one(conn, """insert into content_ideas (channel_slug, title, angle, status, score, score_breakdown,
+                                                          explanation, source_ids, batch_week)
+                               values (%s,%s,%s,'selected',%s,%s,%s,%s::uuid[],%s) returning *""",
+                      (ch, g["title"], g["summary"], g["total"],
+                       db.j({**(g["scores"] or {}), "from_generated_idea": str(g["id"])}),
+                       g["score_explanation"], source_ids, research.week_start()))
+        history = list(g["status_history"] or []) + [
+            {"at": datetime.now(timezone.utc).isoformat(), "status": "sent_to_studio", "by": "engine", "note": "package requested"}]
+        db.run(conn, """update generated_ideas set content_idea_id=%s, status='sent_to_studio', status_history=%s
+                        where id=%s""", (idea["id"], db.j(history), g["id"]))
+    return idea
+
+
+def produce_idea(conn, router: Router, storage, *, content_idea_id=None, generated_idea_id=None,
+                 channel: str | None = None) -> dict:
+    """Make exactly the selected idea's package. Only this package is planned and (if Auto Review & Post is ON)
+    reviewed. Running it again resumes from the step that didn't work; nothing is made or planned twice.
+    The publishing pause doesn't apply: this only makes content and posts wait for approval."""
+    with db.run_lock(conn, "production") as free:
+        if not free:
+            raise RuntimeError("Another production run is in progress. Try again when it has finished.")
+        apply_brand_overrides(conn)
+        idea = idea_for_production(conn, content_idea_id=content_idea_id, generated_idea_id=generated_idea_id,
+                                   channel=channel)
+        week = idea["batch_week"] or research.week_start()
+        project = db.one(conn, "select * from content_projects where idea_id=%s and parent_project_id is null",
+                         (idea["id"],))
+        job_id = jobs.active_job_id.get()
+        if project is None:
+            project = ensure_project(conn, idea["channel_slug"], "long", idea["title"], week, idea_id=idea["id"],
+                                     key=f"idea:{idea['id']}")
+        if job_id:
+            db.run(conn, "update generation_jobs set project_id=%s where id=%s and project_id is null", (project["id"], job_id))
+        if project["status"] in DECIDED:
+            return {"project_id": str(project["id"]), "status": project["status"], "already": True}
+        if project["status"] not in ("ready_for_review", "needs_attention"):
+            family = [r["id"] for r in db.all_(conn, "select id from content_projects where id=%s or parent_project_id=%s",
+                                                (project["id"], project["id"]))]
+            # the owner asked again: steps that didn't work may run now (finished steps are kept)
+            db.run(conn, """update generation_jobs set status='pending', attempts=0, next_attempt_at=null
+                            where project_id = any(%s) and job_type = any(%s)
+                              and status in ('failed','retrying','blocked','needs_review')""", (family, list(STAGES)))
+            db.run(conn, "update content_ideas set status='selected' where id=%s and status <> 'produced'", (idea["id"],))
+            out = produce_project(conn, router, storage, idea, week, project=project,
+                                  stage=lambda label, n, total: jobs.progress(conn, label, n, total))
+            if out.get("error") or out.get("status") in ("failed", "needs_review", "retrying", "blocked"):
+                db.run(conn, """update content_projects set status='failed' where id=%s
+                                and status in ('draft','scripting','verifying','rendering')""", (project["id"],))
+                raise RuntimeError(f"{out.get('error') or out.get('status')}"[:600])
+            db.run(conn, "update content_ideas set status='produced' where id=%s", (idea["id"],))
+        jobs.progress(conn, "Planning this package's posts")
+        posts = plan_project_distribution(conn, project["id"])
+        from .review import auto  # no-op unless Auto Review & Post is ON; looks at this package only
+
+        reviewed = auto.run(conn, router, [project["id"]])
+        head = db.one(conn, "select id, title, status from content_projects where id=%s", (project["id"],))
+        if head["status"] in ("ready_for_review", "needs_attention"):
+            notify.send(conn, "package_ready", f"Ready for review: {head['title']}",
+                        "Passed every check." if head["status"] == "ready_for_review" else "Something needs a look before approval.",
+                        link=f"{config.runtime().dashboard_url}/review/{head['id']}", dedupe_key=f"package_ready:{head['id']}")
+        return {"project_id": str(head["id"]), "status": head["status"], "posts_planned": posts, "auto_review": reviewed}
+
+
+def plan_project_distribution(conn, project_id, now: datetime | None = None) -> int:
+    """Posts for one package only. Other projects of the same week are never touched. Each post takes its account's
+    next free slot from the posting week on (the week after the package's week), never a slot another post holds."""
+    now = now or datetime.now(timezone.utc)
+    tz = db.get_setting(conn, "timezone", "Africa/Nairobi")
+    head = db.one(conn, "select * from content_projects where id=%s and parent_project_id is null", (project_id,))
+    if not head or head["status"] not in ("ready_for_review", "needs_attention"):
+        return 0
+    shorts = db.all_(conn, """select * from content_projects where parent_project_id=%s
+                              and status in ('ready_for_review','needs_attention') order by created_at""", (project_id,))
+    accounts = db.all_(conn, """select a.*, c.slug channel from social_accounts a
+                                left join channel_profiles c on c.id = a.channel_profile_id where a.enabled order by a.platform""")
+    first_week = (head["batch_week"] or research.week_start()) + timedelta(days=7)
+    taken: dict = {}
+
+    def free_slots(acc: dict, prefix: str, n: int) -> list[datetime]:
+        if n <= 0:
+            return []
+        held = taken.setdefault(acc["id"], [r["scheduled_at"] for r in db.all_(conn, """
+            select scheduled_at from scheduled_posts where social_account_id=%s and status not in ('cancelled','failed')""",
+            (acc["id"],))])
+        t = acc["weekly_targets"] or {}
+        days, times = t.get(f"{prefix}_days") or [], t.get(f"{prefix}_times") or []
+        out: list[datetime] = []
+        for w in range(8):
+            for slot in schedule.slots(days, times, first_week + timedelta(days=7 * w), tz, not_before=now):
+                if all(abs((slot - x).total_seconds()) >= 1800 for x in held):
+                    out.append(slot)
+                    held.append(slot)
+                    if len(out) == n:
+                        return out
+        return out
+
+    def todo(projects: list[dict], acc: dict, kind: str) -> list[dict]:
+        return [p for p in projects if not db.one(conn, """select 1 from content_variants
+                                                           where project_id=%s and social_account_id=%s and kind=%s""",
+                                                    (p["id"], acc["id"], kind))]
+
+    created = 0
+    ch = head["channel_slug"]
+    for acc in accounts:
+        t = acc["weekly_targets"] or {}
+        if float((acc["topic_mix"] or {}).get(ch, 0)) <= 0:
+            continue  # this account doesn't post this channel's topics
+        plan: list[tuple[list[dict], str, str]] = []
+        if acc["platform"] == "youtube":
+            if acc["channel"] != ch:
+                continue
+            if t.get("long_video", 0):
+                plan.append(([head], "long_video", "posting"))
+            if t.get("short_video", 0):
+                plan.append((shorts, "short_video", "shorts"))
+        elif acc["platform"] == "tiktok" and t.get("short_video", 0):
+            plan.append((shorts[:1], "short_video", "posting"))
+        elif acc["platform"] == "facebook":
+            if t.get("reel", 0):
+                plan.append((shorts[-1:], "reel", "posting"))
+            if t.get("text_post", 0):
+                plan.append(([head], "text_post", "posting"))
+        elif acc["platform"] == "x" and t.get("text_post", 0):
+            plan.append(([head], "text_post", "posting"))
+        for projects, kind, prefix in plan:
+            items = todo(projects, acc, kind)
+            created += _assign(conn, acc, items, kind, free_slots(acc, prefix, len(items)))
+    return created

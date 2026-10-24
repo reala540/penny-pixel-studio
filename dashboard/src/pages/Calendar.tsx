@@ -177,7 +177,7 @@ function PostPanel({ post, tz, onMove }: { post: Post; tz: string; onMove: (when
             };
           }} />
       )}
-      <Link to={`/review/${post.content_variants?.project_id}`} className="block text-sm font-medium text-pixel underline-offset-2 hover:underline">Open the package</Link>
+      <Link to={`/content/${post.content_variants?.project_id}`} className="block text-sm font-medium text-pixel underline-offset-2 hover:underline">Open the package</Link>
     </div>
   );
 }

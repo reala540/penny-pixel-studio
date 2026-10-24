@@ -10,7 +10,7 @@ One switch decides who approves publishing. **Default: OFF.**
 
 ## Where to switch it
 
-* **Dashboard:** Settings → Automation (and the Review page). The status *Auto Review & Post: ON/OFF* is always shown in
+* **Dashboard:** Settings → Automation (and each package page in Content, and Create before **Create package**). The status *Auto Review & Post: ON/OFF* is always shown in
   the menu. Turning ON asks for confirmation; turning OFF is immediate.
 * **Telegram:** `/autopost` (status), `/autopost on confirm`, `/autopost off`. `/status` shows the mode too. Only the
   linked owner chat is obeyed.

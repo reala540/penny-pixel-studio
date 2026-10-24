@@ -27,14 +27,33 @@ async function setMode(on: boolean): Promise<{ on: boolean; reverted_posts: numb
   return data as { on: boolean; reverted_posts: number };
 }
 
+/** The always-visible "who approves" line: you, or Auto Review & Post. */
 export function AutoPostBadge() {
   const on = useAutoPost().data === true;
   return (
-    <Link to="/settings#automation" className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium ${on ? "bg-penny-soft text-penny" : "bg-sunken text-muted"}`}
-      aria-label={`Auto Review and Post: ${on ? "ON" : "OFF"}. Change in Settings.`}>
+    <Link to="/settings/automation" className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium ${on ? "bg-penny-soft text-penny" : "bg-sunken text-muted"}`}
+      aria-label={`Approval: ${on ? "automatic. Auto Review and Post: ON" : "you approve each package. Auto Review and Post: OFF"}. Change in Settings.`}>
       {on ? <Bot size={14} aria-hidden /> : <UserCheck size={14} aria-hidden />}
-      Auto Review &amp; Post: {on ? "ON" : "OFF"}
+      Approval: {on ? "Auto Review & Post" : "You approve"}
     </Link>
+  );
+}
+
+/** What happens after a package is made, in the current mode (shown before Create package and on each project). */
+export function ApprovalModeNotice({ compact = false }: { compact?: boolean }) {
+  const q = useAutoPost();
+  const on = q.data === true;
+  if (q.isLoading) return <p className="text-sm text-muted">Checking who approves…</p>;
+  return (
+    <div role="note" className={`rounded-lg border px-3 py-2 text-sm ${on ? "border-penny/40 bg-penny-soft text-ink" : "border-line bg-sunken text-ink"}`}>
+      {on ? (
+        <><strong>Approval: Auto Review &amp; Post is ON.</strong>{compact ? " " : <br />}If every check passes and the independent AI review is confident,
+          it's approved automatically and posts at its scheduled times. Anything else waits for you.</>
+      ) : (
+        <><strong>Approval: you approve.</strong>{compact ? " " : <br />}Nothing is posted until you approve it in Content.</>
+      )}
+      {" "}<Link to="/settings/automation" className="text-pixel underline-offset-2 hover:underline">Change</Link>
+    </div>
   );
 }
 
@@ -120,7 +139,7 @@ export function AutoReviewLog() {
         return (
           <li key={r.id} className="px-4 py-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <Link to={`/review/${r.project_id}`} className="font-medium text-ink underline-offset-2 hover:underline">{title}</Link>
+              <Link to={`/content/${r.project_id}`} className="font-medium text-ink underline-offset-2 hover:underline">{title}</Link>
               <span className={`rounded-md px-2 py-0.5 text-xs ${r.verdict === "approved" ? "bg-penny-soft text-penny" : r.verdict === "skipped" ? "bg-sunken text-muted" : "bg-gold/15 text-ink"}`}>{label[r.verdict] ?? r.verdict}</span>
             </div>
             <p className="text-xs text-muted">{new Date(r.created_at).toLocaleString()}{r.reviewer ? ` · ${r.reviewer}` : ""}{r.confidence != null ? ` · ${Math.round(Number(r.confidence) * 100)}% confident` : ""}{r.posts_scheduled ? ` · ${r.posts_scheduled} post(s) scheduled` : ""}</p>

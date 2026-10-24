@@ -2,8 +2,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, CircleAlert, CircleCheck, CircleDashed, Copy, Eye, EyeOff, Info } from "lucide-react";
 import { ReactNode, useState } from "react";
 import { Link } from "react-router-dom";
-import { ErrorNote, Loading, PageHeader, useToast } from "../components/ui";
+import { ErrorNote, Loading, useToast } from "../components/ui";
 import { useAccounts, useSaveSetting, useSetting } from "../lib/api";
+import { useKeyCheck, useReadiness } from "../lib/readiness";
 import { PLATFORM_NAME } from "../lib/format";
 import { callWorker, supabase, workerUrl } from "../lib/supabase";
 import type { Platform } from "../lib/types";
@@ -38,17 +39,18 @@ export function useSetupProgress() {
   const connected = (p: Platform) => (accounts.data ?? []).filter((a) => a.platform === p).every((a) => a.oauth_connections?.status === "connected")
     && (accounts.data ?? []).some((a) => a.platform === p);
   const coreOk = status.data ? Object.values(status.data.core).every((c) => c.ok) : false;
-  const steps: { id: string; title: string; done: boolean; optional?: boolean }[] = [
-    { id: "basics", title: "The basics", done: coreOk },
-    { id: "telegram", title: "Telegram", done: has("TELEGRAM_BOT_TOKEN") && Boolean(chat.data) },
-    { id: "ai", title: "AI keys", done: (check.data?.results ?? []).some((r) => r.status === "ok") },
-    { id: "youtube", title: "YouTube", done: connected("youtube") },
-    { id: "facebook", title: "Facebook", done: connected("facebook") },
-    { id: "tiktok", title: "TikTok", done: connected("tiktok") },
-    { id: "x", title: "X", done: connected("x") },
-    { id: "research", title: "Research keys", done: has("YOUTUBE_API_KEY"), optional: true },
-    { id: "schedule", title: "Posting schedule", done: Boolean(progress.data?.schedule_reviewed) },
-    { id: "first", title: "First video", done: Boolean(firstVideo.data) },
+  // Only "create" and "publish" steps count towards the progress bar; Telegram and the rest are recommended.
+  const steps: { id: string; title: string; done: boolean; group: "create" | "publish" | "recommended"; optional?: boolean }[] = [
+    { id: "basics", title: "The basics", done: coreOk, group: "create" },
+    { id: "ai", title: "AI keys", done: (check.data?.results ?? []).some((r) => r.status === "ok"), group: "create" },
+    { id: "youtube", title: "YouTube", done: connected("youtube"), group: "publish" },
+    { id: "facebook", title: "Facebook", done: connected("facebook"), group: "publish" },
+    { id: "tiktok", title: "TikTok", done: connected("tiktok"), group: "publish" },
+    { id: "x", title: "X", done: connected("x"), group: "publish" },
+    { id: "telegram", title: "Telegram alerts", done: has("TELEGRAM_BOT_TOKEN") && Boolean(chat.data), group: "recommended", optional: true },
+    { id: "research", title: "Research keys", done: has("YOUTUBE_API_KEY"), group: "recommended", optional: true },
+    { id: "schedule", title: "Posting schedule", done: Boolean(progress.data?.schedule_reviewed), group: "recommended", optional: true },
+    { id: "first", title: "First video", done: Boolean(firstVideo.data), group: "recommended", optional: true },
   ];
   const required = steps.filter((s) => !s.optional);
   return {
@@ -63,7 +65,7 @@ export default function Setup() {
   if (!workerUrl) {
     return (
       <>
-        <PageHeader title="Setup" intro="Everything the studio needs, step by step." />
+        <h2 className="section-title mb-2">Getting started</h2>
         <p role="alert" className="rounded-xl bg-alert-soft px-4 py-3 text-sm text-alert">The dashboard doesn't know your Worker address yet, so Setup can't check or save anything.
           Add VITE_WORKER_URL in Vercel → your dashboard project → Settings → Environment Variables (GUIDE.md step 9), then redeploy.</p>
       </>
@@ -71,16 +73,17 @@ export default function Setup() {
   }
   return (
     <>
-      <PageHeader title="Setup" intro="Each step tests itself and shows ✅ when it works. Paste values here instead of GitHub: they're encrypted on the server and the page only ever shows the last 4 characters. You can stop any time and continue later." />
+      <h2 className="section-title">Getting started</h2>
+      <p className="mb-4 mt-1 max-w-3xl text-sm text-muted">Each step tests itself and shows ✅ when it works. Paste values here instead of GitHub: they're encrypted on the server and the page only ever shows the last 4 characters. Only <strong>Needed to create</strong> and <strong>Needed to publish</strong> count towards the bar; Telegram and the rest are recommended.</p>
       <div className="mb-8 max-w-4xl">
-        <div className="flex items-baseline justify-between text-sm"><span className="font-medium">{p.done} of {p.total} steps done</span><span className="tabular text-muted">{pct}%</span></div>
+        <div className="flex items-baseline justify-between text-sm"><span className="font-medium">{p.done} of {p.total} needed steps done</span><span className="tabular text-muted">{pct}%</span></div>
         <div className="mt-2 h-2 overflow-hidden rounded-full bg-sunken" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-label="Setup progress">
           <span className="block h-full bg-penny transition-all" style={{ width: `${pct}%` }} />
         </div>
         <nav aria-label="Setup steps" className="mt-4 flex flex-wrap gap-2">
           {p.steps.map((s, i) => (
             <a key={s.id} href={`#${s.id}`} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs ${s.done ? "border-penny/40 bg-penny-soft text-penny" : "border-line text-muted hover:text-ink"}`}>
-              {s.done ? <Check size={12} aria-hidden /> : <span className="tabular">{i + 1}</span>}{s.title}{s.optional && " (optional)"}
+              {s.done ? <Check size={12} aria-hidden /> : <span className="tabular">{i + 1}</span>}{s.title}{s.optional && " (recommended)"}
               <span className="sr-only">{s.done ? "done" : "not done"}</span>
             </a>
           ))}
@@ -89,13 +92,16 @@ export default function Setup() {
       <ErrorNote error={p.status.error} />
       {p.loading ? <Loading label="Checking your setup" /> : (
         <div className="max-w-4xl space-y-6">
+          <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">Needed to create</h3>
           <Basics status={p.status.data} done={p.steps[0].done} />
-          <TelegramStep status={p.status.data} done={p.steps[1].done} />
-          <AiStep done={p.steps[2].done} />
-          <PlatformStep platform="youtube" status={p.status.data} done={p.steps[3].done} />
-          <PlatformStep platform="facebook" status={p.status.data} done={p.steps[4].done} />
-          <PlatformStep platform="tiktok" status={p.status.data} done={p.steps[5].done} />
-          <PlatformStep platform="x" status={p.status.data} done={p.steps[6].done} />
+          <AiStep done={p.steps[1].done} />
+          <h3 className="pt-4 text-sm font-semibold uppercase tracking-wide text-muted">Needed to publish</h3>
+          <PlatformStep platform="youtube" status={p.status.data} done={p.steps[2].done} />
+          <PlatformStep platform="facebook" status={p.status.data} done={p.steps[3].done} />
+          <PlatformStep platform="tiktok" status={p.status.data} done={p.steps[4].done} />
+          <PlatformStep platform="x" status={p.status.data} done={p.steps[5].done} />
+          <h3 className="pt-4 text-sm font-semibold uppercase tracking-wide text-muted">Recommended</h3>
+          <TelegramStep status={p.status.data} done={p.steps[6].done} />
           <ResearchStep status={p.status.data} done={p.steps[7].done} />
           <ScheduleStep done={p.steps[8].done} />
           <FirstVideoStep done={p.steps[9].done} />
@@ -110,7 +116,7 @@ function Step({ id, n, title, done, optional, intro, children }: { id: string; n
     <section id={id} aria-labelledby={`${id}-title`} className={`scroll-mt-6 rounded-xl border bg-surface p-5 ${done ? "border-penny/40" : "border-line"}`}>
       <h2 id={`${id}-title`} className="flex items-center gap-2 font-display text-lg font-semibold">
         {done ? <CircleCheck size={20} className="text-penny" aria-hidden /> : <CircleDashed size={20} className="text-muted" aria-hidden />}
-        {n}. {title}{optional && <span className="text-sm font-normal text-muted">(optional)</span>}
+        {n}. {title}{optional && <span className="text-sm font-normal text-muted">(recommended)</span>}
         <span className="sr-only">{done ? "(done)" : "(not done yet)"}</span>
       </h2>
       <div className="mt-2 text-sm text-muted">{intro}</div>
@@ -239,7 +245,7 @@ function TelegramStep({ status, done }: { status?: Status; done: boolean }) {
   });
   const hasToken = Boolean(status?.values.TELEGRAM_BOT_TOKEN?.dashboard || status?.values.TELEGRAM_BOT_TOKEN?.github);
   return (
-    <Step id="telegram" n={2} title="Telegram" done={done} intro={<>Alerts on your phone, and approve, pause or switch Auto Review &amp; Post from anywhere.
+    <Step id="telegram" n={7} title="Telegram alerts" optional done={done} intro={<>Optional: alerts on your phone, and approve, pause or switch Auto Review &amp; Post from anywhere. Creating content doesn't need it.
       In Telegram, open <b>@BotFather</b>, send <code>/newbot</code>, choose a name and a username ending in <code>bot</code>, then copy the token it sends you.</>}>
       <SecretField name="TELEGRAM_BOT_TOKEN" label="Bot token" state={status?.values.TELEGRAM_BOT_TOKEN} placeholder="123456789:AA…"
         help="The private link between the bot and the studio is made for you when you save." />
@@ -257,28 +263,37 @@ function TelegramStep({ status, done }: { status?: Status; done: boolean }) {
 function AiStep({ done }: { done: boolean }) {
   const check = useSetting<{ results?: { provider: string; status: string }[]; checked_at?: string } | null>("provider_check", null).data;
   const ok = (check?.results ?? []).filter((r) => r.status === "ok").map((r) => r.provider);
+  const ready = useReadiness();
+  const keyCheck = useKeyCheck();
+  const toast = useToast();
   return (
-    <Step id="ai" n={3} title="AI keys" done={done} intro={<>The writers and reviewers. Free keys are enough. For the fewest delays, add several keys to
+    <Step id="ai" n={2} title="AI keys" done={done} intro={<>The writers and reviewers. Free keys are enough. For the fewest delays, add several keys to
       <b> Gemini</b> (best writer), <b>Cloudflare</b> (always available), <b>Z.ai</b>, <b>Cerebras</b> and <b>SambaNova</b>. Add each key in AI APIs and press Test.</>}>
-      <p className="text-sm">{ok.length ? <>Working now: {ok.join(", ")}.</> : "No AI service has passed a check yet."}
-        {check?.checked_at && <span className="text-muted"> Last checked {new Date(check.checked_at).toLocaleString()}.</span>}</p>
-      <Link to="/api" className="btn-primary">Open AI APIs</Link>
+      <p className="text-sm">{ok.length ? <>Passed the last key check: {ok.join(", ")}.</> : "No AI service has passed a check yet."}
+        {check?.checked_at && <span className="text-muted"> Last checked {new Date(check.checked_at).toLocaleString()}{ready.stale ? " (more than a day ago: may be out of date)" : ""}.</span>}</p>
+      {ready.uncoveredRoles.length > 0 && check?.checked_at && <p className="text-sm text-alert">No passing service does: {ready.uncoveredRoles.join(", ")}.</p>}
+      <div className="flex flex-wrap gap-2">
+        <Link to="/settings/ai" className="btn-primary">Open AI services &amp; keys</Link>
+        <button className="btn-quiet" disabled={keyCheck.running || keyCheck.run.isPending}
+          onClick={() => keyCheck.run.mutate(undefined, { onSuccess: () => toast("Testing the AI keys. Results appear in a few minutes."), onError: (e) => toast((e as Error).message, "bad") })}>
+          {keyCheck.running ? "Testing…" : "Test again"}</button>
+      </div>
     </Step>
   );
 }
 
 const PLATFORM_STEPS: Record<Platform, { n: number; names: [string, string]; labels: [string, string]; where: ReactNode }> = {
-  youtube: { n: 4, names: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"], labels: ["Client ID", "Client secret"], where: <>
+  youtube: { n: 3, names: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"], labels: ["Client ID", "Client secret"], where: <>
     Go to <b>console.cloud.google.com</b> → create a project → <b>APIs &amp; Services → Library</b> → enable <b>YouTube Data API v3</b>.
     Then <b>OAuth consent screen</b> (External, add yourself as a test user) → <b>Credentials → Create credentials → OAuth client ID → Web application</b>.
     Under <b>Authorised redirect URIs</b> paste the address below, create it, and copy the Client ID and Client secret here.</> },
-  facebook: { n: 5, names: ["FACEBOOK_APP_ID", "FACEBOOK_APP_SECRET"], labels: ["App ID", "App secret"], where: <>
+  facebook: { n: 4, names: ["FACEBOOK_APP_ID", "FACEBOOK_APP_SECRET"], labels: ["App ID", "App secret"], where: <>
     Go to <b>developers.facebook.com → My Apps → Create app</b> (type Business). Add <b>Facebook Login for Business</b>; in its settings paste the address below under
     <b> Valid OAuth Redirect URIs</b>. Then <b>App settings → Basic</b>: copy the App ID and App secret here.</> },
-  tiktok: { n: 6, names: ["TIKTOK_CLIENT_KEY", "TIKTOK_CLIENT_SECRET"], labels: ["Client key", "Client secret"], where: <>
+  tiktok: { n: 5, names: ["TIKTOK_CLIENT_KEY", "TIKTOK_CLIENT_SECRET"], labels: ["Client key", "Client secret"], where: <>
     Go to <b>developers.tiktok.com → Manage apps → Connect an app</b>. Add <b>Login Kit</b> and <b>Content Posting API</b>, paste the address below as the
     <b> Redirect URI</b>, then copy the Client key and Client secret here. Until TikTok approves the app, posts are saved as drafts or come to you as quick jobs.</> },
-  x: { n: 7, names: ["X_CLIENT_ID", "X_CLIENT_SECRET"], labels: ["OAuth 2.0 Client ID", "OAuth 2.0 Client secret"], where: <>
+  x: { n: 6, names: ["X_CLIENT_ID", "X_CLIENT_SECRET"], labels: ["OAuth 2.0 Client ID", "OAuth 2.0 Client secret"], where: <>
     Go to <b>developer.x.com → Projects &amp; Apps</b> → your app → <b>User authentication settings → Set up</b>: OAuth 2.0, type <b>Web App</b>, Read and write,
     and paste the address below as the <b>Callback URI</b>. Then <b>Keys and tokens</b>: copy the OAuth 2.0 Client ID and Client secret here. X is the only paid service (capped at $1 a month).</> },
 };
@@ -341,7 +356,7 @@ function ScheduleStep({ done }: { done: boolean }) {
   return (
     <Step id="schedule" n={9} title="Posting schedule" done={done} intro="Which days and times each account posts, and how many posts a week. The default works well; change it any time.">
       <div className="flex flex-wrap gap-2">
-        <Link to="/settings#posting-schedule" className="btn-quiet">Open the posting schedule</Link>
+        <Link to="/settings/schedule" className="btn-quiet">Open the posting schedule</Link>
         {!done && <button className="btn-primary" onClick={() => save.mutate({ key: "setup_progress", value: { ...progress, schedule_reviewed: true } })}>The schedule looks right</button>}
       </div>
     </Step>
@@ -350,10 +365,10 @@ function ScheduleStep({ done }: { done: boolean }) {
 
 function FirstVideoStep({ done }: { done: boolean }) {
   return (
-    <Step id="first" n={10} title="Your first video" done={done} intro={<>Generate ideas, send one to the Studio, and review the package when it arrives (usually within an hour).
+    <Step id="first" n={10} title="Your first video" done={done} intro={<>Open Create, pick a channel and an idea, check its sources and create the package; then review it in Content.
       After a week or two of reviewing, you can switch on <b>Auto Review &amp; Post</b> in Settings → Automation.</>}>
       <div className="flex flex-wrap gap-2">
-        <Link to="/ideas" className="btn-primary">Generate ideas</Link>
+        <Link to="/create" className="btn-primary">Create content</Link>
         <Link to="/activity" className="btn-quiet">Watch the Activity page</Link>
       </div>
     </Step>
