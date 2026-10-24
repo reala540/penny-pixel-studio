@@ -3,6 +3,11 @@ name: First-time setup
 
 on:
   workflow_dispatch:
+    inputs:
+      keys_only:
+        description: "Only re-test the AI keys (skip database setup and trailers)"
+        type: boolean
+        default: false
 
 concurrency:
   group: studio-batch
@@ -51,5 +56,7 @@ jobs:
       - uses: ./.github/actions/setup-engine
       - run: studio migrate
       - run: studio init
+        if: ${{ !inputs.keys_only }}
       - run: studio demo --to-review
+        if: ${{ !inputs.keys_only }}
       - run: studio providers

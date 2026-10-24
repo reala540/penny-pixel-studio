@@ -247,6 +247,24 @@ def cmd_providers(a):
         except Exception as exc:
             results.append({"provider": name, "model": model["id"], "status": "failed", "error": str(exc)[:160]})
     _print(results)
+    _report_providers(results)
+
+
+def _report_providers(results: list[dict]) -> None:
+    """Save the key check where the dashboard (and the run summary) can show it."""
+    icon = {"ok": "✅", "no key": "⚪", "failed": "❌"}
+    lines = ["### AI keys", "", "| Provider | Result | Note |", "|---|---|---|"]
+    for r in results:
+        note = r.get("error") or (f"set {r['env']} to use it" if r.get("env") else r.get("model", ""))
+        lines.append(f"| {r['provider']} | {icon.get(r['status'], '')} {r['status']} | {str(note).replace('|', '/')} |")
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+    if config.runtime().db_url:
+        with _conn() as conn:
+            db.set_setting(conn, "provider_check", {"checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                                   "results": results})
 
 
 def cmd_status(a):
