@@ -31,8 +31,8 @@ describe("activity timeline", () => {
   });
 
   it("every problem gets a next step", () => {
-    expect(fixFor("TikTok login expired, reconnect")).toEqual({ label: "Reconnect the account", to: "/settings#accounts" });
-    expect(fixFor("429 rate limit from gemini")?.to).toBe("/api");
+    expect(fixFor("TikTok login expired, reconnect")).toEqual({ label: "Reconnect the account", to: "/settings/accounts" });
+    expect(fixFor("429 rate limit from gemini")?.to).toBe("/settings/ai");
     expect(fixFor("content expired: recheck before publishing")?.label).toBe("Re-check the facts");
     expect(fixFor("something odd")?.to).toBe("/help");
     expect(fixFor("")).toBeNull();

@@ -1,4 +1,17 @@
-# Test report — v2.5 Setup, Activity, schedule, auto-fix and Clear (24 Oct 2026)
+# Test report — v2.6 Five pages and Create one package (24 Oct 2026)
+
+| Suite | Result |
+|---|---|
+| Engine (pytest, local PostgreSQL with all 9 migrations, real renders) | **115 passed** (11 new: only the chosen idea is made; distribution and Auto Review & Post touch only that package while other packages stay unapproved; a generated idea keeps its sources and pressing twice changes nothing; two simultaneous requests make one research idea and one package; a busy production lock is refused with a plain message; bad requests explained; a failed package resumes from its step with no duplicate posts; publishing pause doesn't block it; the weekly batch doesn't remake an idea that already has a package; the owner job is linked to its package; **Test again** saves a fresh key check) |
+| Worker (vitest + `tsc`) | **46 passed** (unchanged) |
+| Dashboard (vitest + `tsc` + build) | **31 passed** (10 new: every old link and OAuth return redirect; readiness blockers vs warnings, stale checks, uncovered jobs; progress shows only real stages and their stored errors) |
+| Browser (Chromium, real PostgREST + real local Worker, desktop 1440×900 and phone 390×844) | **80/80 checks**, 0 console errors: five destinations and the secondary menu; approval mode in the menu and before Create package (manual and Auto ON); 12 old links and both OAuth returns; Create flow end to end (owner job carries exactly the chosen idea; waiting, engine-reported step, real stage list, stored error, Try again; both channels = ideas only; an already-made idea links to its package); stale check + Test again; no passing service blocks with the reason; one passing service doesn't claim full coverage; pause banner and Create still allowed; no Telegram still allowed; a real GitHub refusal blocks with the reason; Content tabs, filters, project page tabs, breadcrumb and confirm wording; Activity quick actions and collapsed Technical details; Settings sections; no sideways scroll on 8 phone pages |
+| npm audit | 0 vulnerabilities (dashboard, worker) |
+
+Not verifiable here: a real production run against live AI services (the live studio's Evidence scout services are
+currently failing; see the PR for the evidence) and the live migration, which is applied only after merging.
+
+## v2.5 Setup, Activity, schedule, auto-fix and Clear (24 Oct 2026)
 
 | Suite | Result |
 |---|---|

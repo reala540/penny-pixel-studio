@@ -10,7 +10,8 @@ from .script import pipeline, quality
 from .script.models import Script, ShortScript
 
 OWNER_JOBS = ("regenerate_script", "rerender_preview", "regenerate_thumbnails", "run_research", "run_production",
-              "run_mission", "recheck_project", "generate_ideas", "refine_idea", "auto_review")
+              "run_mission", "recheck_project", "generate_ideas", "refine_idea", "auto_review", "produce_idea",
+              "check_providers")
 
 
 START_LABEL = {
@@ -19,6 +20,7 @@ START_LABEL = {
     "run_production": "Making this week's videos", "run_mission": "Running your mission",
     "recheck_project": "Re-checking the facts", "generate_ideas": "Generating ideas",
     "refine_idea": "Refining an idea", "auto_review": "Reviewing packages automatically",
+    "produce_idea": "Making the package for your idea", "check_providers": "Testing the AI keys",
 }
 
 
@@ -100,6 +102,16 @@ def _run_owner_job(conn, router: Router, storage, job: dict) -> dict:
             channel=inp.get("channel") if inp.get("channel") in ("ai", "money") else None,
         )
         return {"research": research_out, "production": production_out}
+    if t == "produce_idea":
+        # Exactly the selected idea. Not stopped by the publishing pause: nothing is posted here.
+        return produce.produce_idea(conn, router, storage, content_idea_id=inp.get("content_idea_id"),
+                                    generated_idea_id=inp.get("generated_idea_id"),
+                                    channel=inp.get("channel") if inp.get("channel") in ("ai", "money") else None)
+    if t == "check_providers":
+        from .cli import run_provider_check
+
+        results = run_provider_check(conn)
+        return {"ok": sum(1 for r in results if r["status"] == "ok"), "checked": len(results)}
     if t == "auto_review":
         from .review import auto
 

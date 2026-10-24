@@ -266,7 +266,7 @@ https://dashboard-beta-ten-13.vercel.app/privacy and terms at https://dashboard-
 The first person to sign in becomes the owner, and the database refuses everyone after that. That's why you do step 3
 right away.
 
-✅ **Check:** you land on **Mission Control**. Open **Rundown → This week on air**, and in **Review** the two channel trailers are waiting. Before connecting anything, you can explore `/demo`; its sample activity is clearly labelled and never changes your studio.
+✅ **Check:** you land on **Home**. Under **Needs you** the two channel trailers are waiting for review. Before connecting anything, you can explore `/demo`; its sample activity is clearly labelled and never changes your studio.
 
 ---
 
@@ -387,12 +387,12 @@ Don't want to pay at all? Skip this step. X posts then become "Post it yourself"
 
 ### Step 22. Approve the trailers
 
-Dashboard → **Review**. Watch "Meet Pixel" and "Meet Penny", choose a thumbnail, then press **Approve package**. They
+Dashboard → **Content → Needs you**. Open "Meet Pixel" and "Meet Penny", watch them, choose a thumbnail, then press **Approve package**. They
 go out at their scheduled times. Make them your first videos.
 
 ### Step 23. Start the first batch now (instead of waiting for Saturday)
 
-Dashboard → **Mission Control**: enter an objective, choose a channel and council depth, then launch **Research & ideas** or **Research + review package**. You can still use **Settings → Run now** for the original one-click workflow. Research takes about 15 minutes; production takes 1–3 hours. Watch real provider calls and job status in Mission Control. You'll get a Telegram message when the review package is ready; nothing is approved or published automatically.
+Dashboard → **Create**: choose a channel, choose or generate an idea, check its sources, then press **Create package**. Only that idea is made, and the page shows each real step as it happens. To make the whole week's batch instead, use **Activity → Quick actions → Make this week's videos (batch)**. Production can take a while on free services; the page (and Telegram, if linked) tells you when the package is ready. With Auto Review & Post OFF nothing is approved or posted until you approve it.
 
 ---
 
@@ -406,9 +406,9 @@ Dashboard → **Mission Control**: enter an objective, choose a channel and coun
    official feeds…). Press **Why this score** to see the sources with their dates and links. An idea with no current
    source says **Trend unverified**: fine for an evergreen video, but it isn't news.
 4. Like one? Press **Send to Studio**. The objective box fills in for you. Read it, change anything, then
-   **Launch mission**. Nothing is made or posted until you approve it in Review.
+   **Launch mission**, or press **Create from this idea** to make just that one. Nothing is posted until you approve it in Content.
 5. **Save** the ones you might use later, **Reject** the ones you never want suggested again, or **Refine** one with
-   a note like "make it practical for students in Kenya". All of them live in the **Ideas** page.
+   a note like "make it practical for students in Kenya". All of them live in **Content → Ideas**.
 6. Want ideas automatically? **Settings → Automation → Generate ideas → Every day** (or chosen days) and pick an
    hour. **Settings → Idea generation** sets regions, categories, language and which sources to use.
 
@@ -454,7 +454,7 @@ Telegram tells you why.
 
 ### Step 28. The Setup page
 
-Open **Setup** in the menu. Every step tests itself and shows ✅ when it works: the basics, Telegram, AI keys,
+Open **Settings → Getting started** (old `/setup` links still work). Every step tests itself and shows ✅ when it works: the basics, Telegram, AI keys,
 YouTube, Facebook, TikTok, X, research keys, your posting schedule and your first video. A bar at the top shows how
 far you are, and you can stop and continue any time.
 
@@ -485,33 +485,59 @@ Changes apply from the next production run; tick *Also move posts already waitin
 
 ### Step 31. Clear buttons
 
-Most lists have a **Clear** button: the objective and the idea batch in Mission Control, finished jobs, this week's
-problems, the activity history, old research, rejected drafts in the Library, new ideas, idea history, AI usage numbers
-and errors, and the automatic review log. Calendar has **Cancel this post** and Review has **Discard package**.
+Most lists have a **Clear** button: the objective and the idea batch in Activity → Technical details, finished jobs, this week's
+problems, the activity history, old research, rejected drafts in Content → Not used, new ideas, idea history, AI usage numbers
+and errors, and the automatic review log. Calendar has **Cancel this post** and every package page has **Discard package**.
 Clear always asks first, and most clears have **Undo** for a few seconds. Published posts and the audit log can never
 be cleared.
 
-### Step 32. Simple or Advanced menu, and the tour
+### Step 32. The tour
 
-New studios start with the **Simple** menu (This Week, Activity, Review, Calendar, Ideas, Setup, Settings). Switch to
-**Advanced** at the bottom of the menu (or Settings → Appearance) for Mission Control, Research, Library and AI APIs.
 A 5-step tour appears the first time you sign in; replay it from **Help**. A small **?** next to a technical word
 explains it.
+
+## Part J4 — Five pages (new in v2.6)
+
+The menu now has five pages, the same on a computer and a phone:
+
+| Page | What it's for |
+|---|---|
+| **Home** | What needs you (packages to review, problems, reconnects, quick jobs), what's being made, the next posts, this week |
+| **Create** | Make one package step by step: channel → idea → sources → **Create package** → real progress |
+| **Content** | Every package by status (Needs you, In progress, Approved & scheduled, Published, Not used, All) and **Ideas** |
+| **Calendar** | When each post goes out |
+| **Activity** | What happened, **Quick actions** (batch, research, publish due posts), and **Technical details** (AI calls and jobs) |
+
+**Settings**, **Help**, the theme and **Sign out** are at the bottom of the menu (on a phone: **More**). The menu always
+says who approves: *You approve* or *Auto Review & Post*.
+
+* **Create package makes only the idea you chose.** Planning posts and the automatic review touch only that package;
+  your weekly batch and other packages are unchanged. Pressing it twice, or from two tabs, still makes one package.
+  If a step fails, **Try again from this step** continues where it stopped; finished steps and planned posts aren't
+  made twice.
+* **Pause publishing doesn't stop making content.** While paused, Create still works and nothing is posted. (The
+  scheduled weekly batch still skips its run while paused, as before.)
+* **AI key check.** Settings → AI services & keys shows when the keys were last checked. Results older than a day may be
+  out of date: press **Test again**. One working service doesn't mean every job is covered; the page names any job no
+  passing service does.
+* **Telegram is recommended, not required.** Without it, Home shows what needs you.
+* **Old links keep working**: `/review`, `/library`, `/ideas`, `/research`, `/mission`, `/setup`, `/api`, `/week` and
+  the platform sign-in returns all open the right new page.
 
 ---
 
 ## Part K — Your weekly routine (Monday, 30–45 minutes)
 
 1. **Open the Telegram message** "Your week is ready" → tap **Open dashboard**.
-2. **Review**: for each package,
+2. **Content → Needs you**: for each package,
    - watch the preview,
    - read the box at the top: green means it passed every check; red means *check before approving* and says why,
-   - look at **Facts**: every fact shows its source link,
+   - look at **Sources & checks**: every fact shows its source link,
    - pick a **Thumbnail**,
    - check the **Posts** text for each account,
    - press **Approve package**, or **Rewrite with a note** (e.g. "make the opening more personal"), or **Discard package**.
 3. Short on time? **Approve all that passed every check** approves only the green ones.
-4. Look at **This Week → Your quick jobs** (e.g. "set this YouTube video to Public"), do them, press **Done**.
+4. Look at **Home → Needs you** for quick jobs (e.g. "set this YouTube video to Public"), do them, press **Done**.
 5. Reply to comments yourself on each app. Telegram gives you the links when posts go out.
 
 **Handy Telegram commands:** `/status`, `/week`, `/review`, `/failed`, `/budget`, `/pause`, `/resume confirm`, `/autopost` (`on confirm` / `off`).

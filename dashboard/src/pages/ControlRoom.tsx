@@ -92,7 +92,8 @@ const DEMO_MODELS: ModelRow[] = [
   { provider: "openrouter", model: "nvidia/nemotron-3-ultra-550b-a55b:free", roles: ["critic"], enabled: true },
 ];
 
-export default function ControlRoom({ demo = false }: { demo?: boolean }) {
+/** `embedded`: Activity → Technical details (no objective box, idea panel or quick actions: those live in Create and Activity). */
+export default function ControlRoom({ demo = false, embedded = false }: { demo?: boolean; embedded?: boolean }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [filter, setFilter] = useState<Filter>("all");
@@ -217,11 +218,12 @@ export default function ControlRoom({ demo = false }: { demo?: boolean }) {
   }
 
   return (
-    <div className="control-room -mx-4 -mb-28 -mt-6 min-h-[calc(100dvh-3rem)] px-4 pb-36 pt-5 sm:-mx-6 sm:px-6 md:-mb-12 md:pb-16">
+    <div className={embedded ? "control-room rounded-xl px-4 pb-6 pt-4" : "control-room -mx-4 -mb-28 -mt-6 min-h-[calc(100dvh-3rem)] px-4 pb-36 pt-5 sm:-mx-6 sm:px-6 md:-mb-12 md:pb-16"}>
       <header className="cr-header">
         <div>
           <div className="cr-kicker"><span className={`cr-live-dot ${running.length ? "is-active" : ""}`} />{demo ? "INTERACTIVE DEMO" : running.length ? "STUDIO ACTIVE" : "STUDIO READY"}</div>
-          <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight sm:text-4xl">Mission Control</h1>
+          {embedded ? <h3 className="mt-2 font-display text-xl font-semibold">AI calls and jobs</h3>
+            : <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight sm:text-4xl">Mission Control</h1>}
           <p className="mt-2 max-w-2xl text-sm leading-6 text-[color:var(--cr-muted)]">{demo ? "Explore the operator workflow with clearly labelled sample activity. Nothing here contacts a provider or changes your studio." : "Watch independent models research, challenge and refine the work. Every event below comes from a real engine call."}</p>
         </div>
         <div className="cr-header-meta">
@@ -237,6 +239,7 @@ export default function ControlRoom({ demo = false }: { demo?: boolean }) {
       {demo && <div className="mb-4 flex items-center gap-2 border border-[color:var(--cr-line-strong)] bg-[color:var(--cr-hover)] px-4 py-3 text-sm text-[color:var(--cr-ink)]"><FlaskConical size={16} className="text-[color:var(--cr-accent)]" />Sample data for interface evaluation. No accounts are contacted and no changes are saved.</div>}
       <ErrorNote error={activityQuery.error || jobsQuery.error || providersQuery.error} />
 
+      {!embedded && <>
       <form className="cr-composer" onSubmit={submitMission}>
         <div className="flex items-start gap-3">
           <Wrench size={18} className="mt-1 shrink-0 text-[color:var(--cr-accent)]" />
@@ -269,6 +272,7 @@ export default function ControlRoom({ demo = false }: { demo?: boolean }) {
           The AI Idea Generator runs real research on your sources, so it isn't simulated in this demo. Sign in to your studio to use it.
         </p>
       ) : <IdeaGeneratorPanel />}
+      </>}
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[238px_minmax(0,1fr)_310px]">
         <aside className="cr-panel" aria-labelledby="council-title">
@@ -285,7 +289,7 @@ export default function ControlRoom({ demo = false }: { demo?: boolean }) {
             })}
           </ul>
           {!providers.some((p) => p.enabled) && <div className="p-4 text-sm text-[color:var(--cr-muted)]">No providers enabled yet. Add keys and enable writers in Settings.</div>}
-          <Link to="/settings#writers" className="cr-panel-link">Manage model roles <ChevronRight size={14} /></Link>
+          <Link to="/settings/ai" className="cr-panel-link">Manage model roles <ChevronRight size={14} /></Link>
         </aside>
 
         <section className="min-w-0 space-y-4" aria-label="Agent activity">
@@ -340,14 +344,14 @@ export default function ControlRoom({ demo = false }: { demo?: boolean }) {
             </ul>}
           </section>
 
-          <section className="cr-panel" aria-labelledby="actions-title">
+          {!embedded && <section className="cr-panel" aria-labelledby="actions-title">
             <PanelTitle id="actions-title" icon={Square} title="Quick actions" />
             <div className="grid gap-2 p-3">
               <button className="cr-action" onClick={() => quickRun.mutate("research")} disabled={quickRun.isPending}><Search size={15} /><span><strong>Research this week</strong><small>Collect sources and pitch ideas</small></span><ChevronRight size={14} /></button>
               <button className="cr-action" onClick={() => quickRun.mutate("produce")} disabled={quickRun.isPending}><Sparkles size={15} /><span><strong>Build review packages</strong><small>Scripts, checks, previews, schedule</small></span><ChevronRight size={14} /></button>
               <button className="cr-action" onClick={() => quickRun.mutate("publish")} disabled={quickRun.isPending}><BookOpenCheck size={15} /><span><strong>Publish approved & due</strong><small>Never touches unapproved work</small></span><ChevronRight size={14} /></button>
             </div>
-          </section>
+          </section>}
 
           <section className="cr-panel" aria-labelledby="readiness-title">
             <PanelTitle id="readiness-title" icon={Settings2} title="Ready to run" />

@@ -1,7 +1,7 @@
 import { Archive, Bookmark, BookmarkCheck, ChevronDown, ExternalLink, RotateCcw, Send, Sparkles, X } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { buildObjective, CONFIDENCE_TEXT, scoreBreakdown, SENSITIVITY_TEXT } from "../lib/ideas";
+import { CONFIDENCE_TEXT, scoreBreakdown, SENSITIVITY_TEXT } from "../lib/ideas";
 import { useIdeaActions } from "../lib/ideasApi";
 import { safeUrl } from "../lib/format";
 import type { GeneratedIdea } from "../lib/types";
@@ -12,14 +12,17 @@ const CONF_TONE: Record<GeneratedIdea["confidence"], string> = {
   unverified: "bg-alert-soft text-alert",
 };
 const STATUS_TEXT: Record<GeneratedIdea["status"], string> = {
-  new: "New", saved: "Saved", rejected: "Rejected", sent_to_studio: "Sent to Studio", archived: "Archived",
+  new: "To use", saved: "Saved", rejected: "Not for me", sent_to_studio: "Used", archived: "Archived",
 };
 
 function Chip({ className, children }: { className: string; children: React.ReactNode }) {
   return <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ${className}`}>{children}</span>;
 }
 
-export default function IdeaCard({ idea, defaultOpen = false }: { idea: GeneratedIdea; defaultOpen?: boolean }) {
+/** `onUse` replaces "Create from this idea" (the Create flow selects the idea instead of navigating). */
+export default function IdeaCard({ idea, defaultOpen = false, onUse, useLabel = "Use this idea" }: {
+  idea: GeneratedIdea; defaultOpen?: boolean; onUse?: (idea: GeneratedIdea) => void; useLabel?: string;
+}) {
   const [open, setOpen] = useState(defaultOpen);
   const [refining, setRefining] = useState(false);
   const [note, setNote] = useState("");
@@ -30,8 +33,9 @@ export default function IdeaCard({ idea, defaultOpen = false }: { idea: Generate
   const parts = scoreBreakdown(idea);
   const fail = (e: unknown) => toast((e as Error).message, "bad");
 
-  const sendToStudio = () =>
-    navigate("/", { state: { objective: buildObjective(idea), ideaId: idea.id, channel: idea.channel_slug === "both" ? "all" : idea.channel_slug ?? "all" } });
+  const use = () => (onUse ? onUse(idea) : navigate(`/create?${new URLSearchParams({
+    step: "research", kind: "generated", id: idea.id, ...(idea.channel_slug === "ai" || idea.channel_slug === "money" ? { channel: idea.channel_slug } : {}),
+  })}`));
 
   return (
     <article className="rounded-xl border border-line bg-surface p-4" aria-labelledby={`idea-${idea.id}`}>
@@ -59,14 +63,14 @@ export default function IdeaCard({ idea, defaultOpen = false }: { idea: Generate
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <button className="btn-primary" onClick={sendToStudio} disabled={busy || idea.status === "rejected"}><Send size={14} aria-hidden />Send to Studio</button>
+        <button className="btn-primary" onClick={use} disabled={busy || idea.status === "rejected"}><Send size={14} aria-hidden />{onUse ? useLabel : "Create from this idea"}</button>
         {idea.status === "saved"
           ? <button className="btn-quiet" disabled={busy} onClick={() => setStatus.mutate({ idea, status: "new" }, { onError: fail })}><BookmarkCheck size={14} aria-hidden />Saved</button>
           : <button className="btn-quiet" disabled={busy || idea.status === "rejected"} onClick={() => setStatus.mutate({ idea, status: "saved" }, { onSuccess: () => toast("Saved to your Idea Library"), onError: fail })}><Bookmark size={14} aria-hidden />Save</button>}
         <button className="btn-quiet" disabled={busy || idea.status === "rejected"} onClick={() => setRefining(!refining)} aria-expanded={refining}><Sparkles size={14} aria-hidden />Refine</button>
         {idea.status === "rejected"
           ? <button className="btn-quiet" disabled={busy} onClick={() => setStatus.mutate({ idea, status: "new" }, { onError: fail })}><RotateCcw size={14} aria-hidden />Restore</button>
-          : <button className="btn-quiet" disabled={busy} onClick={() => setStatus.mutate({ idea, status: "rejected" }, { onSuccess: () => toast("Rejected. Future batches won't repeat it."), onError: fail })}><X size={14} aria-hidden />Reject</button>}
+          : <button className="btn-quiet" disabled={busy} onClick={() => setStatus.mutate({ idea, status: "rejected" }, { onSuccess: () => toast("Marked Not for me. Future batches won't repeat it."), onError: fail })}><X size={14} aria-hidden />Not for me</button>}
         {idea.status !== "archived" && idea.status !== "new" && idea.status !== "rejected" &&
           <button className="btn-quiet" disabled={busy} onClick={() => setStatus.mutate({ idea, status: "archived" }, { onError: fail })}><Archive size={14} aria-hidden />Archive</button>}
         <button className="ml-auto inline-flex items-center gap-1 text-sm text-muted hover:text-ink" onClick={() => setOpen(!open)} aria-expanded={open}>

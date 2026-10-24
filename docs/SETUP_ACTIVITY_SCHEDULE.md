@@ -1,6 +1,6 @@
 # Setup page, Activity page, posting schedule, Clear and the Simple menu (v2.5)
 
-## Setup page (`/setup`)
+## Setup page (now Settings → Getting started, `/settings/setup`; `/setup` redirects)
 
 One page for every connection, in order, each with a live check:
 
@@ -63,12 +63,12 @@ nothing the studio needs is deleted, and **Undo** restores the previous time. Re
 and *Discard package* (Review; rejects and cancels its posts). *Reset usage stats* on AI APIs changes only what the
 page counts; daily key limits still count every call. Published posts and the audit log can't be cleared.
 
-## Simple and Advanced menu, tour and plain labels
+## Menu, tour and plain labels
 
-`ui_mode` (`simple` by default) decides the menu: Simple shows This Week, Activity, Review, Calendar, Ideas, Setup and
-Settings, and opens on This Week; Advanced adds Mission Control, Research, Library and AI APIs. A 5-card tour runs the
-first time (`tour_done`); Help replays it. Technical panel names are plain ("What the AI did", "Jobs in progress",
-"Who's working", "Quick actions", "Ready to run"), with a "?" explanation.
+v2.6 replaced the Simple/Advanced menu with five fixed pages (Home, Create, Content, Calendar, Activity) for everyone;
+the old `ui_mode` setting is no longer read. A 5-card tour runs the first time (`tour_done`); Help replays it.
+Technical panel names are plain ("What the AI did", "Jobs in progress", "Who's working", "Ready to run"), with a "?"
+explanation. Quick actions moved out of Mission Control onto the Activity page.
 
 ## Reference
 

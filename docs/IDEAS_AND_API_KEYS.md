@@ -2,7 +2,7 @@
 
 ## AI Idea Generator
 
-**Where:** Mission Control → *AI Idea Generator* (button **Generate 10 Ideas**), and the **Ideas** page (Idea Library).
+**Where:** **Create** → choose a channel → **Generate new ideas**, and **Content → Ideas** (the Idea Library; `/ideas` redirects).
 
 **What happens when you press it**
 1. A `generate_ideas` owner job is queued (one at a time: the button is locked while a batch is pending, and the

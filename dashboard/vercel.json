@@ -1,5 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "git": { "deploymentEnabled": { "feat/dashboard-reorg-b1": false } },
   "framework": "vite",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",

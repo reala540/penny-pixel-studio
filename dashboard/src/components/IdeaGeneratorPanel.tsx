@@ -60,7 +60,7 @@ export default function IdeaGeneratorPanel() {
       {working === 0 && (
         <p role="alert" className="mt-3 flex items-start gap-2 rounded-lg bg-alert-soft px-3 py-2 text-sm text-alert">
           <TriangleAlert size={16} className="mt-0.5 shrink-0" aria-hidden />
-          Configuration required: no AI provider passed the last key check. Add or fix keys in <Link to="/api" className="underline">AI APIs</Link>, then run First-time setup (keys only).
+          Configuration required: no AI provider passed the last key check. Add or fix keys in <Link to="/settings/ai" className="underline">AI APIs</Link>, then run First-time setup (keys only).
         </p>
       )}
       <div className="mt-3 text-xs text-[color:var(--cr-muted)]" aria-live="polite">
@@ -80,7 +80,7 @@ export default function IdeaGeneratorPanel() {
       {ideas.isLoading && latest ? <Loading label="Loading ideas" /> : visible.length > 0 && (
         <div className="mt-4 space-y-3">
           {visible.map((i) => <IdeaCard key={i.id} idea={i} />)}
-          <Link to="/ideas" className="inline-block text-sm text-[color:var(--cr-accent)] underline-offset-4 hover:underline">Open the Idea Library</Link>
+          <Link to="/content/ideas" className="inline-block text-sm text-[color:var(--cr-accent)] underline-offset-4 hover:underline">Open Ideas</Link>
         </div>
       )}
     </section>

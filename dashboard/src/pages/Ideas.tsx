@@ -1,6 +1,10 @@
 import { Sparkles } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import ResearchIdeaCard from "../components/ResearchIdeaCard";
+import { isCleared } from "../lib/clear";
 import ClearButton from "../components/ClearButton";
 import IdeaCard from "../components/IdeaCard";
 import { Empty, ErrorNote, Loading, PageHeader, useToast } from "../components/ui";
@@ -9,14 +13,23 @@ import { useCleared, visibleAfterClear } from "../lib/clear";
 import { supabase } from "../lib/supabase";
 import { DEFAULT_IDEA_CONFIG } from "../lib/ideas";
 import { useActiveIdeaJob, useIdeaActions, useIdeaRuns, useIdeas } from "../lib/ideasApi";
-import type { IdeaGeneratorConfig, IdeaStatus } from "../lib/types";
+import type { Idea, IdeaGeneratorConfig, IdeaStatus } from "../lib/types";
 
 const TABS: [IdeaStatus | "all", string][] = [
-  ["all", "All"], ["new", "New"], ["saved", "Saved"], ["sent_to_studio", "Sent to Studio"], ["rejected", "Rejected"], ["archived", "Archived"],
+  ["all", "All"], ["new", "To use"], ["saved", "Saved"], ["sent_to_studio", "Used"], ["rejected", "Not for me"], ["archived", "Archived"],
 ];
+/** Research idea statuses that match each tab. */
+const RESEARCH_FOR: Record<IdeaStatus | "all", string[] | null> = {
+  all: null, new: ["proposed", "shortlisted"], saved: ["saved"], sent_to_studio: ["selected", "produced"], rejected: ["rejected"], archived: ["expired"],
+};
 
+/** Content → Ideas: Idea Generator ideas and weekly research ideas in one list. */
 export default function Ideas() {
   const toast = useToast();
+  const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
+  const source = (params.get("source") ?? "both") as "both" | "generator" | "research";
+  const setSource = (v: string) => { const p = new URLSearchParams(params); p.set("source", v); setParams(p, { replace: true }); };
   const [tab, setTab] = useState<IdeaStatus | "all">("all");
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<"score" | "newest">("newest");
@@ -29,6 +42,19 @@ export default function Ideas() {
   const cleared = useCleared();
   const history = visibleAfterClear(runs.data ?? [], cleared.map, "idea_runs", (r) => r.started_at);
   const filtered = tab !== "all" || q.trim() !== "" || sort !== "newest";
+  const research = useQuery({
+    queryKey: ["research-ideas", "library", tab],
+    enabled: source !== "generator",
+    queryFn: async () => {
+      let qy = supabase.from("content_ideas").select("*").order("batch_week", { ascending: false }).order("score", { ascending: false }).limit(200);
+      const st = RESEARCH_FOR[tab];
+      if (st) qy = qy.in("status", st);
+      return (await must(qy)) as Idea[];
+    },
+  });
+  // "Clear old research" hides past research ideas; anything shortlisted or being made always stays.
+  const keepResearch = (i: Idea) => ["shortlisted", "selected"].includes(i.status) || !isCleared(cleared.map, "research", i.created_at);
+  const researchShown = (research.data ?? []).filter((i) => keepResearch(i) && (!q.trim() || `${i.title} ${i.angle ?? ""}`.toLowerCase().includes(q.trim().toLowerCase())));
 
   /** Moves every unsaved "New" idea to Archived; Undo puts exactly those back. */
   async function archiveNew() {
@@ -51,7 +77,7 @@ export default function Ideas() {
 
   return (
     <>
-      <PageHeader title="Idea Library" intro="Every generated idea with its evidence, score and history. Save the good ones, reject the rest; rejected ideas are never suggested again."
+      <PageHeader title="Ideas" intro="Every idea from the Idea Generator and the weekly research, with its evidence and score. Use one to create a package; ideas marked Not for me are never suggested again."
         actions={<>
           <ClearButton label="Clear new ideas" title="Clear all new ideas?" done="New ideas moved to Archived"
             body="Every idea still marked New (not saved, sent or rejected) moves to Archived, so the next batch starts clean. Nothing is deleted, and Undo puts them back."
@@ -61,6 +87,16 @@ export default function Ideas() {
             <Sparkles size={14} aria-hidden />{job.data ? "Generating…" : `Generate ${cfg.count} Ideas`}</button>
         </>} />
 
+      <nav aria-label="Breadcrumb" className="-mt-3 mb-4 text-sm text-muted"><Link to="/content" className="hover:underline">Content</Link> › <span className="text-ink">Ideas</span></nav>
+      <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
+        <span className="text-muted">Source</span>
+        <div role="radiogroup" aria-label="Source" className="flex gap-1">
+          {([["both", "Both"], ["generator", "Idea Generator"], ["research", "Weekly research"]] as const).map(([v, label]) => (
+            <button key={v} role="radio" aria-checked={source === v} onClick={() => setSource(v)}
+              className={`rounded-lg border px-3 py-1 ${source === v ? "border-ink bg-ink text-surface" : "border-line text-muted hover:text-ink"}`}>{label}</button>
+          ))}
+        </div>
+      </div>
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <div role="tablist" aria-label="Filter by status" className="flex flex-wrap gap-1">
           {TABS.map(([v, label]) => (
@@ -82,9 +118,24 @@ export default function Ideas() {
       <ErrorNote error={ideas.error} />
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
         <div className="min-w-0 space-y-3">
-          {ideas.isLoading ? <Loading label="Loading ideas" /> : shown.length === 0
-            ? <Empty title="No ideas here yet">Generate a batch, or change the filter.</Empty>
-            : shown.map((i) => <IdeaCard key={i.id} idea={i} />)}
+          {source !== "research" && (ideas.isLoading ? <Loading label="Loading ideas" /> : shown.length === 0
+            ? (source === "generator" || researchShown.length === 0) && <Empty title="No ideas here yet">Generate a batch, or change the filter.</Empty>
+            : shown.map((i) => <IdeaCard key={i.id} idea={i} />))}
+          {source !== "generator" && (
+            <section aria-labelledby="research-title" className={source === "both" ? "pt-4" : ""}>
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <h2 id="research-title" className="section-title text-base">Weekly research ideas</h2>
+                {researchShown.length > 0 && <ClearButton label="Clear old research" title="Clear old research from this page?" done="Old research cleared" className="btn-quiet px-2.5 py-1 text-xs"
+                  body="Research ideas found so far leave this list, except ones shortlisted or being made. Their sources stay saved, because videos cite them. You can undo this."
+                  onClear={() => cleared.clear("research")} />}
+              </div>
+              <ErrorNote error={research.error} />
+              {research.isLoading ? <Loading /> : researchShown.length === 0
+                ? <p className="text-sm text-muted">No research ideas here. Weekly research runs on Saturday, or start it from Activity → Quick actions.</p>
+                : <div className="space-y-3">{researchShown.map((i) => <ResearchIdeaCard key={i.id} idea={i}
+                    onUse={() => navigate(`/create?step=research&kind=research&id=${i.id}&channel=${i.channel_slug}`)} useLabel="Create from this idea" />)}</div>}
+            </section>
+          )}
         </div>
         <aside aria-labelledby="runs-title">
           <div className="flex items-center justify-between gap-2">

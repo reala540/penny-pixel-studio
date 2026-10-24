@@ -1,79 +1,54 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
-import AutoPostToggle from "../components/AutoPostToggle";
+import { Link, useSearchParams } from "react-router-dom";
+import { ApprovalModeNotice } from "../components/AutoPostToggle";
 import { Confirm, Empty, ErrorNote, HostTag, Loading, PageHeader, StatusBadge, useToast } from "../components/ui";
 import { must, queueJob, useTimezone } from "../lib/api";
+import { useProjectHistory } from "../lib/content";
 import { safeUrl, estSeconds, fmtDateTime, fmtDuration, HOST, KIND_NAME, PLATFORM_NAME } from "../lib/format";
 import { signedUrl, supabase } from "../lib/supabase";
 import type { Claim, Project, ScriptBody, Variant } from "../lib/types";
 
-const OPEN = ["ready_for_review", "needs_attention"];
-
-export default function Review() {
-  const { projectId } = useParams();
-  const navigate = useNavigate();
-  const qc = useQueryClient();
-  const toast = useToast();
-  const list = useQuery({
-    queryKey: ["review-list"],
-    queryFn: async () =>
-      (await must(supabase.from("content_projects").select("*").in("status", OPEN).order("created_at", { ascending: false }).limit(60))) as Project[],
+function AutoChecks({ projectId }: { projectId: string }) {
+  const rows = useQuery({
+    queryKey: ["auto-reviews", projectId],
+    queryFn: async () => (await must(supabase.from("auto_reviews").select("id, verdict, attempt, fix, reasons, reviewer, confidence, created_at")
+      .eq("project_id", projectId).order("created_at", { ascending: false }).limit(10))) as any[],
   });
-  const parents = (list.data ?? []).filter((p) => !p.parent_project_id || !(list.data ?? []).some((x) => x.id === p.parent_project_id));
-  const eligible = parents.filter((p) => p.status === "ready_for_review" && !(p.quality_report?.issues ?? []).length);
-  const [askAll, setAskAll] = useState(false);
-
-  useEffect(() => {
-    if (!projectId && parents.length && window.matchMedia("(min-width: 1024px)").matches) navigate(`/review/${parents[0].id}`, { replace: true });
-  }, [projectId, parents.length]);
-
-  const approveAll = useMutation({
-    mutationFn: async () => {
-      for (const p of eligible) await must(supabase.rpc("approve_project", { p_project_id: p.id, p_notes: "approved in bulk" }));
-    },
-    onSuccess: () => { qc.invalidateQueries(); toast(`Approved ${eligible.length} package${eligible.length === 1 ? "" : "s"}`); },
-    onError: (e) => toast((e as Error).message, "bad"),
-  });
-
+  if (!rows.data?.length) return null;
+  const label: Record<string, string> = { approved: "Approved automatically", needs_review: "Sent to you", error: "Couldn't check: sent to you", skipped: "Skipped", fixing: "Fixing, will check again" };
   return (
-    <>
-      <PageHeader
-        title="Review Studio"
-        intro="Watch, check the facts, tweak the words, then approve. With Auto Review & Post OFF, nothing is posted until you approve it."
-        actions={eligible.length > 0 && (
-          <button className="btn-primary" onClick={() => setAskAll(true)} disabled={approveAll.isPending}>
-            Approve all {eligible.length} that passed every check
-          </button>
-        )}
-      />
-      <div className="mb-6 rounded-xl border border-line bg-surface px-4 py-3"><AutoPostToggle /></div>
-      <Confirm open={askAll} title="Approve all checked packages?"
-        body={<>This approves {eligible.length} video package{eligible.length === 1 ? "" : "s"} (with their Shorts and posts) that passed every automatic check. Items that need a look stay in the list.</>}
-        confirmLabel="Approve all" onCancel={() => setAskAll(false)} onConfirm={() => { setAskAll(false); approveAll.mutate(); }} />
-      <ErrorNote error={list.error} />
-      {list.isLoading ? <Loading /> : parents.length === 0 ? (
-        <Empty title="You're all caught up">New videos arrive after Sunday's production run. You can also start one from Settings → Run now.</Empty>
-      ) : (
-        <div className="grid gap-6 lg:grid-cols-[300px_1fr]">
-          <nav aria-label="Items to review" className={`${projectId ? "hidden lg:block" : ""}`}>
-            <ul className="space-y-1">
-              {parents.map((p) => (
-                <li key={p.id}>
-                  <Link to={`/review/${p.id}`} aria-current={p.id === projectId ? "page" : undefined}
-                    className={`block rounded-lg px-3 py-2.5 ${p.id === projectId ? "bg-surface shadow-sm ring-1 ring-line" : "hover:bg-surface/70"}`}>
-                    <span className="flex items-center justify-between gap-2"><HostTag channel={p.channel_slug} /><StatusBadge status={p.status} /></span>
-                    <span className="mt-1 block text-sm font-medium leading-snug">{p.title}</span>
-                    <span className="text-xs text-muted">{p.format === "long" ? "Video package" : "Short"}{p.recipe?.preview_seconds ? ` · ${fmtDuration(p.recipe.preview_seconds)}` : ""}</span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </nav>
-          {projectId ? <Detail key={projectId} id={projectId} /> : <p className="hidden text-muted lg:block">Choose an item.</p>}
-        </div>
-      )}
-    </>
+    <section className="mt-6" aria-labelledby="auto-title">
+      <h3 id="auto-title" className="text-sm font-semibold">Automatic review</h3>
+      <ul className="mt-2 divide-y divide-line rounded-xl border border-line bg-surface text-sm">
+        {rows.data.map((r) => (
+          <li key={r.id} className="px-4 py-2.5">
+            <p className="font-medium">{label[r.verdict] ?? r.verdict}{r.attempt ? ` · attempt ${r.attempt}` : ""}<span className="ml-2 text-xs font-normal text-muted">{new Date(r.created_at).toLocaleString()}</span></p>
+            {r.fix && <p className="text-xs">🔧 {r.fix}</p>}
+            {(r.reasons ?? []).slice(0, 3).map((x: string) => <p key={x} className="text-xs text-muted">• {x}</p>)}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function History({ projectId }: { projectId: string }) {
+  const h = useProjectHistory(projectId);
+  if (h.isLoading) return <Loading />;
+  if (h.error) return <ErrorNote error={h.error} />;
+  if (!h.data?.length) return <p className="text-sm text-muted">Nothing has happened to this package yet.</p>;
+  return (
+    <ol className="divide-y divide-line rounded-xl border border-line bg-surface">
+      {h.data.map((i, n) => (
+        <li key={n} className="px-4 py-2.5 text-sm">
+          <p className={i.tone === "bad" ? "font-medium text-alert" : i.tone === "good" ? "font-medium text-penny" : "font-medium"}>{i.title}
+            {i.url && <a href={safeUrl(i.url)} target="_blank" rel="noreferrer" className="ml-2 text-xs text-pixel underline">Open the post</a>}</p>
+          {i.detail && <p className="text-xs text-muted">{i.detail}</p>}
+          <time className="text-xs text-muted" dateTime={i.at}>{new Date(i.at).toLocaleString()}</time>
+        </li>
+      ))}
+    </ol>
   );
 }
 
@@ -81,11 +56,18 @@ function usePreview(key?: string) {
   return useQuery({ queryKey: ["signed", key], enabled: Boolean(key), staleTime: 50 * 60_000, queryFn: () => signedUrl(key) });
 }
 
-function Detail({ id }: { id: string }) {
+type Tab = "script" | "facts" | "thumbs" | "posts" | "shorts" | "history";
+const TABS: Tab[] = ["script", "facts", "thumbs", "posts", "shorts", "history"];
+
+/** One project's page: video, approval, and every part of the package (the old Review Studio detail, kept whole). */
+export function Detail({ id }: { id: string }) {
   const qc = useQueryClient();
   const toast = useToast();
   const tz = useTimezone();
-  const [tab, setTab] = useState<"script" | "facts" | "thumbs" | "posts" | "shorts">("script");
+  const [params, setParams] = useSearchParams();
+  const wanted = params.get("tab") as Tab | null;
+  const tab: Tab = wanted && TABS.includes(wanted) ? wanted : "script";
+  const setTab = (t: Tab) => { const p = new URLSearchParams(params); p.set("tab", t); setParams(p, { replace: true }); };
   const [confirm, setConfirm] = useState<null | "approve" | "reject">(null);
   const [regen, setRegen] = useState(false);
   const data = useQuery({
@@ -123,7 +105,8 @@ function Detail({ id }: { id: string }) {
       await must(supabase.from("content_variants").update({ status: "rejected" }).in("project_id", ids));
       await must(supabase.from("content_projects").update({ status: "rejected" }).in("id", ids));
     },
-    onSuccess: () => { qc.invalidateQueries(); toast("Rejected. Its posts were cancelled."); },
+    onSuccess: () => { qc.invalidateQueries(); toast("Discarded. Its posts were cancelled and their slots freed."); },
+    onError: (e) => toast((e as Error).message, "bad"),
   });
 
   if (data.isLoading) return <Loading />;
@@ -135,7 +118,6 @@ function Detail({ id }: { id: string }) {
 
   return (
     <article aria-labelledby="detail-title" className="min-w-0">
-      <Link to="/review" className="mb-3 inline-block text-sm text-muted lg:hidden">Back to list</Link>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <HostTag channel={project.channel_slug} />
@@ -156,7 +138,8 @@ function Detail({ id }: { id: string }) {
             <div className="grid aspect-video place-items-center text-sm text-surface/70">{video.isLoading ? "Loading preview…" : "No preview yet"}</div>
           )}
         </div>
-        <aside className="space-y-4">
+        <aside className="space-y-4" aria-label="Approval">
+          {!decided && <ApprovalModeNotice />}
           {issues.length > 0 || bad.length > 0 ? (
             <div className="rounded-xl border border-alert/40 bg-alert-soft p-4 text-sm">
               <p className="font-medium text-alert">Check before approving</p>
@@ -191,25 +174,26 @@ function Detail({ id }: { id: string }) {
       </div>
 
       <Confirm open={confirm === "approve"} title="Approve this package?"
-        body={<>The video, its Shorts and {variants.length} post{variants.length === 1 ? "" : "s"} will be published at their scheduled times.</>}
+        body={<>The video, its Shorts and {variants.length} post{variants.length === 1 ? "" : "s"} go out at their scheduled times. You can still cancel single posts in Calendar.</>}
         confirmLabel="Approve package" onCancel={() => setConfirm(null)} onConfirm={() => { setConfirm(null); approve.mutate(); }} />
       <Confirm open={confirm === "reject"} title="Discard this package?" danger
-        body="The video, its Shorts and all their scheduled posts are rejected and cancelled, and their time slots are freed. The script stays in the Library (status Rejected), so you can see what was discarded."
+        body="The video, its Shorts and all their posts are rejected and their slots freed. It stays in Content → Not used."
         confirmLabel="Discard package" onCancel={() => setConfirm(null)} onConfirm={() => { setConfirm(null); reject.mutate(); }} />
       {regen && <RegenerateDialog project={project} onClose={() => setRegen(false)} />}
 
       <div role="tablist" aria-label="Package parts" className="mt-8 flex gap-1 overflow-x-auto border-b border-line">
-        {([["script", "Script"], ["facts", `Facts (${claims.length})`], ["thumbs", "Thumbnails"], ["posts", `Posts (${variants.length})`], ["shorts", `Shorts (${children.length})`]] as const).map(([k, label]) => (
+        {([["script", "Script"], ["facts", `Sources & checks (${claims.length})`], ["thumbs", "Thumbnails"], ["shorts", `Shorts (${children.length})`], ["posts", `Posts (${variants.length})`], ["history", "History"]] as const).map(([k, label]) => (
           <button key={k} role="tab" aria-selected={tab === k} onClick={() => setTab(k)}
             className={`whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium ${tab === k ? "border-ink text-ink" : "border-transparent text-muted hover:text-ink"}`}>{label}</button>
         ))}
       </div>
       <div className="pt-5">
         {tab === "script" && script && <ScriptEditor project={project} version={script} />}
-        {tab === "facts" && <Facts claims={claims} />}
+        {tab === "facts" && <><Facts claims={claims} /><AutoChecks projectId={id} /></>}
         {tab === "thumbs" && <Thumbs thumbs={thumbs} projectId={id} />}
         {tab === "posts" && <Posts variants={variants} tz={tz} />}
         {tab === "shorts" && <Shorts shorts={children} />}
+        {tab === "history" && <History projectId={id} />}
       </div>
     </article>
   );

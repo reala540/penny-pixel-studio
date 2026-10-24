@@ -1,6 +1,8 @@
 # Mission Control
 
-Mission Control is the dashboard's operator landing page. It exposes actual engine telemetry rather than inventing autonomous activity.
+> v2.6: Mission Control now lives in **Activity → Technical details** (`/mission` redirects to `/activity`). Its quick actions are on the Activity page itself, and making a package from an idea is done in **Create**.
+
+Mission Control shows the studio's monitoring. It exposes actual engine telemetry rather than inventing autonomous activity.
 
 ## What the owner can do
 

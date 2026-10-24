@@ -1,13 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import { Link } from "react-router-dom";
+import { lazy, Suspense, useEffect, useState } from "react";
+import { Link, NavLink, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import AutoPostToggle, { AutoFixAttempts, AutoReviewLog } from "../components/AutoPostToggle";
 import ClearButton from "../components/ClearButton";
-import ModeSwitch from "../components/ModeSwitch";
 import PostingSchedule from "../components/PostingSchedule";
 import ThemeControl from "../components/ThemeControl";
 import { useCleared, visibleAfterClear } from "../lib/clear";
+import { STALE_HOURS, useKeyCheck, useReadiness } from "../lib/readiness";
+import { SETTINGS_SECTIONS, type SettingsSection } from "../lib/routes";
 import { ErrorNote, Loading, PageHeader, useToast } from "../components/ui";
 import { cleanCategories, cleanRegions, DEFAULT_IDEA_CONFIG, SOURCES } from "../lib/ideas";
 import { useIdeaRuns } from "../lib/ideasApi";
@@ -15,52 +15,93 @@ import type { IdeaGeneratorConfig } from "../lib/types";
 import { must, runWorkflow, useAccounts, useSaveSetting, useSetting } from "../lib/api";
 import { PLATFORM_NAME } from "../lib/format";
 import { callWorker, supabase, workerUrl } from "../lib/supabase";
+import { PauseButton } from "./Home";
 
-const SECTIONS = [
-  ["appearance", "Appearance"],
-  ["ideas", "Idea generation"],
-  ["automation", "Automation"],
-  ["posting-schedule", "Posting schedule"],
-  ["providers", "AI providers"],
-  ["accounts", "Accounts"],
-  ["run", "Run now"],
-  ["writers", "AI writers"],
-  ["voices", "Channel voices"],
-  ["budget", "Budget"],
-  ["schedule", "Timezone"],
-  ["telegram", "Telegram"],
-] as const;
+const SetupPage = lazy(() => import("./Setup"));
+const ApiManager = lazy(() => import("./ApiManager"));
+
+const SECTION_BODY: Record<SettingsSection, () => JSX.Element> = {
+  setup: () => <SetupPage />,
+  accounts: () => <Accounts />,
+  schedule: () => (
+    <Section id="posting-schedule" title="Posting schedule" intro="Choose the days, times and number of posts per week for each account, or pause one without disconnecting it.">
+      <PostingSchedule />
+    </Section>
+  ),
+  automation: () => <Automation />,
+  ideas: () => <IdeaGeneration />,
+  ai: () => <><KeyCheckPanel /><div className="mt-10"><Writers /></div><div className="mt-10"><ApiManager /></div></>,
+  voices: () => <Voices />,
+  notifications: () => <Telegram />,
+  budget: () => <Budget />,
+  appearance: () => <><Appearance /><div className="mt-14"><Schedule /></div></>,
+};
 
 export default function SettingsPage() {
+  const { section = "setup" } = useParams();
+  const navigate = useNavigate();
   const [params] = useSearchParams();
   const toast = useToast();
   useEffect(() => {
     if (params.get("connected")) toast(`${PLATFORM_NAME[params.get("connected") as keyof typeof PLATFORM_NAME] ?? "Account"} connected`);
     if (params.get("connect_error")) toast(`Couldn't connect: ${params.get("connect_error")}`, "bad");
   }, []);
+  const current = (SETTINGS_SECTIONS.find(([k]) => k === section) ?? SETTINGS_SECTIONS[0])[0];
+  const Body = SECTION_BODY[current];
   return (
     <>
-      <PageHeader title="Settings" intro="Connect your accounts, choose which free AI services to use, and set the house rules." />
-      <nav aria-label="Settings sections" className="mb-8 flex flex-wrap gap-x-4 gap-y-1 text-sm">
-        {SECTIONS.map(([id, label]) => <a key={id} href={`#${id}`} className="text-muted underline-offset-4 hover:text-ink hover:underline">{label}</a>)}
-      </nav>
-      <div className="space-y-14">
-        <Appearance />
-        <IdeaGeneration />
-        <Automation />
-        <Section id="posting-schedule" title="Posting schedule" intro="Choose the days, times and number of posts per week for each account, or pause one without disconnecting it.">
-          <PostingSchedule />
-        </Section>
-        <ProvidersLink />
-        <Accounts />
-        <RunNow />
-        <Writers />
-        <Voices />
-        <Budget />
-        <Schedule />
-        <Telegram />
+      <PageHeader title="Settings" intro="Connections, schedule, automation and house rules, one section at a time." />
+      <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
+        <nav aria-label="Settings sections" className="lg:sticky lg:top-4 lg:self-start">
+          <label className="lg:hidden"><span className="sr-only">Settings section</span>
+            <select aria-label="Settings section" className="field" value={current} onChange={(e) => navigate(`/settings/${e.target.value}`)}>
+              {SETTINGS_SECTIONS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+            </select>
+          </label>
+          <ul className="hidden flex-col gap-0.5 lg:flex">
+            {SETTINGS_SECTIONS.map(([k, label]) => (
+              <li key={k}><NavLink to={`/settings/${k}`} className={({ isActive }) => `block rounded-lg px-3 py-1.5 text-sm ${isActive ? "bg-ink text-surface" : "text-muted hover:bg-sunken hover:text-ink"}`}>{label}</NavLink></li>
+            ))}
+          </ul>
+        </nav>
+        <div className="min-w-0"><Suspense fallback={<Loading label="Loading section" />}><Body /></Suspense></div>
       </div>
     </>
+  );
+}
+
+/** Settings → AI services: when the keys were last checked, what passed, which jobs have no passing service, and Test again. */
+function KeyCheckPanel() {
+  const toast = useToast();
+  const check = useSetting<{ checked_at?: string; results?: { provider: string; status: string; note?: string; error?: string }[] } | null>("provider_check", null);
+  const ready = useReadiness();
+  const keyCheck = useKeyCheck();
+  const results = check.data?.results ?? [];
+  return (
+    <Section id="key-check" title="AI key check" intro="One short test request per service. A pass means the key works with at least one model; it doesn't prove every model or job works.">
+      <div className="max-w-3xl rounded-xl border border-line bg-surface p-4 text-sm">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p>{ready.checkedAt ? <>Last checked {new Date(ready.checkedAt).toLocaleString()}{ready.stale && <span className="ml-1 font-medium text-alert">(older than {STALE_HOURS} hours: results may have changed)</span>}</> : "Not checked yet."}</p>
+          <button className="btn-primary" disabled={keyCheck.running || keyCheck.run.isPending}
+            onClick={() => keyCheck.run.mutate(undefined, { onSuccess: () => toast("Testing the AI keys. Results appear here in a few minutes."), onError: (e) => toast((e as Error).message, "bad") })}>
+            {keyCheck.running ? "Testing…" : "Test again"}</button>
+        </div>
+        {results.length > 0 && (
+          <ul className="mt-3 grid gap-1 sm:grid-cols-2">
+            {results.map((r) => (
+              <li key={r.provider} className="flex items-start gap-2">
+                <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${r.status === "ok" ? "bg-penny" : r.status === "no key" ? "bg-line" : "bg-alert"}`} aria-hidden />
+                <span><span className="font-medium">{r.provider}</span>: <span className="text-muted">{r.status === "ok" ? r.note ?? "works" : r.status === "no key" ? "no key" : (r.error ?? "failed").slice(0, 120)}</span></span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {ready.uncoveredRoles.length > 0 && ready.checkedAt && (
+          <p className="mt-3 rounded-lg bg-gold/15 px-3 py-2 text-ink">No service that passed the last check does these jobs: <strong>{ready.uncoveredRoles.join(", ")}</strong>.
+            Tick them on a working model under <em>Models and the jobs they do</em> below, or a package may stop at that step.</p>
+        )}
+      </div>
+    </Section>
   );
 }
 
@@ -76,10 +117,8 @@ function Section({ id, title, intro, children }: { id: string; title: string; in
 
 function Appearance() {
   return (
-    <Section id="appearance" title="Appearance" intro="Light, dark, or follow your device (remembered on this device), and how much the menu shows (same on every device).">
+    <Section id="appearance" title="Appearance" intro="Light, dark, or follow your device. Remembered on this device.">
       <ThemeControl />
-      <h3 className="mb-2 mt-5 text-sm font-semibold text-ink">Menu</h3>
-      <ModeSwitch />
     </Section>
   );
 }
@@ -150,7 +189,12 @@ function Automation() {
   const shownRuns = visibleAfterClear(runs.data ?? [], cleared.map, "idea_runs", (r) => r.started_at);
   if (loading) return <Section id="automation" title="Automation"><Loading /></Section>;
   return (
-    <Section id="automation" title="Automation" intro="Who approves publishing, and scheduled idea batches.">
+    <Section id="automation" title="Automation" intro="Who approves publishing, the publishing pause, fix attempts and scheduled idea batches.">
+      <div className="mb-6 flex max-w-3xl flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-surface p-4">
+        <p className="text-sm">Publishing pause: stops all posting on every account. Making content keeps working.</p>
+        <PauseButton />
+      </div>
+      <p className="mb-6 max-w-3xl text-sm text-muted">To run research, the weekly batch or due posts now, use <Link to="/activity#quick-actions" className="text-pixel underline">Activity → Quick actions</Link>.</p>
       <div className="mb-6 max-w-3xl rounded-xl border border-line bg-surface p-4">
         <AutoPostToggle />
         <p className="mt-3 text-xs leading-5 text-muted">OFF (default): every package waits for your approval, exactly as before. ON: packages that pass
@@ -209,14 +253,6 @@ function Automation() {
   );
 }
 
-function ProvidersLink() {
-  return (
-    <Section id="providers" title="AI providers" intro="Keys, model jobs, how keys share the work, limits, failover and monitoring.">
-      <Link to="/api" className="btn-quiet">Open the AI API Manager</Link>
-    </Section>
-  );
-}
-
 function Accounts() {
   const accounts = useAccounts();
   const toast = useToast();
@@ -247,7 +283,7 @@ function Accounts() {
           })}
         </ul>
       )}
-      {!workerUrl && <p className="mt-2 text-sm text-alert">Connecting needs the Worker. Add VITE_WORKER_URL (GUIDE.md, step 9).</p>}
+      {!workerUrl && <p className="mt-2 text-sm text-alert">Connecting needs the Worker. See Settings → Getting started.</p>}
     </Section>
   );
 }
@@ -268,24 +304,6 @@ const PROVIDER_NAME: Record<string, string> = {
   openrouter: "OpenRouter", aion: "Aion Labs", ollama: "Ollama Cloud", zai: "Z AI (GLM)", cerebras: "Cerebras",
   sambanova: "SambaNova", llm7: "LLM7", ovh: "OVHcloud",
 };
-
-function RunNow() {
-  const toast = useToast();
-  const run = useMutation({
-    mutationFn: (w: "research" | "produce" | "publish") => runWorkflow(w),
-    onSuccess: (_d, w) => toast(`${w[0].toUpperCase()}${w.slice(1)} started. You'll get a Telegram message when it finishes.`),
-    onError: (e) => toast((e as Error).message, "bad"),
-  });
-  return (
-    <Section id="run" title="Run now" intro="These run automatically every week. Use them to start early or catch up.">
-      <div className="flex flex-wrap gap-2">
-        <button className="btn-quiet" onClick={() => run.mutate("research")} disabled={run.isPending}>Research ideas</button>
-        <button className="btn-quiet" onClick={() => run.mutate("produce")} disabled={run.isPending}>Make this week's videos</button>
-        <button className="btn-quiet" onClick={() => run.mutate("publish")} disabled={run.isPending}>Publish anything due</button>
-      </div>
-    </Section>
-  );
-}
 
 function Writers() {
   const qc = useQueryClient();
@@ -308,7 +326,7 @@ function Writers() {
   if (data.isLoading) return <Section id="writers" title="AI writers"><Loading /></Section>;
   const d = data.data;
   return (
-    <Section id="writers" title="AI writers" intro="Free services only. If one is busy or out of free requests, the next one takes over automatically. A service is used only if it has a key (added in AI APIs or saved as a GitHub secret).">
+    <Section id="writers" title="AI writers" intro="Free services only. If one is busy or out of free requests, the next one takes over automatically. A service is used only if it has a key (added below or saved as a GitHub secret).">
       <ErrorNote error={data.error} />
       <div className="overflow-x-auto rounded-xl border border-line bg-surface">
         <table className="w-full min-w-[620px] text-left text-sm">
@@ -408,7 +426,7 @@ function Schedule() {
   const save = useSaveSetting();
   const toast = useToast();
   return (
-    <Section id="schedule" title="Schedule" intro="Posting times are shown and planned in this timezone. Change the days and times per account in Posting schedule above.">
+    <Section id="timezone" title="Timezone" intro="Posting times are shown and planned in this timezone. Change the days and times per account in Posting schedule.">
       <label className="block max-w-sm text-sm"><span className="text-muted">Timezone</span>
         <select aria-label="Timezone" className="field mt-1" value={tz} onChange={(e) => save.mutate({ key: "timezone", value: e.target.value }, { onSuccess: () => toast("Timezone saved") })}>
           {[...new Set([tz, ...ZONES])].map((z) => <option key={z}>{z}</option>)}
@@ -429,7 +447,7 @@ function Telegram() {
     onError: (e) => toast((e as Error).message, "bad"),
   });
   return (
-    <Section id="telegram" title="Telegram" intro="Get 'ready for review', 'posted' and problem alerts on your phone, and pause publishing from anywhere.">
+    <Section id="telegram" title="Notifications (Telegram, optional)" intro="Recommended, not required: get 'ready for review', 'posted' and problem alerts on your phone, and pause publishing from anywhere.">
       <p className="text-sm">{linked ? "Linked. Alerts go to your Telegram chat." : "Not linked yet."}</p>
       <button className="btn-quiet mt-3" onClick={() => get.mutate()} disabled={get.isPending || !workerUrl}>{linked ? "Link a different chat" : "Get a link code"}</button>
       {code && (

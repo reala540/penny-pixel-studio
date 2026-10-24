@@ -242,6 +242,16 @@ def cmd_capacity(a):
 
 def cmd_providers(a):
     """Refresh each provider's model list, then send one tiny request per provider and report which keys work."""
+    if config.runtime().db_url:
+        with _conn() as conn:
+            results = run_provider_check(conn)
+    else:
+        results = run_provider_check(None)
+    _print(results)
+
+
+def run_provider_check(conn) -> list[dict]:
+    """The key check, also run as the owner job "check_providers" (the dashboard's Test again)."""
     from .ai import catalog
     from .ai.credentials import ENV_LABEL, Credential
     from .ai.router import Candidate, Router
@@ -292,12 +302,11 @@ def cmd_providers(a):
         else:
             results.append({"provider": name, "status": "failed", "error": "; ".join(errors)[:300] or "no chat model",
                             "swaps": swaps, "details": raw})
-    if config.runtime().db_url:
-        with _conn() as conn:
-            db.set_setting(conn, "model_catalog", {"checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                                                   "providers": found})
-    _print(results)
-    _report_providers(results)
+    if conn is not None:
+        db.set_setting(conn, "model_catalog", {"checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                               "providers": found})
+    _report_providers(results, conn)
+    return results
 
 
 def _short_error(exc: Exception) -> str:
@@ -316,7 +325,7 @@ def _short_error(exc: Exception) -> str:
     return text[:120]
 
 
-def _report_providers(results: list[dict]) -> None:
+def _report_providers(results: list[dict], conn=None) -> None:
     """Save the key check where the dashboard (and the run summary) can show it."""
     icon = {"ok": "✅", "no key": "⚪", "failed": "❌"}
     lines = ["### AI keys", "", "| Provider | Result | Note |", "|---|---|---|"]
@@ -327,10 +336,9 @@ def _report_providers(results: list[dict]) -> None:
     if summary:
         with open(summary, "a", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")
-    if config.runtime().db_url:
-        with _conn() as conn:
-            db.set_setting(conn, "provider_check", {"checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                                                   "results": results})
+    if conn is not None:
+        db.set_setting(conn, "provider_check", {"checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                               "results": results})
 
 
 def cmd_ideas(a):
