@@ -124,9 +124,21 @@ describe("telegram", () => {
   it("links a chat with the one-time code", async () => {
     routes.push((u) => (u.includes("key=eq.telegram_chat_id") ? ok([]) : undefined));
     routes.push((u) => (u.includes("key=eq.telegram_link_code") ? ok([{ value: "ABC123" }]) : undefined));
+    // settings.value is NOT NULL in the real schema: reject null writes like PostgREST would.
+    routes.push((u, init) => (u.includes("rest/v1/settings?on_conflict") && String(init?.body).includes('"value":null') ? ok({ code: "23502" }, 400) : undefined));
     await handleTelegram(env(), msg("/link ABC123", 77));
     const writes = calls.filter((c) => c.url.includes("rest/v1/settings?on_conflict")).map((c) => String(c.init?.body));
     expect(writes.some((b) => b.includes('"telegram_chat_id"') && b.includes('"77"'))).toBe(true);
+    expect(calls.some((c) => c.init?.method === "DELETE" && c.url.includes("key=eq.telegram_link_code"))).toBe(true);
+    const reply = calls.find((c) => c.url.includes("/sendMessage"))!;
+    expect(String(reply.init!.body)).toContain("Linked!");
+  });
+
+  it("answers 200 even when a command fails, so Telegram doesn't resend it", async () => {
+    routes.push((u) => (u.includes("rest/v1/settings?key=eq.telegram_chat_id") ? ok({ message: "down" }, 500) : undefined));
+    const res = await handleTelegram(env(), msg("/status", 77));
+    expect(res.status).toBe(200);
+    expect(String(calls.find((c) => c.url.includes("/sendMessage"))!.init!.body)).toContain("went wrong");
   });
 });
 

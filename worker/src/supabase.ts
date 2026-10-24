@@ -75,6 +75,14 @@ export class Supabase {
     await this.upsert("settings", { key, value }, "key");
   }
 
+  async deleteSetting(key: string): Promise<void> {
+    const r = await fetch(`${this.env.SUPABASE_URL}/rest/v1/settings?key=eq.${encodeURIComponent(key)}`, {
+      method: "DELETE",
+      headers: this.headers({ Prefer: "return=minimal" }),
+    });
+    if (!r.ok) throw new Error(`delete setting ${key}: ${r.status} ${await r.text()}`);
+  }
+
   /** Validates a dashboard session token and confirms that user is the studio owner. */
   async ownerFromToken(accessToken: string | null): Promise<string | null> {
     if (!accessToken) return null;

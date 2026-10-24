@@ -106,6 +106,17 @@ export async function handleTelegram(env: Env, req: Request): Promise<Response> 
   const msg = update.message;
   if (!msg?.text || !msg.chat?.id) return new Response("ok");
   const chatId = String(msg.chat.id);
+  try {
+    return await handleCommand(env, msg, chatId);
+  } catch (e) {
+    // Always answer 200: an error response makes Telegram resend the same message and hold back newer ones.
+    console.error("telegram command failed", e);
+    await telegram(env, chatId, "Sorry, something went wrong on the studio side. Please try again in a minute.").catch(() => {});
+    return new Response("ok");
+  }
+}
+
+async function handleCommand(env: Env, msg: any, chatId: string): Promise<Response> {
   const db = new Supabase(env);
   const linked = await db.setting<string>("telegram_chat_id");
   const [cmd, ...args] = msg.text.trim().split(/\s+/);
@@ -115,7 +126,7 @@ export async function handleTelegram(env: Env, req: Request): Promise<Response> 
     const code = await db.setting<string>("telegram_link_code");
     if (code && args[0] && timingSafeEqual(args[0], code)) {
       await db.putSetting("telegram_chat_id", chatId);
-      await db.putSetting("telegram_link_code", null);
+      await db.deleteSetting("telegram_link_code");
       await db.audit("telegram_linked", { chat: chatId });
       await telegram(env, chatId, "Linked! You'll get studio updates here.\n\n" + HELP);
     } else {
