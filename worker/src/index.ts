@@ -69,18 +69,22 @@ function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+/** The webhook secret without stray whitespace from copy-paste. */
+const hookSecret = (env: Env) => (env.TELEGRAM_WEBHOOK_SECRET ?? "").trim();
+
 /** Point the bot at this Worker (idempotent) and explain any problem in plain words. */
 export async function connectTelegram(env: Env, hookUrl: string): Promise<{ ok: boolean; problem?: string }> {
   if (!env.TELEGRAM_BOT_TOKEN) return { ok: false, problem: "TELEGRAM_BOT_TOKEN is not set. Add it as a GitHub secret and run Deploy Worker again." };
-  if (!env.TELEGRAM_WEBHOOK_SECRET) return { ok: false, problem: "TELEGRAM_WEBHOOK_SECRET is not set. Add it as a GitHub secret and run Deploy Worker again." };
-  if (!/^[A-Za-z0-9_-]{1,256}$/.test(env.TELEGRAM_WEBHOOK_SECRET)) {
+  const secret = hookSecret(env);
+  if (!secret) return { ok: false, problem: "TELEGRAM_WEBHOOK_SECRET is not set. Add it as a GitHub secret and run Deploy Worker again." };
+  if (!/^[A-Za-z0-9_-]{1,256}$/.test(secret)) {
     return { ok: false, problem: "TELEGRAM_WEBHOOK_SECRET may only use letters, numbers, _ and -. Change the GitHub secret and run Deploy Worker again." };
   }
   try {
     const r = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/setWebhook`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: hookUrl, secret_token: env.TELEGRAM_WEBHOOK_SECRET, allowed_updates: ["message"] }),
+      body: JSON.stringify({ url: hookUrl, secret_token: secret, allowed_updates: ["message"] }),
     });
     const body = (await r.json().catch(() => ({}))) as { ok?: boolean; description?: string };
     if (body.ok) return { ok: true };
@@ -95,7 +99,7 @@ export async function connectTelegram(env: Env, hookUrl: string): Promise<{ ok: 
 
 export async function handleTelegram(env: Env, req: Request): Promise<Response> {
   const secret = req.headers.get("X-Telegram-Bot-Api-Secret-Token") ?? "";
-  if (!env.TELEGRAM_WEBHOOK_SECRET || !timingSafeEqual(secret, env.TELEGRAM_WEBHOOK_SECRET)) {
+  if (!hookSecret(env) || !timingSafeEqual(secret, hookSecret(env))) {
     return new Response("forbidden", { status: 403 });
   }
   const update = (await req.json().catch(() => ({}))) as any;

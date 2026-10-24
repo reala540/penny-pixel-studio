@@ -157,6 +157,15 @@ describe("telegram connection", () => {
     expect(calls.some((c) => c.url.includes("api.telegram.org"))).toBe(false);
   });
 
+  it("ignores whitespace pasted around the webhook secret", async () => {
+    owner();
+    routes.push((u) => (u.includes("/setWebhook") ? ok({ ok: true }) : undefined));
+    const body = (await (await linkCode(env({ TELEGRAM_WEBHOOK_SECRET: " hook-secret\n" }))).json()) as any;
+    expect(body.telegram).toEqual({ ok: true });
+    const hook = calls.find((c) => c.url.includes("/setWebhook"))!;
+    expect(JSON.parse(String(hook.init!.body)).secret_token).toBe("hook-secret");
+  });
+
   it("explains a wrong bot token", async () => {
     owner();
     routes.push((u) => (u.includes("/setWebhook") ? ok({ ok: false, description: "Unauthorized" }, 401) : undefined));
