@@ -49,7 +49,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-engine
       - run: studio maintain
       - name: Weekly database backup (Sundays)
@@ -61,7 +61,7 @@ jobs:
             sudo apt-get install -y -qq postgresql-client-17 > /dev/null
             mkdir -p backup && /usr/lib/postgresql/17/bin/pg_dump "$SUPABASE_DB_URL" --schema=public --no-owner -Fc -f backup/studio.dump
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: db-backup-${{ github.run_id }}
           path: backup/
