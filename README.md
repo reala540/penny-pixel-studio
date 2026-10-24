@@ -1,4 +1,4 @@
-# Penny & Pixel Studio — AI Content Studio v2.1
+# Penny & Pixel Studio — AI Content Studio v2.2
 
 A free-first, mostly automated content studio for two faceless YouTube channels (**Penny & Pixel AI** with host
 Pixel, **Penny & Pixel Money** with host Penny), a Facebook Page, TikTok and X.
@@ -6,11 +6,13 @@ Pixel, **Penny & Pixel Money** with host Penny), a Facebook Page, TikTok and X.
 - **New here?** Read **[GUIDE.md](GUIDE.md)**: step-by-step setup, written for non-coders.
 - Specification: [docs/SPEC_v2.1.md](docs/SPEC_v2.1.md) · Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) ·
   Providers and free limits: [docs/PROVIDERS_AND_LIMITS.md](docs/PROVIDERS_AND_LIMITS.md) ·
-  What was tested: [docs/TEST_REPORT.md](docs/TEST_REPORT.md)
+  Mission Control: [docs/CONTROL_ROOM.md](docs/CONTROL_ROOM.md) · What was tested: [docs/TEST_REPORT.md](docs/TEST_REPORT.md)
 
 ## What it does each week
 
-1. **Saturday:** collects fresh sources (news, trends, official data), several free AI models pitch ideas, and the
+**Mission Control** is the operator landing page: direct a research mission, choose its channel and council depth, watch real model handoffs and failures, inspect the run queue, and check setup readiness. Open `/demo` to explore the interface with non-persistent sample data.
+
+1. **Saturday:** collects fresh sources concurrently (news, trends, official data), several free AI models pitch ideas, and the
    ideas are scored and shortlisted.
 2. **Sunday:** writes source-checked scripts with a multi-model team (writer, voice editor, critic and claim checker
    are different providers), records the hosts with Kokoro TTS, renders previews, thumbnails, Shorts and per-platform

@@ -6,6 +6,9 @@ freshness_days:
   money: 30     # economic data is refreshed monthly
   evergreen: 365
 
+# Fetch independent sources concurrently; database writes stay on the main thread.
+parallel_sources: 6
+
 adapters:
   google_news_rss:
     enabled: true

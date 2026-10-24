@@ -1,4 +1,26 @@
-# Test report — v2.1 MVP (23 Oct 2026)
+# Test report — v2.2 Mission Control upgrade (24 Oct 2026)
+
+What changed: Mission Control (owner-directed missions, live model activity, run queue, readiness, public `/demo`),
+concurrent research collection, per-job attribution of model calls, activity indexes (migration 5), run locks so
+batches never overlap, longer owner-request timeout, light/dark Mission Control theme, lazy-loaded pages, and
+security dependency upgrades.
+
+| Suite | Result |
+|---|---|
+| Engine (`engine/tests`, pytest, local PostgreSQL with all 5 migrations, real FFmpeg/Kokoro renders) | **56 passed** |
+| Worker (vitest + `tsc`, `wrangler deploy --dry-run`) | **20 passed**, type-check clean, bundle 26 KiB |
+| Dashboard (vitest + `tsc` + Vite 7 build) | **8 passed**, build clean; Mission Control is a separate 24 kB chunk |
+| Dependency audits (`npm audit`) | **0 vulnerabilities** in dashboard and worker (was 5 incl. 3 high, and 12 incl. 2 critical) |
+| Lockfiles | Regenerated from `registry.npmjs.org` only; `npm ci` with the CI's npm 10 verified |
+| Tailwind parser override | CSS output byte-identical before and after |
+| Browser (Chromium/Playwright, signed in against a real PostgREST on the real schema) | **28/28 checks, 0 console errors**: live calls and failures shown, stage filter, launch mission, cancel queued job, pause feed, all 8 pages, no horizontal scroll at 390 px in light and dark, public demo makes no database calls, reduced motion respected |
+
+Dependency choices: versions are the oldest that carry the security fixes, mostly 2+ weeks old
+(react-router-dom 7.18.4, supabase-js 2.109.0, vite 7.3.7, postcss 8.5.28, wrangler 4.148.0, workers-types
+5.20261008.1). vitest 4.1.12 and undici 7.30.1 are newer (9 days) because they are the only patched releases; both
+are build/test tools, not shipped to users.
+
+## Historical report — v2.1 MVP (23 Oct 2026)
 
 ## What was run
 

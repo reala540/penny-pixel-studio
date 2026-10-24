@@ -1,10 +1,13 @@
-import { CalendarDays, Clapperboard, Compass, House, Library, LogOut, Settings, CircleHelp } from "lucide-react";
+import { Bot, CalendarDays, Clapperboard, Compass, Library, ListChecks, LogOut, Settings, CircleHelp } from "lucide-react";
+import { Suspense } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { useSetting } from "../lib/api";
 import { supabase } from "../lib/supabase";
+import { Loading } from "./ui";
 
 const NAV = [
-  { to: "/", label: "Home", icon: House, end: true },
+  { to: "/", label: "Mission", icon: Bot, end: true },
+  { to: "/week", label: "Rundown", icon: ListChecks },
   { to: "/review", label: "Review", icon: Clapperboard },
   { to: "/calendar", label: "Calendar", icon: CalendarDays },
   { to: "/research", label: "Research", icon: Compass },
@@ -68,15 +71,17 @@ export default function Layout() {
             Publishing is paused. Nothing will be posted until you resume it in Settings.
           </div>
         )}
-        <main id="main" className="mx-auto w-full max-w-6xl flex-1 px-4 pb-28 pt-6 sm:px-6 md:pb-12">
-          <Outlet />
+        <main id="main" className="mx-auto w-full max-w-[1600px] flex-1 px-4 pb-28 pt-6 sm:px-6 md:pb-12">
+          <Suspense fallback={<Loading label="Loading page" />}>
+            <Outlet />
+          </Suspense>
         </main>
       </div>
 
-      <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-6 border-t border-line bg-surface md:hidden">
+      <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-30 flex overflow-x-auto border-t border-line bg-surface md:hidden">
         {NAV.map(({ to, label, icon: Icon, end }) => (
           <NavLink key={to} to={to} end={end}
-            className={({ isActive }) => `flex flex-col items-center gap-0.5 py-2 text-[11px] font-medium ${isActive ? "text-pixel" : "text-muted"}`}>
+            className={({ isActive }) => `flex min-w-[72px] flex-1 flex-col items-center gap-0.5 px-2 py-2 text-xs font-medium ${isActive ? "text-pixel" : "text-muted"}`}>
             <Icon size={20} aria-hidden />
             {label}
           </NavLink>

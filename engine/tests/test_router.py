@@ -4,6 +4,7 @@ import httpx
 import pytest
 from pydantic import BaseModel
 
+from studio import jobs
 from studio.ai.router import Router, extract_json
 from studio.ai.usage import MemoryUsageStore
 from studio.errors import QuotaError
@@ -119,6 +120,16 @@ def test_payment_required_is_never_retried_as_paid():
     usage = MemoryUsageStore()
     res = make(handler, usage).complete("critic", "hi")
     assert res.provider == "second" and usage.circuit_open("first")
+
+
+def test_active_job_is_attributed_and_context_is_reset():
+    usage = MemoryUsageStore()
+    router = make(lambda req: reply("ok"), usage)
+    with jobs.job_context("mission-123"):
+        router.complete("critic", "hello")
+    assert usage.calls[-1]["job_id"] == "mission-123"
+    router.complete("critic", "hello again")
+    assert usage.calls[-1]["job_id"] is None
 
 
 def test_extract_json_variants():

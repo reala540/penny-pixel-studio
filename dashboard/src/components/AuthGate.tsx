@@ -1,5 +1,6 @@
 import type { Session } from "@supabase/supabase-js";
 import { FormEvent, ReactNode, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { configured, supabase } from "../lib/supabase";
 
 type OwnerState = "checking" | "owner" | "not-owner";
@@ -60,8 +61,9 @@ function SetupNeeded() {
       <h1 className="font-display text-2xl font-bold">Almost there</h1>
       <p className="mt-2 text-muted">
         The dashboard doesn't know your Supabase project yet. Add <code>VITE_SUPABASE_URL</code> and{" "}
-        <code>VITE_SUPABASE_ANON_KEY</code> to the Cloudflare Pages settings (GUIDE.md, step 8), then redeploy.
+        <code>VITE_SUPABASE_ANON_KEY</code> to the Vercel project's Environment Variables, then redeploy.
       </p>
+      <Link to="/demo" className="btn-quiet mt-6 w-full">Explore the interactive demo</Link>
     </>
   );
 }
@@ -104,6 +106,7 @@ function SignIn() {
       <button type="button" className="w-full text-sm text-muted underline-offset-2 hover:underline" onClick={() => setMode(mode === "in" ? "up" : "in")}>
         {mode === "in" ? "First time? Create the owner account" : "Already have an account? Sign in"}
       </button>
+      <Link to="/demo" className="block text-center text-sm text-muted underline-offset-2 hover:underline">Preview Mission Control with sample data</Link>
     </form>
   );
 }

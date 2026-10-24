@@ -173,9 +173,14 @@ class Router:
         return data
 
     def _record(self, cand, role, success, tin, tout, started, error):
+        # Resolve the active stage lazily so every provider call is visible in the
+        # control room, even when the Router was created before the stage started.
+        from ..jobs import active_job_id
+
         self.usage.record(cand.provider, cand.model, role, success=success,
                           input_tokens=tin, output_tokens=tout,
-                          latency_ms=int((time.monotonic() - started) * 1000), error=error, job_id=self.job_id)
+                          latency_ms=int((time.monotonic() - started) * 1000), error=error,
+                          job_id=self.job_id or active_job_id.get())
 
     def _chat_once(self, cand: Candidate, role: str, messages: list[dict], *, json_mode: bool,
                    temperature: float, max_tokens: int) -> AIResult:

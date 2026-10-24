@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from . import config, db, notify, produce
+from . import config, db, jobs, notify, produce
 from .ai.router import Router
 from .script import pipeline, quality
 from .script.models import Script, ShortScript
 
 OWNER_JOBS = ("regenerate_script", "rerender_preview", "regenerate_thumbnails", "run_research", "run_production",
-              "recheck_project")
+              "run_mission", "recheck_project")
 
 
 def _finish(conn, job, status: str, output: dict | None = None, error: str | None = None) -> None:
@@ -27,7 +27,8 @@ def process_owner_jobs(conn, router: Router, storage, limit: int = 10) -> list[d
                             returning *""", (limit,))
     for job in rows:
         try:
-            out = _run_owner_job(conn, router, storage, job)
+            with jobs.job_context(job["id"]):
+                out = _run_owner_job(conn, router, storage, job)
             _finish(conn, job, "completed", out)
             done.append({"id": str(job["id"]), "type": job["job_type"], "status": "completed"})
         except Exception as exc:  # report to owner, never crash the queue
@@ -52,10 +53,23 @@ def _reset_variants(conn, pid) -> None:
 
 def _run_owner_job(conn, router: Router, storage, job: dict) -> dict:
     t, inp = job["job_type"], job["input"] or {}
-    if t == "run_research":
+    if t in ("run_research", "run_mission"):
         from .research.engine import week_start
 
-        return produce.research_batch(conn, router, week_start())
+        research_out = produce.research_batch(
+            conn, router, week_start(), brief=str(inp.get("brief") or ""),
+            channel=inp.get("channel") if inp.get("channel") in ("ai", "money") else None,
+            n_models=max(1, min(int(inp.get("models") or 3), 5)),
+        )
+        if t == "run_research":
+            return research_out
+        # A mission may create and render a package, but approval remains a separate
+        # owner action and no publishing job is started here.
+        production_out = produce.produce_batch(
+            conn, router, storage, week_start(),
+            channel=inp.get("channel") if inp.get("channel") in ("ai", "money") else None,
+        )
+        return {"research": research_out, "production": production_out}
     if t == "run_production":
         from .research.engine import week_start
 

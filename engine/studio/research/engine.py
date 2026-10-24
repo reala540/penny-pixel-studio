@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 
 from pydantic import BaseModel, Field
@@ -35,17 +36,31 @@ def classify_topic(text: str, default: str = "both") -> str:
 # ----------------------------------------------------------------------------- collect
 
 def collect(conn, fetcher: Fetcher | None = None) -> dict:
+    """Fetch independent adapters concurrently, then store results deterministically.
+
+    httpx clients support concurrent requests. The database connection never crosses
+    threads, which keeps psycopg and transaction behaviour unchanged.
+    """
     cfg = config.research()
     fetcher = fetcher or Fetcher()
     fresh = cfg.get("freshness_days", {})
-    report: dict[str, dict] = {}
-    for name, adapter_cfg in (cfg.get("adapters") or {}).items():
-        if not adapter_cfg.get("enabled") or name not in ADAPTERS:
-            continue
+    enabled = [(name, adapter_cfg) for name, adapter_cfg in (cfg.get("adapters") or {}).items()
+               if adapter_cfg.get("enabled") and name in ADAPTERS]
+
+    def fetch_one(entry):
+        name, adapter_cfg = entry
         try:
-            items = ADAPTERS[name](fetcher, adapter_cfg)
-        except Exception as exc:  # report and continue: one source must not break the batch
-            report[name] = {"ok": False, "error": str(exc)[:300], "items": 0}
+            return name, ADAPTERS[name](fetcher, adapter_cfg), None
+        except Exception as exc:  # one source must not break the batch
+            return name, [], str(exc)[:300]
+
+    report: dict[str, dict] = {}
+    workers = max(1, min(int(cfg.get("parallel_sources", 6)), len(enabled) or 1))
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="studio-research") as pool:
+        fetched = list(pool.map(fetch_one, enabled))
+    for name, items, error in fetched:
+        if error is not None:
+            report[name] = {"ok": False, "error": error, "items": 0}
             continue
         stored = sum(store_source(conn, it, fresh) for it in items)
         report[name] = {"ok": True, "items": len(items), "new": stored}
@@ -103,14 +118,16 @@ def source_block(sources: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def brainstorm(router: Router, channel: str, sources: list[dict], past_titles: list[str], n_models: int = 3) -> list[dict]:
+def brainstorm(router: Router, channel: str, sources: list[dict], past_titles: list[str], n_models: int = 3,
+               brief: str = "") -> list[dict]:
     ch = config.brand()["channels"][channel]
     prompt = (
         f"Channel: {ch['display_name']}. Host: {ch['host_persona']}\nFocus: {ch['topic_focus']}\n"
         f"Audience: {ch['audience_profile']['who']}\n\n"
         f"Recent sources:\n{source_block(sources)}\n\n"
         f"Already covered (do not repeat): {'; '.join(past_titles[:40]) or 'nothing yet'}\n\n"
-        "Pitch 4 video ideas. Each must be backed by at least one source above, have a genuinely original "
+        + (f"Owner direction for this mission (prioritise this, but never invent evidence): {brief.strip()}\n\n" if brief.strip() else "")
+        + "Pitch 4 video ideas. Each must be backed by at least one source above, have a genuinely original "
         "angle (a test, a comparison, the math, the hidden trade-off, the 'what it means for you'), and avoid hype. "
         "Prefer ideas where we can show original charts, numbers or step-by-step demos."
     )
@@ -210,7 +227,8 @@ def week_start(d: date | None = None) -> date:
     return d - timedelta(days=d.weekday())
 
 
-def run_ideas(conn, router: Router, channel: str, n: int, week: date) -> list[dict]:
+def run_ideas(conn, router: Router, channel: str, n: int, week: date, *, brief: str = "",
+              n_models: int = 3) -> list[dict]:
     sources = recent_sources(conn, channel)
     if not sources:
         return []
@@ -218,7 +236,7 @@ def run_ideas(conn, router: Router, channel: str, n: int, week: date) -> list[di
         select title from content_projects where channel_slug=%s
         union all select title from content_ideas where channel_slug=%s and batch_week < %s
         order by 1 limit 400""", (channel, channel, week))]
-    pitches = brainstorm(router, channel, sources[:40], history)
+    pitches = brainstorm(router, channel, sources[:40], history, n_models=max(1, min(n_models, 5)), brief=brief)
     # drop near-duplicate pitches from different models
     unique: list[dict] = []
     for p in pitches:

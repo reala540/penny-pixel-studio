@@ -266,7 +266,7 @@ https://dashboard-beta-ten-13.vercel.app/privacy and terms at https://dashboard-
 The first person to sign in becomes the owner, and the database refuses everyone after that. That's why you do step 3
 right away.
 
-✅ **Check:** you see **This week on air**, and in **Review** the two channel trailers are waiting.
+✅ **Check:** you land on **Mission Control**. Open **Rundown → This week on air**, and in **Review** the two channel trailers are waiting. Before connecting anything, you can explore `/demo`; its sample activity is clearly labelled and never changes your studio.
 
 ---
 
@@ -392,8 +392,7 @@ go out at their scheduled times. Make them your first videos.
 
 ### Step 23. Start the first batch now (instead of waiting for Saturday)
 
-Dashboard → **Settings → Run now** → **Research ideas**. About 15 minutes later, press **Make this week's videos**.
-This takes 1–3 hours. You'll get a Telegram message when it's ready.
+Dashboard → **Mission Control**: enter an objective, choose a channel and council depth, then launch **Research & ideas** or **Research + review package**. You can still use **Settings → Run now** for the original one-click workflow. Research takes about 15 minutes; production takes 1–3 hours. Watch real provider calls and job status in Mission Control. You'll get a Telegram message when the review package is ready; nothing is approved or published automatically.
 
 ---
 
@@ -408,7 +407,7 @@ This takes 1–3 hours. You'll get a Telegram message when it's ready.
    - check the **Posts** text for each account,
    - press **Approve package**, or **Rewrite with a note** (e.g. "make the opening more personal"), or **Reject**.
 3. Short on time? **Approve all that passed every check** approves only the green ones.
-4. Look at **Home → Your quick jobs** (e.g. "set this YouTube video to Public"), do them, press **Done**.
+4. Look at **Rundown → Your quick jobs** (e.g. "set this YouTube video to Public"), do them, press **Done**.
 5. Reply to comments yourself on each app. Telegram gives you the links when posts go out.
 
 **Handy Telegram commands:** `/status`, `/week`, `/review`, `/failed`, `/budget`, `/pause`, `/resume confirm`.

@@ -126,9 +126,30 @@ def test_job_runner_idempotent_retry_and_block(synced):
     assert jobs.run_stage(c, "t", "job-auth", auth).status == "blocked"
 
 
+def test_control_room_activity_indexes_exist(conn):
+    rows = db.all_(conn, "select indexname from pg_indexes where schemaname='public'")
+    names = {r["indexname"] for r in rows}
+    assert {"provider_usage_created_idx", "provider_usage_job_created_idx", "generation_jobs_updated_idx"} <= names
+
+
 def test_stale_running_jobs_resume(synced):
     c = synced
     j = jobs.ensure_job(c, "render", "stale")
     db.run(c, "update generation_jobs set status='running', started_at=now() - interval '5 hours' where id=%s", (j["id"],))
     assert jobs.reset_stale_running(c) == 1
     assert db.one(c, "select status from generation_jobs where id=%s", (j["id"],))["status"] == "retrying"
+
+
+def test_batch_runs_never_overlap(db_url, conn):
+    other = db.connect(db_url)
+    try:
+        with db.run_lock(conn, "production") as first:
+            assert first is True
+            with db.run_lock(other, "production") as second:
+                assert second is False  # a mission and the Sunday batch can't produce at the same time
+            with db.run_lock(other, "research") as research:
+                assert research is True  # different kinds don't block each other
+        with db.run_lock(other, "production") as again:
+            assert again is True  # released when the first run ends
+    finally:
+        other.close()

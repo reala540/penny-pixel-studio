@@ -41,7 +41,8 @@ class MemoryUsageStore:
 
     def record(self, provider, model, role, *, success, input_tokens, output_tokens, latency_ms, error, job_id=None):
         self.calls.append({"provider": provider, "model": model, "role": role, "success": success,
-                           "in": input_tokens, "out": output_tokens, "day": date.today(), "error": error})
+                           "in": input_tokens, "out": output_tokens, "day": date.today(), "error": error,
+                           "job_id": job_id})
 
     def circuit_open(self, provider):
         until = self.circuits.get(provider)

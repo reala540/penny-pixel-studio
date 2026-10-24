@@ -24,6 +24,7 @@ export default {
       fontFamily: {
         display: ['"Bricolage Grotesque Variable"', "system-ui", "sans-serif"],
         sans: ['"IBM Plex Sans"', "system-ui", "sans-serif"],
+        mono: ['"JetBrains Mono"', "ui-monospace", "monospace"],
       },
       fontSize: {
         xs: ["0.75rem", { lineHeight: "1rem" }],

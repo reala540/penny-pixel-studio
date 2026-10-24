@@ -51,6 +51,17 @@ def connect(url: str) -> psycopg.Connection:
 
 
 @contextmanager
+def run_lock(conn: psycopg.Connection, name: str) -> Iterator[bool]:
+    """Session-level advisory lock so two batch runs of the same kind never overlap. Yields False if busy."""
+    got = bool(one(conn, "select pg_try_advisory_lock(hashtext(%s)) ok", (f"studio:{name}",))["ok"])
+    try:
+        yield got
+    finally:
+        if got:
+            run(conn, "select pg_advisory_unlock(hashtext(%s))", (f"studio:{name}",))
+
+
+@contextmanager
 def transaction(conn: psycopg.Connection) -> Iterator[psycopg.Connection]:
     with conn.transaction():
         yield conn

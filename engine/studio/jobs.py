@@ -12,6 +12,8 @@ from __future__ import annotations
 import random
 import time
 import traceback
+from contextvars import ContextVar
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
@@ -19,6 +21,18 @@ from . import db
 from .errors import NeedsReview, StudioError
 
 BACKOFF_BASE_SECONDS = 60
+
+# Context-local so concurrent runners never attribute one job's model calls to another.
+active_job_id: ContextVar[object | None] = ContextVar("studio_active_job_id", default=None)
+
+
+@contextmanager
+def job_context(job_id):
+    token = active_job_id.set(job_id)
+    try:
+        yield
+    finally:
+        active_job_id.reset(token)
 
 
 def _now() -> datetime:
@@ -80,7 +94,8 @@ def run_stage(conn, job_type: str, key: str, fn: Callable[[dict], dict], *, proj
                          (job["id"], attempt))
     started = time.monotonic()
     try:
-        output = fn(dict(claimed["input"] or {})) or {}
+        with job_context(claimed["id"]):
+            output = fn(dict(claimed["input"] or {})) or {}
     except NeedsReview as exc:
         return _finish(conn, claimed, attempt_row["id"], "needs_review", {}, exc, started)
     except StudioError as exc:

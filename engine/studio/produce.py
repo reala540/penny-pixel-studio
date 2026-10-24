@@ -95,16 +95,29 @@ def is_paused(conn) -> bool:
 # ----------------------------------------------------------------------------- research (Saturday)
 
 
-def research_batch(conn, router: Router, week: date, fetcher=None) -> dict:
+def research_batch(conn, router: Router, week: date, fetcher=None, *, brief: str = "",
+                   channel: str | None = None, n_models: int = 3) -> dict:
+    with db.run_lock(conn, "research") as free:
+        if not free:
+            return {"skipped": "another research run is in progress"}
+        return _research_batch(conn, router, week, fetcher, brief=brief, channel=channel, n_models=n_models)
+
+
+def _research_batch(conn, router: Router, week: date, fetcher=None, *, brief: str = "",
+                    channel: str | None = None, n_models: int = 3) -> dict:
     apply_brand_overrides(conn)
     report = research.collect(conn, fetcher)
     plan = capacity.plan_batch(conn)
     ideas = {}
-    for channel, n in plan["long_per_channel"].items():
+    channels = [channel] if channel in ("ai", "money") else list(plan["long_per_channel"])
+    for slug in channels:
+        n = plan["long_per_channel"].get(slug, 0)
         if n <= 0:
             continue
-        ideas[channel] = len(research.run_ideas(conn, router, channel, n + 1, week))
-    db.audit(conn, "research_batch", "week", week, {"sources": report, "ideas": ideas})
+        ideas[slug] = len(research.run_ideas(conn, router, slug, n + 1, week,
+                                             brief=brief[:2000], n_models=n_models))
+    db.audit(conn, "research_batch", "week", week,
+             {"sources": report, "ideas": ideas, "brief": brief[:2000], "channel": channel, "models": n_models})
     return {"sources": report, "ideas": ideas, "capacity": plan}
 
 
@@ -350,16 +363,26 @@ def final_status(conn, project_id) -> None:
     db.run(conn, "update content_projects set status=%s where id=%s", (status, project_id))
 
 
-def produce_batch(conn, router: Router, storage, week: date) -> dict:
+def produce_batch(conn, router: Router, storage, week: date, *, channel: str | None = None) -> dict:
     if is_paused(conn):
         return {"skipped": "paused"}
+    with db.run_lock(conn, "production") as free:
+        if not free:
+            return {"skipped": "another production run is in progress"}
+        return _produce_batch(conn, router, storage, week, channel=channel)
+
+
+def _produce_batch(conn, router: Router, storage, week: date, *, channel: str | None = None) -> dict:
     apply_brand_overrides(conn)
     plan = capacity.plan_batch(conn)
     results = []
-    for channel, n in plan["long_per_channel"].items():
+    selected_channel = channel if channel in ("ai", "money") else None
+    for slug, n in plan["long_per_channel"].items():
+        if selected_channel and slug != selected_channel:
+            continue
         ideas = db.all_(conn, """select * from content_ideas where batch_week=%s and channel_slug=%s
                                  and status in ('shortlisted','selected') order by is_experiment, score desc limit %s""",
-                        (week, channel, n))
+                        (week, slug, n))
         for idea in ideas:
             db.run(conn, "update content_ideas set status='selected' where id=%s", (idea["id"],))
             try:
@@ -367,30 +390,36 @@ def produce_batch(conn, router: Router, storage, week: date) -> dict:
             except NeedsReview as exc:
                 results.append({"idea": idea["title"], "status": "needs_review", "error": str(exc)})
             db.run(conn, "update content_ideas set status='produced' where id=%s", (idea["id"],))
-    plan_distribution(conn, week)
+    plan_distribution(conn, week, channel=selected_channel)
     ready = db.one(conn, """select count(*) filter (where status='ready_for_review') ready,
                                    count(*) filter (where status='needs_attention') attention,
                                    count(*) filter (where status='failed') failed
-                              from content_projects where batch_week=%s""", (week,))
-    notify.send(conn, "week_ready", f"Your week is ready for review ({week:%d %b})",
+                              from content_projects where batch_week=%s and (%s::text is null or channel_slug=%s)""",
+                   (week, selected_channel, selected_channel))
+    scope = f"{selected_channel} mission" if selected_channel else "week"
+    notify.send(conn, "week_ready", f"Your {scope} is ready for review ({week:%d %b})",
                 f"{ready['ready']} ready, {ready['attention']} need attention, {ready['failed']} failed.",
-                link=f"{config.runtime().dashboard_url}/review", dedupe_key=f"week_ready:{week}")
+                link=f"{config.runtime().dashboard_url}/review", dedupe_key=f"week_ready:{week}:{selected_channel or 'all'}")
     return {"projects": results, "summary": ready, "capacity": plan}
 
 
 # ----------------------------------------------------------------------------- distribution
 
 
-def plan_distribution(conn, week: date) -> int:
+def plan_distribution(conn, week: date, *, channel: str | None = None) -> int:
     """Create per-account variants + scheduled posts (pending approval) for the week after `week`."""
     tz = db.get_setting(conn, "timezone", "Africa/Nairobi")
     post_week = week + timedelta(days=7)
     now = datetime.now(timezone.utc)
+    selected_channel = channel if channel in ("ai", "money") else None
     accounts = db.all_(conn, """select a.*, c.slug channel from social_accounts a
-                                left join channel_profiles c on c.id = a.channel_profile_id where a.enabled""")
+                                left join channel_profiles c on c.id = a.channel_profile_id
+                                where a.enabled and (%s::text is null or c.slug=%s)""", (selected_channel, selected_channel))
     projects = db.all_(conn, """select p.*, i.score from content_projects p left join content_ideas i on i.id=p.idea_id
                                 where p.batch_week=%s and p.status in ('ready_for_review','needs_attention')
-                                order by p.format, coalesce(i.score,0) desc, p.created_at""", (week,))
+                                  and (%s::text is null or p.channel_slug=%s)
+                                order by p.format, coalesce(i.score,0) desc, p.created_at""",
+                       (week, selected_channel, selected_channel))
     longs = [p for p in projects if p["format"] == "long"]
     shorts = [p for p in projects if p["format"] == "short"]
     created = 0

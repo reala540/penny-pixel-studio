@@ -26,9 +26,9 @@
 | Module | Responsibility |
 |---|---|
 | `config.py` | YAML config + environment secrets |
-| `db.py`, `jobs.py` | Postgres helpers; persistent idempotent job runner (attempts, backoff with jitter, resume) |
+| `db.py`, `jobs.py` | Postgres helpers; persistent idempotent job runner (attempts, backoff with jitter, resume); context-local model-call attribution |
 | `ai/router.py`, `ai/usage.py` | Free-tier router: role-based model choice, quota tracking, circuit breakers, JSON repair, fallback |
-| `research/sources.py`, `research/engine.py` | Source adapters, dedupe, topic classification, brainstorming, scoring, shortlisting |
+| `research/sources.py`, `research/engine.py` | Bounded-concurrent source adapters, per-source failure isolation, main-thread database writes, dedupe, topic classification, owner-directed multi-model brainstorming, scoring, shortlisting |
 | `similarity.py` | Repetition check (embeddings if available, TF-IDF otherwise) |
 | `script/models.py`, `script/pipeline.py`, `script/quality.py`, `script/verify.py` | Structured script schema, adaptive pipeline, deterministic gates, claim verification |
 | `media/tts.py`, `media/visuals.py`, `media/captions.py`, `media/render.py`, `media/thumbnails.py`, `media/stock.py` | Narration, on-brand cards and charts, word-timed captions, scene-cached rendering from recipes, thumbnails, licensed photos |

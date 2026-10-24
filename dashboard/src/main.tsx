@@ -1,19 +1,23 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { StrictMode } from "react";
+import { lazy, StrictMode, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import AuthGate from "./components/AuthGate";
 import Layout from "./components/Layout";
-import { ToastProvider } from "./components/ui";
+import { Loading, ToastProvider } from "./components/ui";
 import "./index.css";
-import Calendar from "./pages/Calendar";
-import Help from "./pages/Help";
-import Home from "./pages/Home";
 import { Privacy, Terms } from "./pages/Legal";
-import LibraryPage from "./pages/Library";
-import Research from "./pages/Research";
-import Review from "./pages/Review";
-import SettingsPage from "./pages/Settings";
+
+// Each page loads on first visit, so the sign-in screen stays light.
+const Calendar = lazy(() => import("./pages/Calendar"));
+const ControlRoom = lazy(() => import("./pages/ControlRoom"));
+const ControlRoomDemo = lazy(() => import("./pages/ControlRoom").then((m) => ({ default: m.ControlRoomDemo })));
+const Help = lazy(() => import("./pages/Help"));
+const Home = lazy(() => import("./pages/Home"));
+const LibraryPage = lazy(() => import("./pages/Library"));
+const Research = lazy(() => import("./pages/Research"));
+const Review = lazy(() => import("./pages/Review"));
+const SettingsPage = lazy(() => import("./pages/Settings"));
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { staleTime: 20_000, refetchOnWindowFocus: true, retry: 1 } } });
 
@@ -23,6 +27,7 @@ createRoot(document.getElementById("root")!).render(
       <ToastProvider>
         <BrowserRouter>
           <Routes>
+            <Route path="demo" element={<Suspense fallback={<Loading label="Loading demo" />}><ControlRoomDemo /></Suspense>} />
             <Route path="privacy" element={<Privacy />} />
             <Route path="terms" element={<Terms />} />
             <Route path="*" element={<Studio />} />
@@ -36,9 +41,11 @@ createRoot(document.getElementById("root")!).render(
 function Studio() {
   return (
           <AuthGate>
+            <Suspense fallback={<div className="mx-auto max-w-6xl px-4 pt-6"><Loading label="Loading page" /></div>}>
             <Routes>
               <Route element={<Layout />}>
-                <Route index element={<Home />} />
+                <Route index element={<ControlRoom />} />
+                <Route path="week" element={<Home />} />
                 <Route path="review" element={<Review />} />
                 <Route path="review/:projectId" element={<Review />} />
                 <Route path="calendar" element={<Calendar />} />
@@ -46,9 +53,10 @@ function Studio() {
                 <Route path="library" element={<LibraryPage />} />
                 <Route path="settings" element={<SettingsPage />} />
                 <Route path="help" element={<Help />} />
-                <Route path="*" element={<Home />} />
+                <Route path="*" element={<ControlRoom />} />
               </Route>
             </Routes>
+            </Suspense>
           </AuthGate>
   );
 }
