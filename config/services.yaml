@@ -19,6 +19,7 @@ quotas:
     monthly_minutes: 2000          # private repo, GitHub Free
     reserve_minutes: 200           # never plan past this safety margin
   supabase:
+    region: eu-central-1           # used to reach the Session pooler if a direct (IPv6-only) address is given
     storage_bytes: 1073741824      # 1 GB
     database_bytes: 524288000      # 500 MB
     storage_reserve_fraction: 0.2

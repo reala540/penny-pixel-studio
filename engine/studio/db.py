@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 from contextlib import contextmanager
 from typing import Any, Iterator
 
@@ -11,9 +13,41 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 
+_DIRECT = re.compile(r"^(postgres(?:ql)?://)([^:@/]+)(:[^@]*)?@db\.([a-z0-9]+)\.supabase\.co(?::\d+)?(/[^?]*)?(\?.*)?$")
+
+
+def candidate_urls(url: str, region: str | None) -> list[str]:
+    """Supabase's direct address is IPv6-only, which GitHub runners can't reach. Try the Session pooler first."""
+    m = _DIRECT.match(url.strip())
+    if not m or not region:
+        return [url]
+    scheme, user, pw, ref, path, query = m.groups()
+    user = user if "." in user else f"{user}.{ref}"
+    tail = f"{path or '/postgres'}{query or ''}"
+    pooled = [f"{scheme}{user}{pw or ''}@aws-{n}-{region}.pooler.supabase.com:5432{tail}" for n in (0, 1)]
+    return pooled + [url]
+
+
+def _region() -> str | None:
+    from . import config
+
+    return os.environ.get("SUPABASE_REGION") or (config.services().get("quotas", {}).get("supabase", {}).get("region"))
+
+
 def connect(url: str) -> psycopg.Connection:
     # prepare_threshold=None keeps us compatible with Supabase's transaction pooler.
-    return psycopg.connect(url, row_factory=dict_row, autocommit=True, prepare_threshold=None)
+    urls = candidate_urls(url, _region()) if "supabase.co" in url else [url]
+    last: Exception | None = None
+    for u in urls:
+        try:
+            return psycopg.connect(u, row_factory=dict_row, autocommit=True, prepare_threshold=None, connect_timeout=15)
+        except psycopg.OperationalError as e:
+            last = e
+            # A wrong password is the same everywhere: stop instead of hiding it behind later attempts.
+            if "password authentication failed" in str(e).lower():
+                raise
+    assert last is not None
+    raise last
 
 
 @contextmanager
