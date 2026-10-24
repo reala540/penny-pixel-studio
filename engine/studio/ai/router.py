@@ -109,13 +109,21 @@ class Router:
                 mov = (ov.get("models") or {}).get(m["id"], {})
                 if mov and mov.get("enabled") is False:
                     continue
+                model_id = m["id"]
+                missing = ov.get("missing") or {}
+                if model_id in missing:  # retired by the provider: use the substitute found by the catalog
+                    if not missing[model_id]:
+                        continue
+                    model_id = missing[model_id]
                 limit = mov.get("daily_request_limit") or m.get("daily_requests")
-                if limit is not None and self.usage.requests_today(name, m["id"]) >= limit:
+                if limit is not None and self.usage.requests_today(name, model_id) >= limit:
                     continue
                 tok_limit = m.get("daily_tokens")
-                if tok_limit is not None and self.usage.tokens_today(name, m["id"]) >= tok_limit:
+                if tok_limit is not None and self.usage.tokens_today(name, model_id) >= tok_limit:
                     continue
-                out.append(Candidate(name, m["id"], p["base_url"].rstrip("/"), key,
+                if any(c.provider == name and c.model == model_id for c in out):
+                    continue
+                out.append(Candidate(name, model_id, p["base_url"].rstrip("/"), key,
                                      int(mov.get("priority") or m.get("priority", 100)), limit, tok_limit,
                                      m.get("kind", "chat"), p.get("commercial_use", "assumed")))
         out.sort(key=lambda c: (c.priority + 50 * self.usage.error_rate(c.provider, c.model), c.provider))

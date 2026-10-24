@@ -224,30 +224,62 @@ def cmd_capacity(a):
 
 
 def cmd_providers(a):
-    """Send one tiny request to every configured model and report which keys work."""
-    from .ai.router import Router
+    """Refresh each provider's model list, then send one tiny request per provider and report which keys work."""
+    from .ai import catalog
+    from .ai.router import Candidate, Router
     from .ai.usage import MemoryUsageStore
 
+    cfg = config.providers()
+    found = catalog.refresh(cfg)
+    if config.runtime().db_url:
+        with _conn() as conn:
+            db.set_setting(conn, "model_catalog", {"checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                                   "providers": found})
     router = Router(MemoryUsageStore())
     results = []
-    for name, p in (config.providers().get("providers") or {}).items():
+    for name, p in (cfg.get("providers") or {}).items():
         key = os.environ.get(p.get("key_env") or "")
         if not key and not p.get("key_optional"):
             results.append({"provider": name, "status": "no key", "env": p.get("key_env")})
             continue
-        model = next((m for m in p["models"] if m.get("kind", "chat") == "chat"), None)
-        if model is None:
-            continue
-        from .ai.router import Candidate
-
-        cand = Candidate(name, model["id"], p["base_url"].rstrip("/"), key or None, 0, None, None)
-        try:
-            res = router.complete("test", "Reply with the single word: ready", only=cand, max_tokens=20, temperature=0)
-            results.append({"provider": name, "model": model["id"], "status": "ok", "reply": res.text[:40]})
-        except Exception as exc:
-            results.append({"provider": name, "model": model["id"], "status": "failed", "error": str(exc)[:160]})
+        swaps = {k: v for k, v in (found.get(name) or {}).get("missing", {}).items()}
+        errors = []
+        for m in (x for x in p["models"] if x.get("kind", "chat") == "chat"):
+            model = catalog.effective_model(found, name, m["id"])
+            if model is None:
+                errors.append(f"{m['id']}: no longer offered")
+                continue
+            cand = Candidate(name, model, p["base_url"].rstrip("/"), key or None, 0, None, None)
+            try:
+                # Thinking models spend tokens reasoning before they answer, so leave room.
+                res = router.complete("test", "Reply with the single word: ready", only=cand, max_tokens=600, temperature=0)
+            except Exception as exc:
+                errors.append(f"{model}: {_short_error(exc)}")
+                continue
+            note = f"using {model}" + (f" (replaces {m['id']})" if model != m["id"] else "")
+            results.append({"provider": name, "model": model, "status": "ok", "note": note, "reply": res.text[:40]})
+            break
+        else:
+            results.append({"provider": name, "status": "failed", "error": "; ".join(errors)[:300] or "no chat model",
+                            "swaps": swaps})
     _print(results)
     _report_providers(results)
+
+
+def _short_error(exc: Exception) -> str:
+    text = str(exc)
+    low = text.lower()
+    if "requires payment" in low or "402" in low:
+        return "this model isn't free on your plan"
+    if "rate limit" in low or "quota" in low or "429" in low:
+        return "free limit reached or the free plan isn't switched on in the provider's console"
+    if "key rejected" in low or "401" in low or "403" in low:
+        return "the API key was rejected: copy it again"
+    if "404" in low or "410" in low or "not found" in low or "unavailable" in low:
+        return "model not available"
+    if "empty reply" in low:
+        return "no answer (model busy or still thinking)"
+    return text[:120]
 
 
 def _report_providers(results: list[dict]) -> None:
@@ -255,7 +287,7 @@ def _report_providers(results: list[dict]) -> None:
     icon = {"ok": "✅", "no key": "⚪", "failed": "❌"}
     lines = ["### AI keys", "", "| Provider | Result | Note |", "|---|---|---|"]
     for r in results:
-        note = r.get("error") or (f"set {r['env']} to use it" if r.get("env") else r.get("model", ""))
+        note = r.get("error") or r.get("note") or (f"set {r['env']} to use it" if r.get("env") else r.get("model", ""))
         lines.append(f"| {r['provider']} | {icon.get(r['status'], '')} {r['status']} | {str(note).replace('|', '/')} |")
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:

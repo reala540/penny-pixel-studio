@@ -111,4 +111,7 @@ class DbUsageStore:
         out: dict[str, dict] = {r["name"]: {"enabled": r["enabled"], "models": {}} for r in rows}
         for m in models:
             out.setdefault(m["provider"], {"models": {}})["models"][m["model"]] = m
+        catalog = db.get_setting(self.conn, "model_catalog", {}) or {}
+        for name, info in (catalog.get("providers") or {}).items():
+            out.setdefault(name, {"models": {}})["missing"] = info.get("missing") or {}
         return out
