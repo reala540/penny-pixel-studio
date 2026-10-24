@@ -10,7 +10,7 @@ from .script import pipeline, quality
 from .script.models import Script, ShortScript
 
 OWNER_JOBS = ("regenerate_script", "rerender_preview", "regenerate_thumbnails", "run_research", "run_production",
-              "run_mission", "recheck_project", "generate_ideas", "refine_idea")
+              "run_mission", "recheck_project", "generate_ideas", "refine_idea", "auto_review")
 
 
 def _finish(conn, job, status: str, output: dict | None = None, error: str | None = None) -> None:
@@ -36,6 +36,15 @@ def process_owner_jobs(conn, router: Router, storage, limit: int = 10) -> list[d
             notify.send(conn, "job_failed", f"Request failed: {job['job_type']}", str(exc)[:300],
                         link=f"{config.runtime().dashboard_url}/", dedupe_key=f"jobfail:{job['id']}")
             done.append({"id": str(job["id"]), "type": job["job_type"], "status": "failed", "error": str(exc)[:200]})
+    if rows and not any(j["job_type"] == "auto_review" for j in rows):
+        # a rewrite or re-render may have made a package ready again: review it if Auto Review & Post is ON
+        from .review import auto
+
+        try:
+            auto.run(conn, router)
+        except Exception as exc:
+            notify.send(conn, "job_failed", "Auto Review couldn't run", str(exc)[:300],
+                        link=f"{config.runtime().dashboard_url}/review", dedupe_key=f"autorun:{rows[0]['id']}")
     return done
 
 
@@ -70,6 +79,10 @@ def _run_owner_job(conn, router: Router, storage, job: dict) -> dict:
             channel=inp.get("channel") if inp.get("channel") in ("ai", "money") else None,
         )
         return {"research": research_out, "production": production_out}
+    if t == "auto_review":
+        from .review import auto
+
+        return {"reviewed": auto.run(conn, router)}
     if t == "generate_ideas":
         # Ideas only go to the Idea Library; nothing here starts research-to-production or publishing.
         from .ideas import generator

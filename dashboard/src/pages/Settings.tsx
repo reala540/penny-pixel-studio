@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Link } from "react-router-dom";
+import AutoPostToggle, { AutoReviewLog } from "../components/AutoPostToggle";
 import ThemeControl from "../components/ThemeControl";
 import { ErrorNote, Loading, PageHeader, useToast } from "../components/ui";
 import { cleanCategories, cleanRegions, DEFAULT_IDEA_CONFIG, SOURCES } from "../lib/ideas";
@@ -137,7 +138,17 @@ function Automation() {
   const runs = useIdeaRuns(5);
   if (loading) return <Section id="automation" title="Automation"><Loading /></Section>;
   return (
-    <Section id="automation" title="Automation" intro="Scheduled idea batches. Generated ideas only go to the Idea Library: production and publishing always wait for your approval, and that can't be switched off.">
+    <Section id="automation" title="Automation" intro="Who approves publishing, and scheduled idea batches.">
+      <div className="mb-6 max-w-3xl rounded-xl border border-line bg-surface p-4">
+        <AutoPostToggle />
+        <p className="mt-3 text-xs leading-5 text-muted">OFF (default): every package waits for your approval, exactly as before. ON: packages that pass
+          every check and a confident independent AI review are approved automatically and post at their scheduled times to your
+          configured accounts. Anything else waits for you and is sent to Telegram. Also in Telegram: /autopost.</p>
+        <h3 className="mt-4 text-sm font-semibold text-ink">Recent automatic reviews</h3>
+        <AutoReviewLog />
+      </div>
+      <h3 className="mb-3 text-sm font-semibold text-ink">Idea batches</h3>
+      <p className="mb-3 max-w-3xl text-sm text-muted">Generated ideas only go to the Idea Library; they never start production by themselves.</p>
       <div className="grid max-w-3xl gap-4 sm:grid-cols-2">
         <label className="text-sm"><span className="text-muted">Generate ideas</span>
           <select aria-label="Generate ideas" className="field mt-1" value={cfg.frequency} onChange={(e) => update({ frequency: e.target.value as IdeaGeneratorConfig["frequency"] }, "Schedule saved")}>
@@ -162,7 +173,6 @@ function Automation() {
         )}
         <label className="flex items-center gap-2 text-sm sm:col-span-2"><input type="checkbox" checked={cfg.notify} onChange={(e) => update({ notify: e.target.checked })} />
           Send me a Telegram message when a batch of ideas is ready</label>
-        <p className="text-sm sm:col-span-2"><span className="font-medium text-ink">Approval:</span> <span className="text-muted">always required before production and publishing.</span></p>
       </div>
       <h3 className="mt-6 text-sm font-semibold text-ink">Recent idea runs</h3>
       {runs.isLoading ? <Loading /> : (runs.data ?? []).length === 0 ? <p className="mt-1 text-sm text-muted">None yet.</p> : (

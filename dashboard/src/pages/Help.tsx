@@ -11,6 +11,7 @@ const FAQ: [string, string][] = [
   ["How are idea scores worked out?", "70 of the 100 points come from real, dated sources the idea cites: how many independent sources, how recent, how strong the signal. The other 30 are an AI reviewer's opinion of originality, international relevance, feasibility and engagement. An idea with no current source is marked Trend unverified. Press Why this score on any idea to see the sources."],
   ["Does generating ideas start making videos?", "No. Ideas go to the Idea Library. A video is only made when you send an idea to the Studio, launch it, and later approve it in Review."],
   ["Can I add more than one key for an AI service?", "Yes, in AI APIs. Each key has its owner, limits and health. Keys from the same account share one limit, so the studio won't switch between them to get around a limit; tick \"separate account\" only for a key that really has its own allowance."],
+  ["What is Auto Review & Post?", "OFF (default): you approve everything. ON: the AI approves only packages that pass every check (quality, sourced facts, freshness, the right accounts, licences, and a confident independent policy review); they post at their normal times. Anything else waits for you and comes to Telegram. Switch it in Settings → Automation or with /autopost in Telegram."],
   ["How do I switch to dark mode?", "Use the sun / moon / screen buttons at the bottom of the menu, or Settings → Appearance. Screen follows your device."],
 ];
 

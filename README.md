@@ -1,4 +1,4 @@
-# Penny & Pixel Studio — AI Content Studio v2.3
+# Penny & Pixel Studio — AI Content Studio v2.4
 
 A free-first, mostly automated content studio for two faceless YouTube channels (**Penny & Pixel AI** with host
 Pixel, **Penny & Pixel Money** with host Penny), a Facebook Page, TikTok and X.
@@ -6,7 +6,7 @@ Pixel, **Penny & Pixel Money** with host Penny), a Facebook Page, TikTok and X.
 - **New here?** Read **[GUIDE.md](GUIDE.md)**: step-by-step setup, written for non-coders.
 - Specification: [docs/SPEC_v2.1.md](docs/SPEC_v2.1.md) · Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) ·
   Providers and free limits: [docs/PROVIDERS_AND_LIMITS.md](docs/PROVIDERS_AND_LIMITS.md) ·
-  Mission Control: [docs/CONTROL_ROOM.md](docs/CONTROL_ROOM.md) · Ideas, themes and API keys: [docs/IDEAS_AND_API_KEYS.md](docs/IDEAS_AND_API_KEYS.md) · What was tested: [docs/TEST_REPORT.md](docs/TEST_REPORT.md)
+  Mission Control: [docs/CONTROL_ROOM.md](docs/CONTROL_ROOM.md) · Ideas, themes and API keys: [docs/IDEAS_AND_API_KEYS.md](docs/IDEAS_AND_API_KEYS.md) · Auto Review & Post: [docs/AUTO_REVIEW_AND_POST.md](docs/AUTO_REVIEW_AND_POST.md) · What was tested: [docs/TEST_REPORT.md](docs/TEST_REPORT.md)
 
 ## What it does each week
 

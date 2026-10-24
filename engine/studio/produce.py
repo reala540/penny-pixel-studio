@@ -392,6 +392,9 @@ def _produce_batch(conn, router: Router, storage, week: date, *, channel: str | 
                 results.append({"idea": idea["title"], "status": "needs_review", "error": str(exc)})
             db.run(conn, "update content_ideas set status='produced' where id=%s", (idea["id"],))
     plan_distribution(conn, week, channel=selected_channel)
+    from .review import auto  # Auto Review & Post: no-op unless the owner switched it ON
+
+    auto_results = auto.run(conn, router)
     ready = db.one(conn, """select count(*) filter (where status='ready_for_review') ready,
                                    count(*) filter (where status='needs_attention') attention,
                                    count(*) filter (where status='failed') failed
@@ -401,7 +404,7 @@ def _produce_batch(conn, router: Router, storage, week: date, *, channel: str | 
     notify.send(conn, "week_ready", f"Your {scope} is ready for review ({week:%d %b})",
                 f"{ready['ready']} ready, {ready['attention']} need attention, {ready['failed']} failed.",
                 link=f"{config.runtime().dashboard_url}/review", dedupe_key=f"week_ready:{week}:{selected_channel or 'all'}")
-    return {"projects": results, "summary": ready, "capacity": plan}
+    return {"projects": results, "summary": ready, "capacity": plan, "auto_review": auto_results}
 
 
 # ----------------------------------------------------------------------------- distribution

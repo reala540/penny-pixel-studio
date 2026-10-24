@@ -1,4 +1,18 @@
-# Test report — v2.3 Ideas, themes and AI API Manager (24 Oct 2026)
+# Test report — v2.4 Auto Review & Post (24 Oct 2026)
+
+| Suite | Result |
+|---|---|
+| Engine (pytest, local PostgreSQL with all 7 migrations, real renders) | **91 passed** (8 new: OFF keeps the manual flow exactly; ON approves only fully passing packages and the publish guards accept them; low confidence and review errors fall back to manual with Telegram; needs-attention and expiring facts never auto-approve; switching OFF mid-review stops approval; OFF returns unpublished auto-approvals; only owner/Worker/engine can switch, never a direct write) |
+| Worker (vitest + `tsc`) | **37 passed** (8 new: status and /status, ON needs confirm, ON via the audited function + one review job, OFF reports reverted posts, other chats ignored, dashboard endpoint owner-only with confirm, saved mode reported even if Telegram is down) |
+| Dashboard (vitest + `tsc` + build) | **13 passed**, build clean |
+| Browser (Chromium, real PostgREST + real local Worker + real Telegram webhook calls) | **19/19 new checks** (default OFF shown everywhere, confirm/cancel, persists, audited, review queued, Telegram OFF/ON sync to the dashboard without reload, unlinked chat refused, direct write refused, OFF persists) and **58/58** v2.3 checks still passing, 0 console errors |
+| npm audit | 0 vulnerabilities |
+
+Bugs found and fixed by these tests: the switch function trusted `current_user` (always the function owner) and
+would have let any signed-in user call it; the Worker reported an error after a successful switch when Telegram was
+unreachable.
+
+## v2.3 Ideas, themes and AI API Manager (24 Oct 2026)
 
 | Suite | Result |
 |---|---|

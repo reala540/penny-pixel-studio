@@ -89,6 +89,16 @@ export class Supabase {
     if (!r.ok) throw new Error(`delete ${table}: ${r.status} ${await r.text()}`);
   }
 
+  async rpc<T = unknown>(fn: string, args: Record<string, unknown>): Promise<T> {
+    const r = await fetch(`${this.env.SUPABASE_URL}/rest/v1/rpc/${fn}`, {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify(args),
+    });
+    if (!r.ok) throw new Error(`rpc ${fn}: ${r.status} ${await r.text()}`);
+    return (await r.json()) as T;
+  }
+
   async setting<T>(key: string): Promise<T | null> {
     const rows = await this.select<{ value: T }>("settings", `key=eq.${encodeURIComponent(key)}&select=value`);
     return rows.length ? rows[0].value : null;

@@ -64,7 +64,51 @@ const HELP = [
   "/budget – X spending this month",
   "/pause – stop all publishing now",
   "/resume confirm – start publishing again",
+  "/autopost – Auto Review &amp; Post status",
+  "/autopost on confirm – let the AI approve packages that pass every check",
+  "/autopost off – every package waits for your approval",
 ].join("\n");
+
+type AutoPostResult = { on: boolean; was: boolean; reverted_posts: number };
+
+/** One code path for the dashboard and Telegram: audited database switch, Telegram notice, review kick-off. */
+export async function setAutoPost(env: Env, on: boolean, actor: "owner" | "telegram"): Promise<AutoPostResult & { notified: boolean; review_queued: boolean }> {
+  const db = new Supabase(env);
+  const result = await db.rpc<AutoPostResult>("set_auto_review_post", { p_on: on, p_actor: actor });
+  // The switch is already saved and audited. Everything below is best effort: a Telegram or GitHub outage must
+  // never make the dashboard report the wrong mode.
+  let notified = false;
+  let reviewQueued = false;
+  try {
+    const chat = await db.setting<string>("telegram_chat_id");
+    if (chat) {
+      const where = actor === "telegram" ? "from Telegram" : "from the dashboard";
+      await telegram(env, chat, on
+        ? `🤖 <b>Auto Review &amp; Post: ON</b> (${where}).\nPackages that pass every check are approved and posted at their scheduled times. Anything else comes to you here. Send /autopost off to stop.`
+        : `🧑 <b>Auto Review &amp; Post: OFF</b> (${where}).\nEvery package waits for your approval.${result.reverted_posts ? ` ${result.reverted_posts} auto-approved post(s) that hadn't gone out are back in Review.` : ""}`);
+      notified = true;
+    }
+  } catch (e) {
+    console.error("autopost notice", (e as Error).message);
+  }
+  if (on) {
+    try {
+      // review what's already waiting, once (unique key per switch-on)
+      await db.insertReturning("generation_jobs", { job_type: "auto_review", idempotency_key: `auto_review:${Date.now()}`,
+        status: "queued", requested_by: "owner", input: { trigger: actor } }, { onConflict: "idempotency_key", ignoreDuplicates: true });
+      reviewQueued = true;
+      await dispatch(env, "queue");
+    } catch (e) {
+      console.error("autopost review kick-off", (e as Error).message);  // the 15-minute check picks the job up anyway
+    }
+  }
+  return { ...result, notified, review_queued: reviewQueued };
+}
+
+export async function autoPostStatus(db: Supabase): Promise<string> {
+  const on = (await db.setting<boolean>("auto_review_post")) === true;
+  return `Auto Review &amp; Post: <b>${on ? "ON" : "OFF"}</b>`;
+}
 
 function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -153,7 +197,7 @@ async function handleCommand(env: Env, msg: any, chatId: string): Promise<Respon
           .map(([k, v]) => `${k.replace(/_/g, " ")}: ${v}`)
           .join("\n") || "nothing yet";
       const paused = await db.setting<boolean>("paused");
-      await telegram(env, chatId, `<b>Status</b>${paused ? " (PAUSED)" : ""}\n\n<b>Videos</b>\n${count(projects)}\n\n<b>Posts</b>\n${count(posts)}`);
+      await telegram(env, chatId, `<b>Status</b>${paused ? " (PAUSED)" : ""}\n${await autoPostStatus(db)}\n\n<b>Videos</b>\n${count(projects)}\n\n<b>Posts</b>\n${count(posts)}`);
       break;
     }
     case "/week": {
@@ -206,6 +250,19 @@ async function handleCommand(env: Env, msg: any, chatId: string): Promise<Respon
       await db.audit("resumed", { via: "telegram" }, "telegram");
       await telegram(env, chatId, "▶️ Publishing resumed.");
       break;
+    case "/autopost": {
+      const want = (args[0] ?? "").toLowerCase();
+      if (want === "off") {
+        await setAutoPost(env, false, "telegram");
+      } else if (want === "on" && args[1] === "confirm") {
+        await setAutoPost(env, true, "telegram");
+      } else if (want === "on") {
+        await telegram(env, chatId, "With Auto Review &amp; Post ON, the AI approves packages that pass every quality, fact, freshness, destination and policy check, and they post at their scheduled times without you. Anything else comes to you.\n\nTo switch it on, send: /autopost on confirm");
+      } else {
+        await telegram(env, chatId, `${await autoPostStatus(db)}\n\n/autopost on confirm – automatic\n/autopost off – manual approval`);
+      }
+      break;
+    }
     default:
       await telegram(env, chatId, HELP);
   }
@@ -248,6 +305,15 @@ export async function handleFetch(req: Request, env: Env): Promise<Response> {
     const code = randomToken(6).replace(/[^A-Za-z0-9]/g, "").slice(0, 8).toUpperCase();
     await new Supabase(env).putSetting("telegram_link_code", code);
     return json(env, { code, telegram: await connectTelegram(env, `${url.origin}/telegram/webhook`) });
+  }
+
+  if (url.pathname === "/api/autopost" && req.method === "POST") {
+    const owner = await ownerOrNull(env, req);
+    if (!owner) return json(env, { error: "not authorised" }, 401);
+    const body = (await req.json().catch(() => ({}))) as { on?: unknown; confirm?: unknown };
+    if (typeof body.on !== "boolean") return json(env, { error: "send {on: true|false}" }, 400);
+    if (body.on && body.confirm !== true) return json(env, { error: "Switching ON needs confirm: true" }, 400);
+    return json(env, await setAutoPost(env, body.on, "owner"));
   }
 
   const manager: Record<string, (env: Env, body: Record<string, unknown>) => Promise<Record<string, unknown>>> = {

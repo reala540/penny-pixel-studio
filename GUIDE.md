@@ -431,6 +431,19 @@ Appearance**. *Screen* means "follow my phone or computer".
 5. **How keys share the work** (at the top of each service) picks the strategy: priority, round robin, least used,
    healthiest, or weighted percentages.
 
+### Step 27. Auto Review & Post (optional, starts OFF)
+
+**OFF** (the normal setting): you approve every package yourself, exactly as in Part K.
+
+**ON**: the AI checks each finished package (quality, every fact sourced, facts still fresh, the right accounts, the
+money disclaimer, licensed photos, and an independent AI policy review that must be at least 85% confident). If
+everything passes, it approves the package and it posts at its normal times. If anything fails, it waits for you and
+Telegram tells you why.
+
+* Switch it in **Settings → Automation** (it asks you to confirm), or in Telegram with `/autopost on confirm`.
+* Switch it off with the same switch or `/autopost off`. Posts that haven't gone out yet come back to Review.
+* The menu always shows **Auto Review & Post: ON/OFF**, and Telegram's `/status` shows it too.
+
 ---
 
 ## Part K — Your weekly routine (Monday, 30–45 minutes)
@@ -447,7 +460,7 @@ Appearance**. *Screen* means "follow my phone or computer".
 4. Look at **Rundown → Your quick jobs** (e.g. "set this YouTube video to Public"), do them, press **Done**.
 5. Reply to comments yourself on each app. Telegram gives you the links when posts go out.
 
-**Handy Telegram commands:** `/status`, `/week`, `/review`, `/failed`, `/budget`, `/pause`, `/resume confirm`.
+**Handy Telegram commands:** `/status`, `/week`, `/review`, `/failed`, `/budget`, `/pause`, `/resume confirm`, `/autopost` (`on confirm` / `off`).
 
 ---
 

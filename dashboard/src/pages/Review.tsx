@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import AutoPostToggle from "../components/AutoPostToggle";
 import { Confirm, Empty, ErrorNote, HostTag, Loading, PageHeader, StatusBadge, useToast } from "../components/ui";
 import { must, queueJob, useTimezone } from "../lib/api";
 import { safeUrl, estSeconds, fmtDateTime, fmtDuration, HOST, KIND_NAME, PLATFORM_NAME } from "../lib/format";
@@ -39,13 +40,14 @@ export default function Review() {
     <>
       <PageHeader
         title="Review Studio"
-        intro="Watch, check the facts, tweak the words, then approve. Nothing is posted until you approve it."
+        intro="Watch, check the facts, tweak the words, then approve. With Auto Review & Post OFF, nothing is posted until you approve it."
         actions={eligible.length > 0 && (
           <button className="btn-primary" onClick={() => setAskAll(true)} disabled={approveAll.isPending}>
             Approve all {eligible.length} that passed every check
           </button>
         )}
       />
+      <div className="mb-6 rounded-xl border border-line bg-surface px-4 py-3"><AutoPostToggle /></div>
       <Confirm open={askAll} title="Approve all checked packages?"
         body={<>This approves {eligible.length} video package{eligible.length === 1 ? "" : "s"} (with their Shorts and posts) that passed every automatic check. Items that need a look stay in the list.</>}
         confirmLabel="Approve all" onCancel={() => setAskAll(false)} onConfirm={() => { setAskAll(false); approveAll.mutate(); }} />

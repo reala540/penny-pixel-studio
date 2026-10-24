@@ -321,3 +321,86 @@ describe("scheduled idea generation", () => {
     expect(JSON.parse(String(ins.init!.body))).toMatchObject({ job_type: "generate_ideas", idempotency_key: "ideas:auto:2026-10-26" });
   });
 });
+
+describe("Auto Review & Post switch", () => {
+  const msg = (text: string, chat = 55) =>
+    new Request("https://w.test/telegram/webhook", { method: "POST", headers: { "X-Telegram-Bot-Api-Secret-Token": "hook-secret" }, body: JSON.stringify({ message: { text, chat: { id: chat } } }) });
+  const linked = () => routes.push((u) => (u.includes("key=eq.telegram_chat_id") ? ok([{ value: "55" }]) : undefined));
+  const rpc = () => calls.filter((c) => c.url.includes("/rest/v1/rpc/set_auto_review_post"));
+  const sent = () => calls.filter((c) => c.url.includes("/sendMessage")).map((c) => JSON.parse(String(c.init!.body)).text as string);
+
+  it("shows the current mode, defaulting to OFF", async () => {
+    linked();
+    await handleTelegram(env(), msg("/autopost"));
+    expect(sent()[0]).toContain("Auto Review &amp; Post: <b>OFF</b>");
+    expect(rpc()).toHaveLength(0);
+  });
+
+  it("includes the mode in /status", async () => {
+    linked();
+    routes.push((u) => (u.includes("key=eq.auto_review_post") ? ok([{ value: true }]) : undefined));
+    await handleTelegram(env(), msg("/status"));
+    expect(sent()[0]).toContain("Auto Review &amp; Post: <b>ON</b>");
+  });
+
+  it("needs confirmation to switch ON from Telegram", async () => {
+    linked();
+    await handleTelegram(env(), msg("/autopost on"));
+    expect(rpc()).toHaveLength(0);
+    expect(sent()[0]).toContain("/autopost on confirm");
+  });
+
+  it("switches ON with confirmation through the audited function, then reviews what's waiting", async () => {
+    linked();
+    routes.push((u) => (u.includes("rpc/set_auto_review_post") ? ok({ on: true, was: false, reverted_posts: 0 }) : undefined));
+    routes.push((u) => (u.includes("generation_jobs?on_conflict") ? ok([{ id: "j" }], 201) : undefined));
+    routes.push((u) => (u.includes("api.github.com") ? new Response(null, { status: 204 }) : undefined));
+    await handleTelegram(env(), msg("/autopost on confirm"));
+    expect(JSON.parse(String(rpc()[0].init!.body))).toEqual({ p_on: true, p_actor: "telegram" });
+    const job = calls.find((c) => c.url.includes("generation_jobs?on_conflict"))!;
+    expect(JSON.parse(String(job.init!.body))).toMatchObject({ job_type: "auto_review", status: "queued", requested_by: "owner" });
+    expect(calls.some((c) => c.url.includes("/actions/workflows/queue.yml/dispatches"))).toBe(true);
+    expect(sent().some((t) => t.includes("Auto Review &amp; Post: ON</b> (from Telegram)"))).toBe(true);
+  });
+
+  it("switches OFF immediately and reports posts returned to review", async () => {
+    linked();
+    routes.push((u) => (u.includes("rpc/set_auto_review_post") ? ok({ on: false, was: true, reverted_posts: 3 }) : undefined));
+    await handleTelegram(env(), msg("/autopost off"));
+    expect(JSON.parse(String(rpc()[0].init!.body))).toEqual({ p_on: false, p_actor: "telegram" });
+    expect(sent().some((t) => t.includes("OFF") && t.includes("3 auto-approved post(s)"))).toBe(true);
+    expect(calls.some((c) => c.url.includes("generation_jobs"))).toBe(false);
+  });
+
+  it("ignores the command from any other chat", async () => {
+    routes.push((u) => (u.includes("key=eq.telegram_chat_id") ? ok([{ value: "999" }]) : undefined));
+    await handleTelegram(env(), msg("/autopost on confirm"));
+    expect(rpc()).toHaveLength(0);
+  });
+
+  it("reports the saved mode even when Telegram can't be reached", async () => {
+    routes.push((u) => (u.includes("/auth/v1/user") ? ok({ id: "owner" }) : undefined));
+    routes.push((u) => (u.includes("/rest/v1/app_owner") ? ok([{ user_id: "owner" }]) : undefined));
+    routes.push((u) => (u.includes("key=eq.telegram_chat_id") ? ok([{ value: "55" }]) : undefined));
+    routes.push((u) => (u.includes("rpc/set_auto_review_post") ? ok({ on: false, was: true, reverted_posts: 0 }) : undefined));
+    routes.push((u) => { if (u.includes("api.telegram.org")) throw new TypeError("fetch failed"); return undefined; });
+    const res = await handleFetch(new Request("https://w.test/api/autopost", { method: "POST", body: JSON.stringify({ on: false }), headers: { Authorization: "Bearer t" } }), env());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ on: false, notified: false });
+  });
+
+  it("dashboard endpoint is owner-only and requires confirmation for ON", async () => {
+    const call = (body: unknown) => handleFetch(new Request("https://w.test/api/autopost", { method: "POST", body: JSON.stringify(body), headers: { Authorization: "Bearer t" } }), env());
+    routes.push((u) => (u.includes("/auth/v1/user") ? ok({ message: "bad" }, 401) : undefined));
+    expect((await call({ on: false })).status).toBe(401);
+    routes.length = 0;
+    routes.push((u) => (u.includes("/auth/v1/user") ? ok({ id: "owner" }) : undefined));
+    routes.push((u) => (u.includes("/rest/v1/app_owner") ? ok([{ user_id: "owner" }]) : undefined));
+    routes.push((u) => (u.includes("rpc/set_auto_review_post") ? ok({ on: false, was: false, reverted_posts: 0 }) : undefined));
+    expect((await call({ on: true })).status).toBe(400);
+    expect(rpc()).toHaveLength(0);
+    const res = await call({ on: false });
+    expect(res.status).toBe(200);
+    expect(JSON.parse(String(rpc()[0].init!.body))).toEqual({ p_on: false, p_actor: "owner" });
+  });
+});

@@ -3,6 +3,7 @@ import { Suspense } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { useSetting } from "../lib/api";
 import { supabase } from "../lib/supabase";
+import { AutoPostBadge } from "./AutoPostToggle";
 import ThemeControl from "./ThemeControl";
 import { Loading } from "./ui";
 
@@ -54,7 +55,8 @@ export default function Layout() {
           ))}
         </nav>
         <div className="flex flex-col gap-1 border-t border-line pt-3">
-          <div className="px-1 pb-2"><ThemeControl compact /></div>
+          <AutoPostBadge />
+          <div className="px-1 pb-2 pt-1"><ThemeControl compact /></div>
           <NavLink to="/help" className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-muted hover:bg-sunken hover:text-ink">
             <CircleHelp size={18} aria-hidden /> Help
           </NavLink>
@@ -73,6 +75,7 @@ export default function Layout() {
             <NavLink to="/help" aria-label="Help" className="rounded-lg p-2 text-muted"><CircleHelp size={20} /></NavLink>
           </div>
         </div>
+        <div className="border-b border-line bg-surface px-4 py-2 md:hidden"><AutoPostBadge /></div>
         {paused && (
           <div role="status" className="bg-alert px-4 py-2 text-center text-sm font-medium text-surface">
             Publishing is paused. Nothing will be posted until you resume it in Settings.
