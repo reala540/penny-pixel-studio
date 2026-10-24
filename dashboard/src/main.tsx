@@ -18,6 +18,8 @@ const LibraryPage = lazy(() => import("./pages/Library"));
 const Research = lazy(() => import("./pages/Research"));
 const Review = lazy(() => import("./pages/Review"));
 const SettingsPage = lazy(() => import("./pages/Settings"));
+const Ideas = lazy(() => import("./pages/Ideas"));
+const ApiManager = lazy(() => import("./pages/ApiManager"));
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { staleTime: 20_000, refetchOnWindowFocus: true, retry: 1 } } });
 
@@ -51,6 +53,8 @@ function Studio() {
                 <Route path="calendar" element={<Calendar />} />
                 <Route path="research" element={<Research />} />
                 <Route path="library" element={<LibraryPage />} />
+                <Route path="ideas" element={<Ideas />} />
+                <Route path="api" element={<ApiManager />} />
                 <Route path="settings" element={<SettingsPage />} />
                 <Route path="help" element={<Help />} />
                 <Route path="*" element={<ControlRoom />} />

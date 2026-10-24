@@ -396,6 +396,43 @@ Dashboard → **Mission Control**: enter an objective, choose a channel and coun
 
 ---
 
+## Part J2 — Ideas, themes and extra keys (new in v2.3)
+
+### Step 24. Let the AI find ideas for you
+
+1. Open **Mission** (the first page). Under *Direct the studio* you'll see **AI Idea Generator**.
+2. Press **Generate 10 Ideas**. After about 5–10 minutes, 10 ideas appear, best first.
+3. Each idea has a score out of 100. **70 points come from real, dated sources** (Google Trends, news, Hacker News,
+   official feeds…). Press **Why this score** to see the sources with their dates and links. An idea with no current
+   source says **Trend unverified**: fine for an evergreen video, but it isn't news.
+4. Like one? Press **Send to Studio**. The objective box fills in for you. Read it, change anything, then
+   **Launch mission**. Nothing is made or posted until you approve it in Review.
+5. **Save** the ones you might use later, **Reject** the ones you never want suggested again, or **Refine** one with
+   a note like "make it practical for students in Kenya". All of them live in the **Ideas** page.
+6. Want ideas automatically? **Settings → Automation → Generate ideas → Every day** (or chosen days) and pick an
+   hour. **Settings → Idea generation** sets regions, categories, language and which sources to use.
+
+### Step 25. Light or dark
+
+Click the sun, moon or screen icon at the bottom of the menu (or the top bar on a phone), or **Settings →
+Appearance**. *Screen* means "follow my phone or computer".
+
+### Step 26. More than one key per AI service (optional)
+
+1. Open **AI APIs** in the menu → **Add an API key**.
+2. Choose the service (for example `gemini`), give it a label (`Gemini · Sam`), say whose key it is and what they
+   allowed it for, paste the key and tick the authorisation box.
+3. Tick **separate account with its own allowance** only if the key really belongs to a different account with its
+   own limits, used within that account's rules. Keys from the same account share one limit, and services like
+   Google and Groq don't allow extra accounts to get around free limits, so the studio won't switch between those
+   keys to dodge a limit.
+4. Press **Test** to check it. Use **Limits** for a daily cap, parallel requests and, for paid services, prices and a
+   monthly cap.
+5. **How keys share the work** (at the top of each service) picks the strategy: priority, round robin, least used,
+   healthiest, or weighted percentages.
+
+---
+
 ## Part K — Your weekly routine (Monday, 30–45 minutes)
 
 1. **Open the Telegram message** "Your week is ready" → tap **Open dashboard**.

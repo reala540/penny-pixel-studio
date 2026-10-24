@@ -4,8 +4,9 @@ import {
   ExternalLink, FlaskConical, Pause, Play, RefreshCw, Search, Send, Settings2, ShieldCheck,
   Sparkles, Square, Wifi, WifiOff, Wrench, X,
 } from "lucide-react";
-import { FormEvent, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import IdeaGeneratorPanel from "../components/IdeaGeneratorPanel";
 import { Empty, ErrorNote, StatusBadge, useToast } from "../components/ui";
 import { must, queueJob, runWorkflow } from "../lib/api";
 import { compact, embedTitle, jobLabel, relativeTime, workflowLabel } from "../lib/controlRoom";
@@ -98,6 +99,21 @@ export default function ControlRoom({ demo = false }: { demo?: boolean }) {
   const [channel, setChannel] = useState("all");
   const [models, setModels] = useState(3);
   const [missionType, setMissionType] = useState<"research" | "production">("research");
+  const [ideaId, setIdeaId] = useState<string | null>(null);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const composer = useRef<HTMLTextAreaElement>(null);
+
+  // "Send to Studio" from an idea: prefill the objective for the owner to review and edit.
+  useEffect(() => {
+    const st = location.state as { objective?: string; ideaId?: string; channel?: string } | null;
+    if (!st?.objective) return;
+    setObjective(st.objective.slice(0, 2000));
+    setIdeaId(st.ideaId ?? null);
+    if (st.channel && ["all", "ai", "money"].includes(st.channel)) setChannel(st.channel);
+    navigate(location.pathname, { replace: true, state: null });   // don't refill on refresh
+    window.setTimeout(() => { composer.current?.focus(); composer.current?.scrollIntoView({ block: "center" }); }, 50);
+  }, [location.state]);
 
   const activityQuery = useQuery({
     queryKey: ["control-activity"],
@@ -157,8 +173,13 @@ export default function ControlRoom({ demo = false }: { demo?: boolean }) {
     mutationFn: async () => {
       if (demo) return;
       await queueJob(missionType === "production" ? "run_mission" : "run_research", {
-        input: { brief: objective.trim(), channel: channel === "all" ? null : channel, models },
+        input: { brief: objective.trim(), channel: channel === "all" ? null : channel, models, ...(ideaId ? { idea_id: ideaId } : {}) },
       });
+      if (ideaId) {
+        const rows = (await must(supabase.from("generated_ideas").select("status_history").eq("id", ideaId))) as { status_history: unknown[] }[];
+        const history = [...((rows[0]?.status_history as unknown[]) ?? []), { at: new Date().toISOString(), status: "sent_to_studio", by: "owner" }];
+        await must(supabase.from("generated_ideas").update({ status: "sent_to_studio", status_history: history }).eq("id", ideaId));
+      }
     },
     onSuccess: () => {
       if (demo) {
@@ -168,6 +189,7 @@ export default function ControlRoom({ demo = false }: { demo?: boolean }) {
       } else {
         toast("Mission queued. The Worker will dispatch it shortly.");
         setObjective("");
+        setIdeaId(null);
         refresh();
       }
     },
@@ -219,7 +241,7 @@ export default function ControlRoom({ demo = false }: { demo?: boolean }) {
         </div>
         <label className="mt-4 block">
           <span className="sr-only">Mission objective</span>
-          <textarea className="cr-input min-h-20 resize-y" value={objective} maxLength={2000} onChange={(e) => setObjective(e.target.value)} placeholder="Example: Find three practical AI workflows for small businesses, compare the trade-offs, and challenge the strongest ideas." />
+          <textarea ref={composer} className="cr-input min-h-20 resize-y" value={objective} maxLength={2000} onChange={(e) => setObjective(e.target.value)} placeholder="Example: Find three practical AI workflows for small businesses, compare the trade-offs, and challenge the strongest ideas." />
         </label>
         <div className="mt-3 flex flex-wrap items-end gap-3">
           <label className="cr-field"><span>Channel</span><select className="cr-input" value={channel} onChange={(e) => setChannel(e.target.value)}><option value="all">Both channels</option><option value="ai">Pixel · AI</option><option value="money">Penny · Money</option></select></label>
@@ -227,7 +249,14 @@ export default function ControlRoom({ demo = false }: { demo?: boolean }) {
           <label className="cr-field"><span>Outcome</span><select className="cr-input" value={missionType} onChange={(e) => setMissionType(e.target.value as "research" | "production")}><option value="research">Research & ideas</option><option value="production">Research + review package</option></select></label>
           <button className="cr-primary ml-auto" disabled={mission.isPending || objective.trim().length < 12}><Send size={15} />{mission.isPending ? "Queueing…" : "Launch mission"}</button>
         </div>
+        {ideaId && <p className="mt-2 text-xs text-[color:var(--cr-muted)]">Prepared from an idea in your library. Edit anything before you launch; launching still stops at review for your approval.</p>}
       </form>
+
+      {demo ? (
+        <p className="mt-4 border border-[color:var(--cr-line)] bg-[color:var(--cr-surface)] p-4 text-sm text-[color:var(--cr-muted)]">
+          The AI Idea Generator runs real research on your sources, so it isn't simulated in this demo. Sign in to your studio to use it.
+        </p>
+      ) : <IdeaGeneratorPanel />}
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[238px_minmax(0,1fr)_310px]">
         <aside className="cr-panel" aria-labelledby="council-title">

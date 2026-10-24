@@ -35,13 +35,13 @@ def classify_topic(text: str, default: str = "both") -> str:
 
 # ----------------------------------------------------------------------------- collect
 
-def collect(conn, fetcher: Fetcher | None = None) -> dict:
+def collect(conn, fetcher: Fetcher | None = None, *, research_cfg: dict | None = None) -> dict:
     """Fetch independent adapters concurrently, then store results deterministically.
 
     httpx clients support concurrent requests. The database connection never crosses
     threads, which keeps psycopg and transaction behaviour unchanged.
     """
-    cfg = config.research()
+    cfg = research_cfg if research_cfg is not None else config.research()
     fetcher = fetcher or Fetcher()
     fresh = cfg.get("freshness_days", {})
     enabled = [(name, adapter_cfg) for name, adapter_cfg in (cfg.get("adapters") or {}).items()

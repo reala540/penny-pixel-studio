@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { decryptJson, encryptJson } from "../src/crypto";
-import { handleCron, handleFetch, handleTelegram } from "../src/index";
+import { dueIdeaSlot, handleCron, handleFetch, handleTelegram, localParts } from "../src/index";
 import type { Env } from "../src/supabase";
 
 const KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="; // same test key as the Python suite
+const KEY_B64 = KEY;
 
 function env(extra: Partial<Env> = {}): Env {
   return {
@@ -206,5 +207,117 @@ describe("cron", () => {
     routes.push((u) => (u.includes("key=eq.paused") ? ok([{ value: true }]) : undefined));
     const out = await handleCron(env());
     expect(out.publish).toBeUndefined();
+  });
+});
+
+describe("AI API Manager", () => {
+  const owner = () => {
+    routes.push((u) => (u.includes("/auth/v1/user") ? ok({ id: "owner" }) : undefined));
+    routes.push((u) => (u.includes("/rest/v1/app_owner") ? ok([{ user_id: "owner" }]) : undefined));
+  };
+  const call = (path: string, body: unknown, e = env()) =>
+    handleFetch(new Request(`https://w.test${path}`, { method: "POST", body: JSON.stringify(body), headers: { Authorization: "Bearer t" } }), e);
+  const KEY = "AIzaSy-secret-key-1234567890-zz9f";
+
+  it("refuses everyone but the owner", async () => {
+    routes.push((u) => (u.includes("/auth/v1/user") ? ok({ message: "bad" }, 401) : undefined));
+    const res = await call("/api/credentials/add", { provider: "gemini", key: KEY });
+    expect(res.status).toBe(401);
+    expect(calls.some((c) => c.url.includes("ai_credential"))).toBe(false);
+  });
+
+  it("encrypts a new key server-side and only ever returns a masked hint", async () => {
+    owner();
+    routes.push((u, i) => (u.includes("ai_providers?name=eq.gemini") ? ok([{ name: "gemini", base_url: "https://g.test/v1" }]) : undefined));
+    routes.push((u, i) => (u.endsWith("/rest/v1/ai_credentials") && i?.method === "POST" ? ok([{ id: "11111111-1111-1111-1111-111111111111" }], 201) : undefined));
+    routes.push((u) => (u.includes("ai_credentials?id=eq.") ? ok([{ id: "11111111-1111-1111-1111-111111111111", key_hint: "••••zz9f", label: "Sam's key" }]) : undefined));
+    const res = await call("/api/credentials/add", { provider: "gemini", key: KEY, label: "Sam's key", owner_name: "Sam",
+      authorized_use: "Studio scripts", authorized: true });
+    const text = await res.text();
+    expect(res.status).toBe(200);
+    expect(text).not.toContain(KEY);
+    expect(text).toContain("••••zz9f");
+    const meta = calls.find((c) => c.url.endsWith("/rest/v1/ai_credentials") && c.init?.method === "POST")!;
+    expect(String(meta.init!.body)).not.toContain(KEY);
+    expect(JSON.parse(String(meta.init!.body))).toMatchObject({ key_hint: "••••zz9f", quota_group: "gemini", separate_account_attested: false });
+    const secret = calls.find((c) => c.url.endsWith("/rest/v1/ai_credential_secrets"))!;
+    const blob = JSON.parse(String(secret.init!.body)).ciphertext;
+    expect(String(secret.init!.body)).not.toContain(KEY);
+    expect(await decryptJson(KEY_B64, blob)).toEqual({ key: KEY });
+  });
+
+  it("requires the owner's authorisation and validates input", async () => {
+    owner();
+    routes.push((u) => (u.includes("ai_providers?name=eq.gemini") ? ok([{ name: "gemini", base_url: "https://g.test/v1" }]) : undefined));
+    const noAuth = await call("/api/credentials/add", { provider: "gemini", key: KEY, label: "x", owner_name: "x", authorized_use: "abc" });
+    expect(noAuth.status).toBe(400);
+    expect(((await noAuth.json()) as any).error).toContain("authorised");
+    const shortKey = await call("/api/credentials/add", { provider: "gemini", key: "abc", authorized: true });
+    expect(shortKey.status).toBe(400);
+  });
+
+  it("gives an attested separate account its own quota group", async () => {
+    owner();
+    routes.push((u) => (u.includes("ai_providers?name=eq.gemini") ? ok([{ name: "gemini", base_url: "https://g.test/v1" }]) : undefined));
+    routes.push((u, i) => (u.endsWith("/rest/v1/ai_credentials") && i?.method === "POST" ? ok([{ id: "22222222-2222-2222-2222-222222222222" }], 201) : undefined));
+    await call("/api/credentials/add", { provider: "gemini", key: KEY, label: "Family", owner_name: "Ann",
+      authorized_use: "Studio", authorized: true, separate_account: true });
+    const meta = JSON.parse(String(calls.find((c) => c.url.endsWith("/rest/v1/ai_credentials") && c.init?.method === "POST")!.init!.body));
+    expect(meta.quota_group).toMatch(/^gemini:[0-9a-f]{8}$/);
+    expect(meta.separate_account_attested).toBe(true);
+  });
+
+  it("tests a stored key against the provider's model list without exposing it", async () => {
+    owner();
+    const id = "33333333-3333-3333-3333-333333333333";
+    const blob = await encryptJson(KEY_B64, { key: KEY });
+    routes.push((u) => (u.includes(`ai_credentials?id=eq.${id}&select=provider`) ? ok([{ provider: "gemini" }]) : undefined));
+    routes.push((u) => (u.includes("ai_providers?name=eq.gemini") ? ok([{ name: "gemini", base_url: "https://g.test/v1/" }]) : undefined));
+    routes.push((u) => (u.includes("ai_credential_secrets?credential_id") ? ok([{ ciphertext: blob }]) : undefined));
+    routes.push((u, i) => (u === "https://g.test/v1/models" ? (String((i?.headers as any)?.Authorization) === `Bearer ${KEY}` ? ok({ data: [{ id: "gemini-3.8-flash" }] }) : ok({}, 401)) : undefined));
+    const res = await call("/api/credentials/test", { id });
+    const out = (await res.json()) as any;
+    expect(out).toMatchObject({ ok: true, models: ["gemini-3.8-flash"] });
+    expect(JSON.stringify(out)).not.toContain(KEY);
+    const patch = calls.find((c) => c.url.includes(`ai_credentials?id=eq.${id}`) && c.init?.method === "PATCH")!;
+    expect(JSON.parse(String(patch.init!.body)).health).toBe("healthy");
+  });
+
+  it("only accepts public https provider addresses", async () => {
+    owner();
+    for (const base of ["http://api.example.com/v1", "https://127.0.0.1/v1", "https://localhost/v1", "https://user:pw@api.example.com"]) {
+      const res = await call("/api/providers/add", { name: "custom", base_url: base, models: [{ id: "m", roles: ["critic"] }] });
+      expect(res.status).toBe(400);
+    }
+  });
+});
+
+describe("scheduled idea generation", () => {
+  it("knows the studio's local day and hour", () => {
+    const p = localParts(new Date("2026-10-26T05:30:00Z"), "Africa/Nairobi");  // Monday 08:30 in Nairobi
+    expect(p).toEqual({ date: "2026-10-26", weekday: 0, hour: 8 });
+  });
+
+  it("is due once per slot, only on chosen days after the chosen hour", () => {
+    const mon0830 = new Date("2026-10-26T05:30:00Z");
+    expect(dueIdeaSlot({ frequency: "manual" }, mon0830, "Africa/Nairobi")).toBeNull();
+    expect(dueIdeaSlot({ frequency: "daily", hour: 9 }, mon0830, "Africa/Nairobi")).toBeNull();
+    expect(dueIdeaSlot({ frequency: "daily", hour: 8 }, mon0830, "Africa/Nairobi")).toBe("ideas:auto:2026-10-26");
+    expect(dueIdeaSlot({ frequency: "weekly", weekdays: [2], hour: 8 }, mon0830, "Africa/Nairobi")).toBeNull();
+    expect(dueIdeaSlot({ frequency: "custom", weekdays: [0, 3], hour: 7 }, mon0830, "Africa/Nairobi")).toBe("ideas:auto:2026-10-26");
+  });
+
+  it("queues one idea job per slot and dispatches it", async () => {
+    vi.setSystemTime(new Date("2026-10-26T05:30:00Z"));
+    routes.push((u) => (u.includes("key=eq.idea_generator") ? ok([{ value: { frequency: "daily", hour: 6 } }]) : undefined));
+    routes.push((u, i) => (u.includes("rest/v1/generation_jobs?on_conflict") ? ok([{ id: "j1" }], 201) : undefined));
+    routes.push((u) => (u.includes("generation_jobs?select=id&status=eq.queued") ? ok([{ id: "j1" }]) : undefined));
+    routes.push((u) => (u.includes("api.github.com") ? new Response(null, { status: 204 }) : undefined));
+    const out = await handleCron(env());
+    vi.useRealTimers();
+    expect(out).toMatchObject({ ideas: true, queue: true });
+    const ins = calls.find((c) => c.url.includes("generation_jobs?on_conflict=idempotency_key"))!;
+    expect(String((ins.init!.headers as any).Prefer)).toContain("ignore-duplicates");
+    expect(JSON.parse(String(ins.init!.body))).toMatchObject({ job_type: "generate_ideas", idempotency_key: "ideas:auto:2026-10-26" });
   });
 });

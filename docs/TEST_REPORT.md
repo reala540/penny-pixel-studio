@@ -1,4 +1,18 @@
-# Test report — v2.2 Mission Control upgrade (24 Oct 2026)
+# Test report — v2.3 Ideas, themes and AI API Manager (24 Oct 2026)
+
+| Suite | Result |
+|---|---|
+| Engine (pytest, local PostgreSQL with all 6 migrations, real FFmpeg/Kokoro renders) | **83 passed** (27 new: key strategies, caps, quota groups, retries/backoff, failover, concurrency, secrecy, DB encryption; idea weights, measured trend, evidence, dedupe, unverified labels, approval boundary, queue, refine, config; column-level security) |
+| Worker (vitest + `tsc`, `wrangler deploy --dry-run`) | **29 passed** (9 new: owner-only, server-side encryption, masked responses, authorisation, quota groups, key test, URL safety, schedule slots), bundle 39 KiB |
+| Dashboard (vitest + `tsc` + Vite build) | **13 passed**; Ideas and AI API Manager are lazy-loaded chunks |
+| Browser end-to-end (Chromium, real PostgREST + the real Worker running locally) | **58/58 checks, 0 console errors**: theme switching, persistence, no flash, System follows the device, every page in dark, keyboard control; 10 ranked ideas, 70-point breakdown, dated evidence, save/reject/refine, Send to Studio → edited objective → research queued, idea marked sent, no production created, one job per press; library filters/search/history; add two keys for one provider, masked hint, encrypted at rest, quota groups, honest key test, caps, strategy, model jobs, replace, remove; no full key in any response or page; schedule and categories saved; no horizontal scroll at 390 px |
+| npm audit | **0 vulnerabilities** (dashboard, worker) |
+
+Not verifiable here (no outbound access from the build container): real AI calls through added keys and real research
+fetches. Both use the same code paths the tests exercise with recorded responses; the first live run shows its notes
+in the Idea Library.
+
+## v2.2 Mission Control upgrade (24 Oct 2026)
 
 What changed: Mission Control (owner-directed missions, live model activity, run queue, readiness, public `/demo`),
 concurrent research collection, per-job attribution of model calls, activity indexes (migration 5), run locks so

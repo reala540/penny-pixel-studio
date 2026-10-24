@@ -61,7 +61,8 @@ def sync_config(conn) -> dict:
                 insert into ai_model_configs (provider, model, roles, context_tokens, daily_request_limit,
                                               daily_token_limit, priority)
                 values (%s,%s,%s,%s,%s,%s,%s)
-                on conflict (provider, model) do update set roles=excluded.roles,
+                on conflict (provider, model) do update
+                   set roles = case when ai_model_configs.roles_custom then ai_model_configs.roles else excluded.roles end,
                        context_tokens=excluded.context_tokens""",
                    (name, m["id"], m.get("roles", []), m.get("context"), m.get("daily_requests"),
                     m.get("daily_tokens"), m.get("priority", 100)))

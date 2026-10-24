@@ -98,3 +98,78 @@ export interface Idea {
   batch_week: string | null;
   created_at: string;
 }
+
+export interface TrendSignal {
+  source_id: string;
+  label: string;
+  title: string;
+  url: string;
+  publisher: string | null;
+  adapter: string;
+  observed: string;
+  published_at: string | null;
+  retrieved_at: string;
+}
+
+export type IdeaStatus = "new" | "saved" | "rejected" | "sent_to_studio" | "archived";
+
+export interface GeneratedIdea {
+  id: string;
+  run_id: string;
+  rank: number;
+  title: string;
+  summary: string;
+  audience: string;
+  markets: string[];
+  channel_slug: "ai" | "money" | "both" | null;
+  category: string | null;
+  trend_signals: TrendSignal[];
+  trend_verified: boolean;
+  newest_evidence_at: string | null;
+  scores: { trend: number; originality: number; international: number; feasibility: number; engagement: number;
+            trend_parts?: { independent_sources: number; newest_age_days: number | null; signal_strength: number; source_types: number } };
+  total: number;
+  score_explanation: string;
+  assessment_notes: { rationale?: string; trend_angle?: string };
+  confidence: "high" | "medium" | "low" | "unverified";
+  sensitivity: "none" | "sensitive" | "controversial" | "poorly_supported";
+  sensitivity_note: string | null;
+  suggested_format: string | null;
+  execution: string | null;
+  generated_by: string | null;
+  assessed_by: string | null;
+  status: IdeaStatus;
+  status_history: { at: string; status: string; by?: string; note?: string }[];
+  owner_note: string | null;
+  created_at: string;
+}
+
+export interface IdeaRun {
+  id: string;
+  trigger: string;
+  status: "running" | "completed" | "partial" | "failed";
+  requested_count: number;
+  produced_count: number;
+  evidence_count: number;
+  notes: string[];
+  error: string | null;
+  started_at: string;
+  finished_at: string | null;
+  sources_used: Record<string, { ok: boolean; items?: number; error?: string }>;
+}
+
+export interface IdeaGeneratorConfig {
+  frequency: "manual" | "daily" | "weekly" | "custom";
+  weekdays: number[];
+  hour: number;
+  count: number;
+  region: "global" | string[];
+  channels: ("ai" | "money")[];
+  categories: string[];
+  languages: string[];
+  audience: string;
+  min_score: number;
+  sources: string[];
+  refresh_sources: boolean;
+  notify: boolean;
+}

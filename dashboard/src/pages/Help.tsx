@@ -8,6 +8,10 @@ const FAQ: [string, string][] = [
   ["Why was a post blocked?", "Usually because the facts in it are older than their freshness date. Use \"Re-check the facts\" in Calendar, or reject the package."],
   ["Will this ever charge me?", "Only X costs money, capped by your monthly limit (at most $1). Every other service is used on its free tier, and when a free allowance runs out the studio waits or uses another free service."],
   ["How do I stop everything?", "Press Pause publishing on Home, or send /pause to your Telegram bot."],
+  ["How are idea scores worked out?", "70 of the 100 points come from real, dated sources the idea cites: how many independent sources, how recent, how strong the signal. The other 30 are an AI reviewer's opinion of originality, international relevance, feasibility and engagement. An idea with no current source is marked Trend unverified. Press Why this score on any idea to see the sources."],
+  ["Does generating ideas start making videos?", "No. Ideas go to the Idea Library. A video is only made when you send an idea to the Studio, launch it, and later approve it in Review."],
+  ["Can I add more than one key for an AI service?", "Yes, in AI APIs. Each key has its owner, limits and health. Keys from the same account share one limit, so the studio won't switch between them to get around a limit; tick \"separate account\" only for a key that really has its own allowance."],
+  ["How do I switch to dark mode?", "Use the sun / moon / screen buttons at the bottom of the menu, or Settings → Appearance. Screen follows your device."],
 ];
 
 export default function Help() {

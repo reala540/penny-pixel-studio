@@ -1,17 +1,20 @@
-import { Bot, CalendarDays, Clapperboard, Compass, Library, ListChecks, LogOut, Settings, CircleHelp } from "lucide-react";
+import { Bot, CalendarDays, Clapperboard, Compass, KeyRound, Library, Lightbulb, ListChecks, LogOut, Settings, CircleHelp } from "lucide-react";
 import { Suspense } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { useSetting } from "../lib/api";
 import { supabase } from "../lib/supabase";
+import ThemeControl from "./ThemeControl";
 import { Loading } from "./ui";
 
 const NAV = [
   { to: "/", label: "Mission", icon: Bot, end: true },
+  { to: "/ideas", label: "Ideas", icon: Lightbulb },
   { to: "/week", label: "Rundown", icon: ListChecks },
   { to: "/review", label: "Review", icon: Clapperboard },
   { to: "/calendar", label: "Calendar", icon: CalendarDays },
   { to: "/research", label: "Research", icon: Compass },
   { to: "/library", label: "Library", icon: Library },
+  { to: "/api", label: "AI APIs", icon: KeyRound },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
 
@@ -51,6 +54,7 @@ export default function Layout() {
           ))}
         </nav>
         <div className="flex flex-col gap-1 border-t border-line pt-3">
+          <div className="px-1 pb-2"><ThemeControl compact /></div>
           <NavLink to="/help" className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-muted hover:bg-sunken hover:text-ink">
             <CircleHelp size={18} aria-hidden /> Help
           </NavLink>
@@ -64,10 +68,13 @@ export default function Layout() {
       <div className="flex min-w-0 flex-col">
         <div className="flex items-center justify-between border-b border-line bg-surface px-4 py-3 md:hidden">
           <Brand />
-          <NavLink to="/help" aria-label="Help" className="rounded-lg p-2 text-muted"><CircleHelp size={20} /></NavLink>
+          <div className="flex items-center gap-1">
+            <ThemeControl compact />
+            <NavLink to="/help" aria-label="Help" className="rounded-lg p-2 text-muted"><CircleHelp size={20} /></NavLink>
+          </div>
         </div>
         {paused && (
-          <div role="status" className="bg-alert px-4 py-2 text-center text-sm font-medium text-white">
+          <div role="status" className="bg-alert px-4 py-2 text-center text-sm font-medium text-surface">
             Publishing is paused. Nothing will be posted until you resume it in Settings.
           </div>
         )}

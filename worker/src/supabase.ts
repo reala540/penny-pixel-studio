@@ -11,6 +11,7 @@ export interface Env {
   GITHUB_TOKEN: string;
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_WEBHOOK_SECRET?: string;
+  CLOUDFLARE_ACCOUNT_ID?: string;        // only to resolve the Workers AI base URL when testing keys
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   FACEBOOK_APP_ID?: string;
@@ -64,6 +65,28 @@ export class Supabase {
       body: JSON.stringify(row),
     });
     if (!r.ok) throw new Error(`insert ${table}: ${r.status} ${await r.text()}`);
+  }
+
+  /** Insert and return the stored rows; with ignoreDuplicates a conflicting row is skipped (returns []). */
+  async insertReturning<T = Record<string, unknown>>(table: string, row: Record<string, unknown>,
+                                                     opts: { onConflict?: string; ignoreDuplicates?: boolean } = {}): Promise<T[]> {
+    const q = opts.onConflict ? `?on_conflict=${opts.onConflict}` : "";
+    const prefer = ["return=representation"].concat(opts.ignoreDuplicates ? ["resolution=ignore-duplicates"] : []).join(",");
+    const r = await fetch(`${this.env.SUPABASE_URL}/rest/v1/${table}${q}`, {
+      method: "POST",
+      headers: this.headers({ Prefer: prefer }),
+      body: JSON.stringify(row),
+    });
+    if (!r.ok) throw new Error(`insert ${table}: ${r.status} ${await r.text()}`);
+    return (await r.json()) as T[];
+  }
+
+  async remove(table: string, filter: string): Promise<void> {
+    const r = await fetch(`${this.env.SUPABASE_URL}/rest/v1/${table}?${filter}`, {
+      method: "DELETE",
+      headers: this.headers({ Prefer: "return=minimal" }),
+    });
+    if (!r.ok) throw new Error(`delete ${table}: ${r.status} ${await r.text()}`);
   }
 
   async setting<T>(key: string): Promise<T | null> {

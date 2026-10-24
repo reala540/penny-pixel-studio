@@ -1,4 +1,5 @@
 import { createContext, ReactNode, useCallback, useContext, useState } from "react";
+import { createPortal } from "react-dom";
 import { HOST, statusText, statusTone, type Tone } from "../lib/format";
 import type { Channel } from "../lib/types";
 
@@ -99,7 +100,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       {children}
       <div aria-live="polite" className="pointer-events-none fixed bottom-20 right-4 z-50 flex flex-col gap-2 md:bottom-6">
         {toasts.map((t) => (
-          <div key={t.id} className={`pointer-events-auto rounded-lg px-4 py-2.5 text-sm shadow-lg ${t.tone === "good" ? "bg-ink text-surface" : "bg-alert text-white"}`}>
+          <div key={t.id} className={`pointer-events-auto rounded-lg px-4 py-2.5 text-sm shadow-lg ${t.tone === "good" ? "bg-ink text-surface" : "bg-alert text-surface"}`}>
             {t.text}
           </div>
         ))}
@@ -116,7 +117,8 @@ export function Confirm({ open, title, body, confirmLabel, danger, onConfirm, on
   open: boolean; title: string; body: ReactNode; confirmLabel: string; danger?: boolean; onConfirm: () => void; onCancel: () => void;
 }) {
   if (!open) return null;
-  return (
+  // Rendered at the end of <body> so a dialog opened from inside a table or list stays valid HTML.
+  return createPortal(
     <div className="fixed inset-0 z-40 flex items-end justify-center bg-ink/40 p-4 sm:items-center" onClick={onCancel}>
       <div role="dialog" aria-modal="true" aria-labelledby="confirm-title" className="w-full max-w-md rounded-xl bg-surface p-5 shadow-xl" onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => e.key === "Escape" && onCancel()}>
@@ -127,6 +129,7 @@ export function Confirm({ open, title, body, confirmLabel, danger, onConfirm, on
           <button className={danger ? "btn-danger" : "btn-primary"} onClick={onConfirm}>{confirmLabel}</button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

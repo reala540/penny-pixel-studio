@@ -153,3 +153,66 @@ def test_batch_runs_never_overlap(db_url, conn):
             assert again is True  # released when the first run ends
     finally:
         other.close()
+
+
+def test_credentials_secrets_are_server_only_and_columns_are_limited(synced):
+    c = synced
+    as_user(c, OWNER)
+    db.one(c, "select public.claim_ownership() ok")
+    reset_role(c)
+    cred = db.one(c, """insert into ai_credentials (provider, label, owner_name, authorized_use, key_hint, quota_group)
+                        values ('gemini','Main','Me','Studio scripts','••••abcd','gemini') returning id""")["id"]
+    db.run(c, "insert into ai_credential_secrets (credential_id, ciphertext) values (%s,'cipher')", (cred,))
+    as_user(c, OWNER)
+    assert db.one(c, "select label, key_hint from ai_credentials")["key_hint"] == "••••abcd"
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        db.all_(c, "select * from ai_credential_secrets")
+    reset_role(c)
+    as_user(c, OWNER)
+    db.run(c, "update ai_credentials set label='Renamed', daily_request_cap=50 where id=%s", (cred,))
+    for bad in ("key_hint='leak'", "health='healthy'", "provider='groq'"):
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            db.run(c, f"update ai_credentials set {bad} where id=%s", (cred,))
+        reset_role(c)
+        as_user(c, OWNER)
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        db.run(c, "insert into ai_credentials (provider, label, owner_name, authorized_use, key_hint, quota_group) "
+                  "values ('gemini','x','x','xyz','x','gemini')")
+    reset_role(c)
+    # a separate quota allowance needs an explicit attestation
+    with pytest.raises(psycopg.errors.CheckViolation):
+        db.run(c, "update ai_credentials set quota_group='gemini:family' where id=%s", (cred,))
+    db.run(c, "update ai_credentials set quota_group='gemini:family', separate_account_attested=true where id=%s", (cred,))
+    as_user(c, STRANGER, "intruder@example.com")
+    assert db.all_(c, "select * from ai_credentials") == []
+    reset_role(c)
+
+
+def test_owner_can_only_change_idea_status_and_notes(synced):
+    c = synced
+    as_user(c, OWNER)
+    db.one(c, "select public.claim_ownership() ok")
+    reset_role(c)
+    run = db.one(c, "insert into idea_runs default values returning id")["id"]
+    idea = db.one(c, """insert into generated_ideas (run_id, rank, title, summary, audience, total, score_explanation,
+                        confidence, fingerprint) values (%s,1,'T','S','A',80,'why','high','f') returning id""", (run,))["id"]
+    as_user(c, OWNER)
+    db.run(c, "update generated_ideas set status='saved', owner_note='good one' where id=%s", (idea,))
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        db.run(c, "update generated_ideas set total=99 where id=%s", (idea,))
+    reset_role(c)
+    as_user(c, OWNER)
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        db.run(c, "insert into idea_runs default values")
+    reset_role(c)
+
+
+def test_custom_role_assignments_survive_config_sync(synced):
+    from studio import produce
+
+    c = synced
+    db.run(c, """update ai_model_configs set roles='{critic}', roles_custom=true
+                 where provider='groq' and model='openai/gpt-oss-120b'""")
+    produce.sync_config(c)
+    row = db.one(c, "select roles from ai_model_configs where provider='groq' and model='openai/gpt-oss-120b'")
+    assert row["roles"] == ["critic"]

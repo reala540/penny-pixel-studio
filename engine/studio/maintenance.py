@@ -10,7 +10,7 @@ from .script import pipeline, quality
 from .script.models import Script, ShortScript
 
 OWNER_JOBS = ("regenerate_script", "rerender_preview", "regenerate_thumbnails", "run_research", "run_production",
-              "run_mission", "recheck_project")
+              "run_mission", "recheck_project", "generate_ideas", "refine_idea")
 
 
 def _finish(conn, job, status: str, output: dict | None = None, error: str | None = None) -> None:
@@ -70,6 +70,22 @@ def _run_owner_job(conn, router: Router, storage, job: dict) -> dict:
             channel=inp.get("channel") if inp.get("channel") in ("ai", "money") else None,
         )
         return {"research": research_out, "production": production_out}
+    if t == "generate_ideas":
+        # Ideas only go to the Idea Library; nothing here starts research-to-production or publishing.
+        from .ideas import generator
+
+        trigger = inp.get("trigger") if inp.get("trigger") in ("manual", "scheduled", "regenerate") else "manual"
+        overrides = inp.get("overrides") if isinstance(inp.get("overrides"), dict) else None
+        with db.run_lock(conn, "ideas") as free:
+            if not free:
+                return {"skipped": "another idea run is in progress"}
+            return generator.run(conn, router, trigger=trigger, job_id=job["id"], overrides=overrides)
+    if t == "refine_idea":
+        from .ideas import generator
+
+        if not inp.get("idea_id") or not str(inp.get("note") or "").strip():
+            raise ValueError("refine_idea needs idea_id and a note")
+        return generator.refine(conn, router, inp["idea_id"], str(inp["note"]))
     if t == "run_production":
         from .research.engine import week_start
 

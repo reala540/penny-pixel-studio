@@ -27,8 +27,9 @@
 |---|---|
 | `config.py` | YAML config + environment secrets |
 | `db.py`, `jobs.py` | Postgres helpers; persistent idempotent job runner (attempts, backoff with jitter, resume); context-local model-call attribution |
-| `ai/router.py`, `ai/usage.py` | Free-tier router: role-based model choice, quota tracking, circuit breakers, JSON repair, fallback |
+| `ai/router.py`, `ai/usage.py`, `ai/credentials.py`, `ai/catalog.py` | Router: role-based model choice, several keys per provider (5 strategies, caps, quota groups, health), bounded jittered retries, circuit breakers, parallel limits, JSON repair, provider fallback with substitution notes, live model catalog |
 | `research/sources.py`, `research/engine.py` | Bounded-concurrent source adapters, per-source failure isolation, main-thread database writes, dedupe, topic classification, owner-directed multi-model brainstorming, scoring, shortlisting |
+| `ideas/generator.py` | AI Idea Generator: evidence pool, cited proposals, measured 70% trend score, independent assessment, dedupe, diversity, refine |
 | `similarity.py` | Repetition check (embeddings if available, TF-IDF otherwise) |
 | `script/models.py`, `script/pipeline.py`, `script/quality.py`, `script/verify.py` | Structured script schema, adaptive pipeline, deterministic gates, claim verification |
 | `media/tts.py`, `media/visuals.py`, `media/captions.py`, `media/render.py`, `media/thumbnails.py`, `media/stock.py` | Narration, on-brand cards and charts, word-timed captions, scene-cached rendering from recipes, thumbnails, licensed photos |

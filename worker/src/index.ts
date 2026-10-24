@@ -6,6 +6,7 @@
 //   cron (15 min)      dispatches GitHub only when a post is due or a job is queued
 
 import { randomToken, timingSafeEqual } from "./crypto";
+import { addCredential, addProvider, deleteCredential, InputError, replaceCredential, testCredential } from "./credentials";
 import { handleCallback, startUrl } from "./oauth";
 import { Env, Supabase } from "./supabase";
 
@@ -249,6 +250,27 @@ export async function handleFetch(req: Request, env: Env): Promise<Response> {
     return json(env, { code, telegram: await connectTelegram(env, `${url.origin}/telegram/webhook`) });
   }
 
+  const manager: Record<string, (env: Env, body: Record<string, unknown>) => Promise<Record<string, unknown>>> = {
+    "/api/credentials/add": addCredential,
+    "/api/credentials/replace": replaceCredential,
+    "/api/credentials/delete": deleteCredential,
+    "/api/credentials/test": testCredential,
+    "/api/providers/add": addProvider,
+  };
+  if (url.pathname in manager && req.method === "POST") {
+    const owner = await ownerOrNull(env, req);
+    if (!owner) return json(env, { error: "not authorised" }, 401);
+    const body = (await req.json().catch(() => null)) as Record<string, unknown> | null;
+    if (!body || typeof body !== "object") return json(env, { error: "send a JSON object" }, 400);
+    try {
+      return json(env, await manager[url.pathname](env, body));
+    } catch (e) {
+      if (e instanceof InputError) return json(env, { error: e.message }, 400);
+      console.error("api manager", url.pathname, (e as Error).message);
+      return json(env, { error: "Something went wrong on the server; nothing was saved." }, 500);
+    }
+  }
+
   const cb = url.pathname.match(/^\/oauth\/(youtube|facebook|tiktok|x)\/callback$/);
   if (cb && req.method === "GET") return handleCallback(env, req, cb[1] as any);
 
@@ -269,13 +291,55 @@ export async function handleCron(env: Env): Promise<Record<string, boolean>> {
     out.publish = await dispatch(env, "publish");
     if (out.publish) await db.putSetting("last_publish_dispatch", new Date().toISOString());
   }
+  if (await scheduleIdeas(db)) out.ideas = true;
   const queued = await db.select("generation_jobs", "select=id&status=eq.queued&requested_by=eq.owner&limit=1");
   const lastQ = (await db.setting<string>("last_queue_dispatch")) ?? "1970-01-01T00:00:00Z";
-  if (queued.length && Date.now() - Date.parse(lastQ) > 12 * 60_000) {
+  if (queued.length && (out.ideas || Date.now() - Date.parse(lastQ) > 12 * 60_000)) {
     out.queue = await dispatch(env, "queue");
     if (out.queue) await db.putSetting("last_queue_dispatch", new Date().toISOString());
   }
   return out;
+}
+
+type IdeaSchedule = { frequency?: string; weekdays?: number[]; hour?: number };
+
+/** Local calendar date, weekday (0 = Monday) and hour in the studio's timezone. */
+export function localParts(now: Date, timeZone: string): { date: string; weekday: number; hour: number } {
+  let tz = timeZone;
+  try {
+    new Intl.DateTimeFormat("en-GB", { timeZone: tz });
+  } catch {
+    tz = "UTC";
+  }
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-GB", {
+    timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23", weekday: "short",
+  }).formatToParts(now).map((p) => [p.type, p.value]));
+  const weekday = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].indexOf(parts.weekday);
+  return { date: `${parts.year}-${parts.month}-${parts.day}`, weekday, hour: Number(parts.hour) };
+}
+
+/** The slot key due now for an idea schedule, or null. One job per slot, ever. */
+export function dueIdeaSlot(cfg: IdeaSchedule | null, now: Date, timeZone: string): string | null {
+  if (!cfg || !["daily", "weekly", "custom"].includes(cfg.frequency ?? "")) return null;
+  const { date, weekday, hour } = localParts(now, timeZone);
+  if (hour < Math.min(Math.max(Number(cfg.hour ?? 8), 0), 23)) return null;
+  if (cfg.frequency !== "daily") {
+    const days = (cfg.weekdays?.length ? cfg.weekdays : [0]).map(Number);
+    if (!days.includes(weekday)) return null;
+  }
+  return `ideas:auto:${date}`;
+}
+
+async function scheduleIdeas(db: Supabase): Promise<boolean> {
+  if (await db.setting<boolean>("paused_ideas")) return false;
+  const slot = dueIdeaSlot(await db.setting<IdeaSchedule>("idea_generator"), new Date(),
+    (await db.setting<string>("timezone")) ?? "Africa/Nairobi");
+  if (!slot) return false;
+  const made = await db.insertReturning("generation_jobs", {
+    job_type: "generate_ideas", idempotency_key: slot, status: "queued", requested_by: "owner",
+    input: { trigger: "scheduled" },
+  }, { onConflict: "idempotency_key", ignoreDuplicates: true });
+  return made.length > 0;
 }
 
 export default {

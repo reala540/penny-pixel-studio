@@ -55,7 +55,8 @@ jobs:
             --var SUPABASE_URL:${{ secrets.SUPABASE_URL }} \
             --var DASHBOARD_URL:${{ vars.DASHBOARD_URL || 'https://dashboard-beta-ten-13.vercel.app' }} \
             --var GITHUB_REPO:${{ github.repository }} \
-            --var GITHUB_REF:${{ github.ref_name }} | tee deploy.log
+            --var GITHUB_REF:${{ github.ref_name }} \
+            --var CLOUDFLARE_ACCOUNT_ID:${{ secrets.CLOUDFLARE_ACCOUNT_ID }} | tee deploy.log
       - name: Copy secrets into the Worker
         working-directory: worker
         run: |

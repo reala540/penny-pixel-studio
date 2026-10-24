@@ -226,6 +226,7 @@ def cmd_capacity(a):
 def cmd_providers(a):
     """Refresh each provider's model list, then send one tiny request per provider and report which keys work."""
     from .ai import catalog
+    from .ai.credentials import ENV_LABEL, Credential
     from .ai.router import Candidate, Router
     from .ai.usage import MemoryUsageStore
 
@@ -246,7 +247,8 @@ def cmd_providers(a):
             if model is None:
                 errors.append(f"{m['id']}: no longer offered")
                 continue
-            cand = Candidate(name, model, p["base_url"].rstrip("/"), key or None, 0, None, None)
+            cand = Candidate(name, model, p["base_url"].rstrip("/"), key or None, 0, None, None,
+                             credential=Credential(None, name, ENV_LABEL, key or None))
             try:
                 # Thinking models spend tokens reasoning before they answer, so leave room.
                 res = router.complete("test", "Reply with the single word: ready", only=cand, max_tokens=600, temperature=0)
@@ -254,7 +256,8 @@ def cmd_providers(a):
                 hint = catalog.suggested_replacement(str(exc))
                 if hint and hint != model:  # the provider told us the new name: remember it and try it
                     found.setdefault(name, {"listed": False, "missing": {}})["missing"][m["id"]] = hint
-                    cand = Candidate(name, hint, p["base_url"].rstrip("/"), key or None, 0, None, None)
+                    cand = Candidate(name, hint, p["base_url"].rstrip("/"), key or None, 0, None, None,
+                                     credential=Credential(None, name, ENV_LABEL, key or None))
                     try:
                         res = router.complete("test", "Reply with the single word: ready", only=cand, max_tokens=600,
                                               temperature=0)
@@ -311,6 +314,19 @@ def _report_providers(results: list[dict]) -> None:
         with _conn() as conn:
             db.set_setting(conn, "provider_check", {"checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                                                    "results": results})
+
+
+def cmd_ideas(a):
+    """Generate a batch of ranked ideas into the Idea Library (never starts production)."""
+    from .ideas import generator
+
+    with _conn() as conn:
+        router = _router(conn)
+        with db.run_lock(conn, "ideas") as free:
+            if not free:
+                _print({"skipped": "another idea run is in progress"})
+                return
+            _print(generator.run(conn, router, trigger="manual", overrides={"count": a.count} if a.count else None))
 
 
 def cmd_status(a):
@@ -379,6 +395,9 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("capacity").set_defaults(fn=cmd_capacity)
     sub.add_parser("providers").set_defaults(fn=cmd_providers)
     sub.add_parser("status").set_defaults(fn=cmd_status)
+    ip = sub.add_parser("ideas")
+    ip.add_argument("--count", type=int, help="number of ideas (default from settings, normally 10)")
+    ip.set_defaults(fn=cmd_ideas)
     a = ap.parse_args(argv)
     started = time.monotonic()
     try:
