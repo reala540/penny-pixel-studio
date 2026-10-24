@@ -69,6 +69,30 @@ function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+/** Point the bot at this Worker (idempotent) and explain any problem in plain words. */
+export async function connectTelegram(env: Env, hookUrl: string): Promise<{ ok: boolean; problem?: string }> {
+  if (!env.TELEGRAM_BOT_TOKEN) return { ok: false, problem: "TELEGRAM_BOT_TOKEN is not set. Add it as a GitHub secret and run Deploy Worker again." };
+  if (!env.TELEGRAM_WEBHOOK_SECRET) return { ok: false, problem: "TELEGRAM_WEBHOOK_SECRET is not set. Add it as a GitHub secret and run Deploy Worker again." };
+  if (!/^[A-Za-z0-9_-]{1,256}$/.test(env.TELEGRAM_WEBHOOK_SECRET)) {
+    return { ok: false, problem: "TELEGRAM_WEBHOOK_SECRET may only use letters, numbers, _ and -. Change the GitHub secret and run Deploy Worker again." };
+  }
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/setWebhook`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: hookUrl, secret_token: env.TELEGRAM_WEBHOOK_SECRET, allowed_updates: ["message"] }),
+    });
+    const body = (await r.json().catch(() => ({}))) as { ok?: boolean; description?: string };
+    if (body.ok) return { ok: true };
+    if (r.status === 401 || r.status === 404) {
+      return { ok: false, problem: "Telegram rejected TELEGRAM_BOT_TOKEN. Copy the token from @BotFather again, update the GitHub secret and run Deploy Worker again." };
+    }
+    return { ok: false, problem: `Telegram said: ${body.description ?? `HTTP ${r.status}`}` };
+  } catch (e) {
+    return { ok: false, problem: `Couldn't reach Telegram: ${(e as Error).message}` };
+  }
+}
+
 export async function handleTelegram(env: Env, req: Request): Promise<Response> {
   const secret = req.headers.get("X-Telegram-Bot-Api-Secret-Token") ?? "";
   if (!env.TELEGRAM_WEBHOOK_SECRET || !timingSafeEqual(secret, env.TELEGRAM_WEBHOOK_SECRET)) {
@@ -207,7 +231,7 @@ export async function handleFetch(req: Request, env: Env): Promise<Response> {
     if (!owner) return json(env, { error: "not authorised" }, 401);
     const code = randomToken(6).replace(/[^A-Za-z0-9]/g, "").slice(0, 8).toUpperCase();
     await new Supabase(env).putSetting("telegram_link_code", code);
-    return json(env, { code });
+    return json(env, { code, telegram: await connectTelegram(env, `${url.origin}/telegram/webhook`) });
   }
 
   const cb = url.pathname.match(/^\/oauth\/(youtube|facebook|tiktok|x)\/callback$/);

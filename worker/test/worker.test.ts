@@ -130,6 +130,41 @@ describe("telegram", () => {
   });
 });
 
+describe("telegram connection", () => {
+  const owner = () => {
+    routes.push((u) => (u.includes("/auth/v1/user") ? ok({ id: "owner" }) : undefined));
+    routes.push((u) => (u.includes("/rest/v1/app_owner") ? ok([{ user_id: "owner" }]) : undefined));
+  };
+  const linkCode = (e: Env) =>
+    handleFetch(new Request("https://w.test/api/telegram/link-code", { method: "POST", body: "{}", headers: { Authorization: "Bearer t" } }), e);
+
+  it("points the bot at this Worker when a link code is requested", async () => {
+    owner();
+    routes.push((u) => (u.includes("/setWebhook") ? ok({ ok: true, result: true }) : undefined));
+    const res = await linkCode(env());
+    const body = (await res.json()) as any;
+    expect(body.code).toMatch(/^[A-Z0-9]+$/);
+    expect(body.telegram).toEqual({ ok: true });
+    const hook = calls.find((c) => c.url.includes("/setWebhook"))!;
+    expect(JSON.parse(String(hook.init!.body))).toMatchObject({ url: "https://w.test/telegram/webhook", secret_token: "hook-secret" });
+  });
+
+  it("explains a webhook secret Telegram would refuse, without calling Telegram", async () => {
+    owner();
+    const body = (await (await linkCode(env({ TELEGRAM_WEBHOOK_SECRET: "has spaces!" }))).json()) as any;
+    expect(body.telegram.ok).toBe(false);
+    expect(body.telegram.problem).toContain("letters, numbers");
+    expect(calls.some((c) => c.url.includes("api.telegram.org"))).toBe(false);
+  });
+
+  it("explains a wrong bot token", async () => {
+    owner();
+    routes.push((u) => (u.includes("/setWebhook") ? ok({ ok: false, description: "Unauthorized" }, 401) : undefined));
+    const body = (await (await linkCode(env())).json()) as any;
+    expect(body.telegram.problem).toContain("TELEGRAM_BOT_TOKEN");
+  });
+});
+
 describe("cron", () => {
   it("does nothing (spends no GitHub minutes) when nothing is due", async () => {
     const out = await handleCron(env());

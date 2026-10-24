@@ -73,6 +73,8 @@ jobs:
           curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
             --data-urlencode "url=${url}/telegram/webhook" \
             --data-urlencode "secret_token=${TELEGRAM_WEBHOOK_SECRET}" \
-            --data-urlencode 'allowed_updates=["message"]' | grep -q '"ok":true' && echo "Telegram webhook set"
+            --data-urlencode 'allowed_updates=["message"]' > webhook.json || true
+          if grep -q '"ok":true' webhook.json; then echo "Telegram webhook set"
+          else echo "::warning::Telegram didn't accept the webhook: $(grep -o '"description":"[^"]*"' webhook.json || echo 'no reply'). Check TELEGRAM_BOT_TOKEN, and use only letters, numbers, _ or - in TELEGRAM_WEBHOOK_SECRET."; fi
           echo "### Your Worker address" >> $GITHUB_STEP_SUMMARY
           echo "$url" >> $GITHUB_STEP_SUMMARY

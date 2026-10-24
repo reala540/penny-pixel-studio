@@ -257,9 +257,10 @@ function Telegram() {
   const linked = useSetting<string | null>("telegram_chat_id", null).data;
   const toast = useToast();
   const [code, setCode] = useState<string | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
   const get = useMutation({
-    mutationFn: async () => (await callWorker<{ code: string }>("/api/telegram/link-code", {})).code,
-    onSuccess: setCode,
+    mutationFn: () => callWorker<{ code: string; telegram?: { ok: boolean; problem?: string } }>("/api/telegram/link-code", {}),
+    onSuccess: (d) => { setCode(d.code); setProblem(d.telegram && !d.telegram.ok ? d.telegram.problem ?? "The bot isn't connected." : null); },
     onError: (e) => toast((e as Error).message, "bad"),
   });
   return (
@@ -269,6 +270,11 @@ function Telegram() {
       {code && (
         <p className="mt-3 rounded-lg bg-sunken px-4 py-3 text-sm">
           Open your bot in Telegram and send: <code className="font-semibold">/link {code}</code>
+        </p>
+      )}
+      {problem && (
+        <p role="alert" className="mt-3 rounded-lg bg-alert-soft px-4 py-3 text-sm text-alert">
+          The bot can't hear you yet. {problem}
         </p>
       )}
     </Section>
