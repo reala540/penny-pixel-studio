@@ -2,8 +2,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Link } from "react-router-dom";
-import AutoPostToggle, { AutoReviewLog } from "../components/AutoPostToggle";
+import AutoPostToggle, { AutoFixAttempts, AutoReviewLog } from "../components/AutoPostToggle";
+import ClearButton from "../components/ClearButton";
+import ModeSwitch from "../components/ModeSwitch";
+import PostingSchedule from "../components/PostingSchedule";
 import ThemeControl from "../components/ThemeControl";
+import { useCleared, visibleAfterClear } from "../lib/clear";
 import { ErrorNote, Loading, PageHeader, useToast } from "../components/ui";
 import { cleanCategories, cleanRegions, DEFAULT_IDEA_CONFIG, SOURCES } from "../lib/ideas";
 import { useIdeaRuns } from "../lib/ideasApi";
@@ -16,13 +20,14 @@ const SECTIONS = [
   ["appearance", "Appearance"],
   ["ideas", "Idea generation"],
   ["automation", "Automation"],
+  ["posting-schedule", "Posting schedule"],
   ["providers", "AI providers"],
   ["accounts", "Accounts"],
   ["run", "Run now"],
   ["writers", "AI writers"],
   ["voices", "Channel voices"],
   ["budget", "Budget"],
-  ["schedule", "Schedule"],
+  ["schedule", "Timezone"],
   ["telegram", "Telegram"],
 ] as const;
 
@@ -43,6 +48,9 @@ export default function SettingsPage() {
         <Appearance />
         <IdeaGeneration />
         <Automation />
+        <Section id="posting-schedule" title="Posting schedule" intro="Choose the days, times and number of posts per week for each account, or pause one without disconnecting it.">
+          <PostingSchedule />
+        </Section>
         <ProvidersLink />
         <Accounts />
         <RunNow />
@@ -68,8 +76,10 @@ function Section({ id, title, intro, children }: { id: string; title: string; in
 
 function Appearance() {
   return (
-    <Section id="appearance" title="Appearance" intro="Light, dark, or follow your device. Applies instantly on every page and is remembered on this device.">
+    <Section id="appearance" title="Appearance" intro="Light, dark, or follow your device (remembered on this device), and how much the menu shows (same on every device).">
       <ThemeControl />
+      <h3 className="mb-2 mt-5 text-sm font-semibold text-ink">Menu</h3>
+      <ModeSwitch />
     </Section>
   );
 }
@@ -136,6 +146,8 @@ function IdeaGeneration() {
 function Automation() {
   const [cfg, update, loading] = useIdeaConfig();
   const runs = useIdeaRuns(5);
+  const cleared = useCleared();
+  const shownRuns = visibleAfterClear(runs.data ?? [], cleared.map, "idea_runs", (r) => r.started_at);
   if (loading) return <Section id="automation" title="Automation"><Loading /></Section>;
   return (
     <Section id="automation" title="Automation" intro="Who approves publishing, and scheduled idea batches.">
@@ -144,7 +156,13 @@ function Automation() {
         <p className="mt-3 text-xs leading-5 text-muted">OFF (default): every package waits for your approval, exactly as before. ON: packages that pass
           every check and a confident independent AI review are approved automatically and post at their scheduled times to your
           configured accounts. Anything else waits for you and is sent to Telegram. Also in Telegram: /autopost.</p>
-        <h3 className="mt-4 text-sm font-semibold text-ink">Recent automatic reviews</h3>
+        <AutoFixAttempts />
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold text-ink">Recent automatic reviews</h3>
+          <ClearButton title="Clear the review log?" done="Review log cleared" className="btn-quiet px-2.5 py-1 text-xs"
+            body="This hides the automatic reviews listed now. Every decision stays in the audit log, and you can undo this."
+            onClear={() => cleared.clear("review_log")} />
+        </div>
         <AutoReviewLog />
       </div>
       <h3 className="mb-3 text-sm font-semibold text-ink">Idea batches</h3>
@@ -174,10 +192,15 @@ function Automation() {
         <label className="flex items-center gap-2 text-sm sm:col-span-2"><input type="checkbox" checked={cfg.notify} onChange={(e) => update({ notify: e.target.checked })} />
           Send me a Telegram message when a batch of ideas is ready</label>
       </div>
-      <h3 className="mt-6 text-sm font-semibold text-ink">Recent idea runs</h3>
-      {runs.isLoading ? <Loading /> : (runs.data ?? []).length === 0 ? <p className="mt-1 text-sm text-muted">None yet.</p> : (
+      <div className="mt-6 flex max-w-3xl flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold text-ink">Recent idea runs</h3>
+        {shownRuns.length > 0 && <ClearButton title="Clear the idea run history?" done="Idea run history cleared" className="btn-quiet px-2.5 py-1 text-xs"
+          body="This hides the runs listed here and in the Idea Library. The ideas themselves stay. You can undo this."
+          onClear={() => cleared.clear("idea_runs")} />}
+      </div>
+      {runs.isLoading ? <Loading /> : shownRuns.length === 0 ? <p className="mt-1 text-sm text-muted">None yet.</p> : (
         <ul className="mt-2 max-w-3xl divide-y divide-line rounded-xl border border-line bg-surface text-sm">
-          {(runs.data ?? []).map((r) => <li key={r.id} className="flex flex-wrap justify-between gap-2 px-4 py-2">
+          {shownRuns.map((r) => <li key={r.id} className="flex flex-wrap justify-between gap-2 px-4 py-2">
             <span>{new Date(r.started_at).toLocaleString()} · {r.trigger}</span>
             <span className="text-muted">{r.status} · {r.produced_count}/{r.requested_count} ideas</span></li>)}
         </ul>
@@ -285,7 +308,7 @@ function Writers() {
   if (data.isLoading) return <Section id="writers" title="AI writers"><Loading /></Section>;
   const d = data.data;
   return (
-    <Section id="writers" title="AI writers" intro="Free services only. If one is busy or out of free requests, the next one takes over automatically. A service is used only if its key is saved in GitHub secrets.">
+    <Section id="writers" title="AI writers" intro="Free services only. If one is busy or out of free requests, the next one takes over automatically. A service is used only if it has a key (added in AI APIs or saved as a GitHub secret).">
       <ErrorNote error={data.error} />
       <div className="overflow-x-auto rounded-xl border border-line bg-surface">
         <table className="w-full min-w-[620px] text-left text-sm">
@@ -385,7 +408,7 @@ function Schedule() {
   const save = useSaveSetting();
   const toast = useToast();
   return (
-    <Section id="schedule" title="Schedule" intro="Posting times are shown and planned in this timezone. Change the posting days and times per account in config/accounts.yaml.">
+    <Section id="schedule" title="Schedule" intro="Posting times are shown and planned in this timezone. Change the days and times per account in Posting schedule above.">
       <label className="block max-w-sm text-sm"><span className="text-muted">Timezone</span>
         <select aria-label="Timezone" className="field mt-1" value={tz} onChange={(e) => save.mutate({ key: "timezone", value: e.target.value }, { onSuccess: () => toast("Timezone saved") })}>
           {[...new Set([tz, ...ZONES])].map((z) => <option key={z}>{z}</option>)}

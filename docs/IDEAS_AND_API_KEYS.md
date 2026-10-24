@@ -70,6 +70,12 @@ priority and daily limit. The key goes once to the Worker, which encrypts it (AE
 You can test, replace, disable or remove a key; removing deletes the encrypted key. The GitHub-secret key of each
 built-in provider still works and counts as one key (it can be switched off per provider).
 
+**Several keys from different people (v2.5).** Each provider card shows a label based on what its terms say:
+*Add more keys* (Gemini, Cloudflare, Z.ai, Cerebras, SambaNova), *One key only* (Groq: its usage policy reportedly
+bans using several accounts to go over its limits), *Borrowed keys not allowed* (NVIDIA: the trial is for testing,
+not publishing; Mistral: its terms ban sharing keys) and *Check the owner's terms* for the rest. The labels guide;
+they don't block anything. This is general information from the providers' published terms, not legal advice.
+
 **How keys share the work** (per provider): Priority, Round robin, Least utilised, Health, Weighted (percentages).
 
 **Limits per key:** requests/day, tokens/day, parallel requests, and a monthly spend cap that uses the prices you

@@ -80,28 +80,40 @@ export function Loading({ label = "Loading" }: { label?: string }) {
 
 // --------------------------------------------------------------------- toasts
 
+interface ToastAction {
+  label: string;
+  run: () => void | Promise<void>;
+}
+
 interface Toast {
   id: number;
   text: string;
   tone: "good" | "bad";
+  action?: ToastAction;
 }
 
-const ToastCtx = createContext<(text: string, tone?: "good" | "bad") => void>(() => {});
+type Push = (text: string, tone?: "good" | "bad", action?: ToastAction) => void;
+const ToastCtx = createContext<Push>(() => {});
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const push = useCallback((text: string, tone: "good" | "bad" = "good") => {
+  const push = useCallback<Push>((text, tone = "good", action) => {
     const id = Date.now() + Math.random();
-    setToasts((t) => [...t, { id, text, tone }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4500);
+    setToasts((t) => [...t, { id, text, tone, action }]);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), action ? 9000 : 4500);  // longer when it can be undone
   }, []);
+  const dismiss = (id: number) => setToasts((t) => t.filter((x) => x.id !== id));
   return (
     <ToastCtx.Provider value={push}>
       {children}
       <div aria-live="polite" className="pointer-events-none fixed bottom-20 right-4 z-50 flex flex-col gap-2 md:bottom-6">
         {toasts.map((t) => (
-          <div key={t.id} className={`pointer-events-auto rounded-lg px-4 py-2.5 text-sm shadow-lg ${t.tone === "good" ? "bg-ink text-surface" : "bg-alert text-surface"}`}>
-            {t.text}
+          <div key={t.id} className={`pointer-events-auto flex items-center gap-3 rounded-lg px-4 py-2.5 text-sm shadow-lg ${t.tone === "good" ? "bg-ink text-surface" : "bg-alert text-surface"}`}>
+            <span>{t.text}</span>
+            {t.action && (
+              <button className="rounded-md border border-surface/40 px-2 py-0.5 text-xs font-semibold hover:bg-surface/10"
+                onClick={async () => { dismiss(t.id); await t.action!.run(); }}>{t.action.label}</button>
+            )}
           </div>
         ))}
       </div>

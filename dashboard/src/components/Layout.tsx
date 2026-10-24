@@ -1,22 +1,28 @@
-import { Bot, CalendarDays, Clapperboard, Compass, KeyRound, Library, Lightbulb, ListChecks, LogOut, Settings, CircleHelp } from "lucide-react";
+import { Activity, Bot, CalendarDays, Clapperboard, Compass, KeyRound, Library, Lightbulb, ListChecks, LogOut, Settings, CircleHelp, Wrench } from "lucide-react";
 import { Suspense } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { useSetting } from "../lib/api";
 import { supabase } from "../lib/supabase";
+import { SIMPLE_PATHS, useUiMode } from "../lib/uiMode";
 import { AutoPostBadge } from "./AutoPostToggle";
+import ModeSwitch from "./ModeSwitch";
+import RunningNow from "./RunningNow";
 import ThemeControl from "./ThemeControl";
+import Tour from "./Tour";
 import { Loading } from "./ui";
 
-const NAV = [
-  { to: "/", label: "Mission", icon: Bot, end: true },
-  { to: "/ideas", label: "Ideas", icon: Lightbulb },
-  { to: "/week", label: "Rundown", icon: ListChecks },
-  { to: "/review", label: "Review", icon: Clapperboard },
-  { to: "/calendar", label: "Calendar", icon: CalendarDays },
-  { to: "/research", label: "Research", icon: Compass },
-  { to: "/library", label: "Library", icon: Library },
-  { to: "/api", label: "AI APIs", icon: KeyRound },
-  { to: "/settings", label: "Settings", icon: Settings },
+const ALL_NAV = [
+  { to: "/", label: "Mission Control", short: "Mission", icon: Bot, end: true },
+  { to: "/week", label: "This Week", short: "Week", icon: ListChecks },
+  { to: "/activity", label: "Activity", short: "Activity", icon: Activity },
+  { to: "/review", label: "Review", short: "Review", icon: Clapperboard },
+  { to: "/calendar", label: "Calendar", short: "Calendar", icon: CalendarDays },
+  { to: "/ideas", label: "Ideas", short: "Ideas", icon: Lightbulb },
+  { to: "/research", label: "Research", short: "Research", icon: Compass },
+  { to: "/library", label: "Library", short: "Library", icon: Library },
+  { to: "/api", label: "AI APIs", short: "AI APIs", icon: KeyRound },
+  { to: "/setup", label: "Setup", short: "Setup", icon: Wrench },
+  { to: "/settings", label: "Settings", short: "Settings", icon: Settings },
 ];
 
 function Brand() {
@@ -37,6 +43,8 @@ function Brand() {
 
 export default function Layout() {
   const paused = useSetting<boolean>("paused", false).data;
+  const { mode } = useUiMode();
+  const NAV = mode === "simple" ? ALL_NAV.filter((n) => SIMPLE_PATHS.has(n.to)) : ALL_NAV;
   return (
     <div className="min-h-screen md:grid md:grid-cols-[232px_1fr]">
       <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-50 focus:rounded focus:bg-surface focus:px-3 focus:py-2">
@@ -55,7 +63,9 @@ export default function Layout() {
           ))}
         </nav>
         <div className="flex flex-col gap-1 border-t border-line pt-3">
+          <RunningNow />
           <AutoPostBadge />
+          <div className="px-1 pt-1"><ModeSwitch compact /></div>
           <div className="px-1 pb-2 pt-1"><ThemeControl compact /></div>
           <NavLink to="/help" className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-muted hover:bg-sunken hover:text-ink">
             <CircleHelp size={18} aria-hidden /> Help
@@ -75,7 +85,7 @@ export default function Layout() {
             <NavLink to="/help" aria-label="Help" className="rounded-lg p-2 text-muted"><CircleHelp size={20} /></NavLink>
           </div>
         </div>
-        <div className="border-b border-line bg-surface px-4 py-2 md:hidden"><AutoPostBadge /></div>
+        <div className="grid grid-cols-2 gap-2 border-b border-line bg-surface px-4 py-2 md:hidden"><RunningNow /><AutoPostBadge /></div>
         {paused && (
           <div role="status" className="bg-alert px-4 py-2 text-center text-sm font-medium text-surface">
             Publishing is paused. Nothing will be posted until you resume it in Settings.
@@ -89,14 +99,15 @@ export default function Layout() {
       </div>
 
       <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-30 flex overflow-x-auto border-t border-line bg-surface md:hidden">
-        {NAV.map(({ to, label, icon: Icon, end }) => (
+        {NAV.map(({ to, short, icon: Icon, end }) => (
           <NavLink key={to} to={to} end={end}
             className={({ isActive }) => `flex min-w-[72px] flex-1 flex-col items-center gap-0.5 px-2 py-2 text-xs font-medium ${isActive ? "text-pixel" : "text-muted"}`}>
             <Icon size={20} aria-hidden />
-            {label}
+            {short}
           </NavLink>
         ))}
       </nav>
+      <Tour />
     </div>
   );
 }

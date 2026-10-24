@@ -62,10 +62,10 @@ def test_on_approves_passing_packages_and_publishing_guards_accept_them(synced, 
                db.all_(c, "select id from content_projects where parent_project_id is null")])
 
 
-def test_failed_or_unsure_review_goes_to_telegram_not_publishing(synced, monkeypatch, silent_tts):
+def test_unsure_review_with_fixes_switched_off_goes_to_telegram(synced, monkeypatch, silent_tts):
     c = synced
     set_mode(c, True)
-    passing(monkeypatch, policy_flags=[])
+    db.run(c, "insert into settings (key, value) values ('auto_review_fix', '{\"max_attempts\": 0}')")
     monkeypatch.setattr(auto, "ai_review", lambda router, fam, var, conn: (
         PolicyReview(publishable=True, confidence=0.6, summary="Probably fine"), "beta/b1"))
     _, _, _, out = _produce_week(c, monkeypatch)
@@ -74,6 +74,114 @@ def test_failed_or_unsure_review_goes_to_telegram_not_publishing(synced, monkeyp
     assert db.one(c, "select count(*) n from approvals")["n"] == 0
     note = db.one(c, "select title, body from notifications where kind='auto_review_needs_you' limit 1")
     assert note["title"].startswith("👀 Needs your review") and "confidence" in note["body"]
+
+
+def test_unsure_review_queues_a_rewrite_with_the_reviewers_notes(synced, monkeypatch, silent_tts):
+    c = synced
+    set_mode(c, True)
+    monkeypatch.setattr(auto, "ai_review", lambda router, fam, var, conn: (
+        PolicyReview(publishable=True, confidence=0.6, issues=["The hook overstates the result"], summary="Unsure"), "beta/b1"))
+    _, _, _, out = _produce_week(c, monkeypatch)
+    assert {r["verdict"] for r in out["auto_review"]} == {"fixing"}
+    assert statuses(c) == ["pending_approval"]                       # nothing posts while it's being fixed
+    jobs_ = db.all_(c, "select job_type, status, requested_by, input from generation_jobs where input->>'auto_fix'='true'")
+    assert len(jobs_) == 2 and {j["job_type"] for j in jobs_} == {"regenerate_script"}
+    assert all(j["status"] == "queued" and j["requested_by"] == "owner" for j in jobs_)
+    assert "overstates" in jobs_[0]["input"]["instructions"] and "confidence" in jobs_[0]["input"]["instructions"]
+    assert db.one(c, "select count(*) n from notifications where kind='auto_fixing'")["n"] == 2
+    rows = db.all_(c, "select verdict, attempt, fix from auto_reviews")
+    assert {(r["verdict"], r["attempt"]) for r in rows} == {("fixing", 1)} and "rewriting" in rows[0]["fix"]
+    # while the fix is queued, another pass leaves it alone
+    assert {r["verdict"] for r in auto.run(c, router=None)} == {"skipped"}
+
+
+def test_rewrite_fix_runs_and_the_package_is_approved_afterwards(synced, monkeypatch, silent_tts):
+    from studio import maintenance
+
+    c = synced
+    set_mode(c, True)
+    verdicts = iter([0.6, 0.6, 0.95, 0.95])                           # unsure first, confident after the rewrite
+    monkeypatch.setattr(auto, "ai_review", lambda router, fam, var, conn: (
+        PolicyReview(publishable=True, confidence=next(verdicts, 0.95), summary="ok"), "beta/b1"))
+    router, storage, _, out = _produce_week(c, monkeypatch)
+    assert {r["verdict"] for r in out["auto_review"]} == {"fixing"}
+    done = maintenance.process_owner_jobs(c, router, storage)
+    assert [d["status"] for d in done] == ["completed", "completed"], done
+    assert statuses(c) == ["scheduled"]
+    assert db.one(c, "select count(*) n from script_versions where origin='rewrite'")["n"] == 2
+    final = db.all_(c, "select verdict, attempt from auto_reviews where verdict='approved'")
+    assert len(final) == 2 and all(r["attempt"] == 2 for r in final)
+    assert "Fixed automatically" in db.one(c, "select body from notifications where kind='auto_approved' limit 1")["body"]
+
+
+def test_post_text_problems_are_fixed_in_place_then_approved(synced, monkeypatch, silent_tts):
+    c = synced
+    passing(monkeypatch)
+    _produce_week(c, monkeypatch)                                      # produced while OFF
+    money = db.one(c, "select id from content_projects where channel_slug='money' and format='long'")["id"]
+    v = db.one(c, "select id, body from content_variants where project_id=%s and kind='long_video'", (money,))
+    stripped = "\n".join(l for l in v["body"].splitlines() if "not personal" not in l.lower() and "general" not in l.lower())
+    db.run(c, "update content_variants set body=%s where id=%s", (stripped + "\nThis is a game-changer.", v["id"]))
+    set_mode(c, True)
+    results = {r["project"]: r for r in auto.run(c, router=None)}
+    assert results[str(money)]["verdict"] == "approved" and results[str(money)]["fix_attempts"] == 1
+    body = db.one(c, "select body from content_variants where id=%s", (v["id"],))["body"]
+    assert "not personal" in body.lower() and "game-changer" not in body.lower() and "big shift" in body
+    assert db.one(c, "select count(*) n from auto_reviews where project_id=%s and verdict='fixing'", (money,))["n"] == 1
+
+
+def test_policy_flags_and_wrong_destinations_are_never_retried(synced, monkeypatch, silent_tts):
+    c = synced
+    set_mode(c, True)
+    monkeypatch.setattr(auto, "ai_review", lambda router, fam, var, conn: (
+        PolicyReview(publishable=False, confidence=0.9, policy_flags=["Promises returns"], summary="no"), "beta/b1"))
+    _, _, _, out = _produce_week(c, monkeypatch)
+    assert {r["verdict"] for r in out["auto_review"]} == {"needs_review"}
+    assert db.one(c, "select count(*) n from generation_jobs where input->>'auto_fix'='true'")["n"] == 0
+    assert auto.plan_fix([{"code": "destination"}, {"code": "banned"}]) == ([], None)
+    assert auto.plan_fix([{"code": "fresh"}]) == ([], "recheck")
+    assert auto.plan_fix([{"code": "claims"}, {"code": "licences"}]) == ([], "rewrite")
+
+
+def test_attempts_stop_at_the_limit(synced, monkeypatch, silent_tts):
+    c = synced
+    passing(monkeypatch)
+    _produce_week(c, monkeypatch)
+    ai = db.one(c, "select id from content_projects where channel_slug='ai' and format='long'")["id"]
+    db.run(c, "update content_projects set fresh_until=now() + interval '2 hours' where id=%s", (ai,))
+    set_mode(c, True)
+    for attempt in (1, 2, 3):
+        r = auto.review_project(c, None, ai)
+        assert r["verdict"] == "fixing" and r["attempt"] == attempt and r["fix"] == "recheck_project"
+        db.run(c, "update generation_jobs set status='completed' where input->>'auto_fix'='true'")  # the recheck didn't help
+    r = auto.review_project(c, None, ai)
+    assert r["verdict"] == "needs_review" and any("after 3 automatic" in x for x in r["reasons"])
+    assert statuses(c) == ["pending_approval"]
+
+
+def test_a_missed_slot_moves_to_the_next_free_slot(synced, monkeypatch, silent_tts):
+    c = synced
+    passing(monkeypatch)
+    _produce_week(c, monkeypatch)
+    past = datetime.now(timezone.utc) - timedelta(hours=3)
+    db.run(c, "update scheduled_posts set scheduled_at=%s", (past,))
+    set_mode(c, True)
+    auto.run(c, router=None)
+    rows = db.all_(c, """select sp.scheduled_at, sp.social_account_id, v.kind, a.platform, a.weekly_targets
+                           from scheduled_posts sp join content_variants v on v.id=sp.variant_id
+                           join social_accounts a on a.id=sp.social_account_id where sp.status='scheduled'""")
+    assert rows and all(r["scheduled_at"] > datetime.now(timezone.utc) for r in rows)
+    from zoneinfo import ZoneInfo
+
+    for r in rows:   # each lands on one of its own account's posting times
+        prefix = "shorts" if r["platform"] == "youtube" and r["kind"] == "short_video" else "posting"
+        local = r["scheduled_at"].astimezone(ZoneInfo("Africa/Nairobi"))
+        assert local.strftime("%H:%M") in r["weekly_targets"][f"{prefix}_times"]
+        assert local.strftime("%a").lower() in r["weekly_targets"][f"{prefix}_days"]
+    per_account: dict = {}
+    for r in rows:
+        per_account.setdefault(r["social_account_id"], []).append(r["scheduled_at"])
+    assert all(len(set(v)) == len(v) for v in per_account.values())   # never two posts in the same slot
 
 
 def test_review_errors_fall_back_to_manual_approval(synced, monkeypatch, silent_tts):
@@ -99,11 +207,18 @@ def test_needs_attention_and_deterministic_failures_are_never_auto_approved(sync
     ai = db.one(c, "select id from content_projects where channel_slug='ai' and format='long'")["id"]
     db.run(c, "update content_projects set fresh_until=now() + interval '2 hours' where id=%s", (ai,))
     set_mode(c, True)
-    results = {r["project"]: r for r in auto.run(c, router=None)}
-    assert results[str(money)]["verdict"] == "needs_review"
+    results = {r["project"]: r for r in auto.run(c, router=None)}      # default: fix first
+    assert results[str(money)]["verdict"] == "fixing" and results[str(money)]["fix"] == "regenerate_script"
     assert any("quality gates" in x for x in results[str(money)]["reasons"])
-    assert results[str(ai)]["verdict"] == "needs_review"
+    assert results[str(ai)]["verdict"] == "fixing" and results[str(ai)]["fix"] == "recheck_project"
     assert any("fresh" in x for x in results[str(ai)]["reasons"])
+    assert statuses(c) == ["pending_approval"]
+    # with fixes switched off they come straight to you
+    db.run(c, "delete from auto_reviews")
+    db.run(c, "delete from generation_jobs where input->>'auto_fix'='true'")
+    db.run(c, "insert into settings (key, value) values ('auto_review_fix', '{\"max_attempts\": 0}')")
+    results = {r["project"]: r for r in auto.run(c, router=None)}
+    assert {r["verdict"] for r in results.values()} == {"needs_review"}
     assert statuses(c) == ["pending_approval"]
 
 

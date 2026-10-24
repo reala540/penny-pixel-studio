@@ -35,6 +35,38 @@ def job_context(job_id):
         active_job_id.reset(token)
 
 
+def progress(conn, label: str, step: int | None = None, total: int | None = None) -> None:
+    """Show what the current job is doing on the Activity page. Best effort; a failure never stops the work."""
+    job_id = active_job_id.get()
+    if job_id is None:
+        return
+    try:
+        db.run(conn, "update generation_jobs set progress=%s, updated_at=now() where id=%s",
+               (db.j({"label": label[:200], "step": step, "total": total}), job_id))
+    except Exception:
+        pass
+
+
+@contextmanager
+def tracked_run(conn, job_type: str, key: str, input: dict | None = None):
+    """Record a scheduled run (weekly research, production, publishing) as a job, so it shows as running."""
+    row = db.one(conn, """insert into generation_jobs (job_type, idempotency_key, status, requested_by, input, started_at, attempts)
+                          values (%s,%s,'running','system',%s,now(),1)
+                          on conflict (idempotency_key) do update set status='running', started_at=now(),
+                                 attempts=generation_jobs.attempts+1
+                          returning id""", (job_type, key, db.j(input or {})))
+    holder: dict = {}
+    try:
+        with job_context(row["id"]):
+            yield holder
+    except BaseException as exc:
+        db.run(conn, "update generation_jobs set status='failed', error_message=%s, finished_at=now(), progress=null where id=%s",
+               (str(exc)[:1000], row["id"]))
+        raise
+    db.run(conn, "update generation_jobs set status='completed', output=%s, finished_at=now(), progress=null where id=%s",
+           (db.j(holder.get("output") or {}), row["id"]))
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -145,4 +177,5 @@ def reset_stale_running(conn, older_than_minutes: int = 120) -> int:
     return db.run(conn, """
         update generation_jobs set status='retrying', next_attempt_at=now(),
                error_message='Runner stopped unexpectedly; resuming'
-         where status='running' and started_at < now() - make_interval(mins => %s)""", (older_than_minutes,))
+         where status='running' and started_at < now() - make_interval(mins => %s)
+           and job_type not in ('weekly_research', 'weekly_production')""", (older_than_minutes,))

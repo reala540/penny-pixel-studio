@@ -1,7 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import ClearButton from "../components/ClearButton";
 import { Empty, ErrorNote, HostTag, Loading, PageHeader, StatusBadge, useToast } from "../components/ui";
 import { must } from "../lib/api";
+import { isCleared, useCleared } from "../lib/clear";
 import { safeUrl } from "../lib/format";
 import { supabase } from "../lib/supabase";
 import type { Channel, Idea } from "../lib/types";
@@ -31,13 +33,21 @@ export default function Research() {
     mutationFn: async ({ id, status }: { id: string; status: string }) => must(supabase.from("content_ideas").update({ status }).eq("id", id)),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["ideas"] }); toast("Idea updated"); },
   });
-  const list = (ideas.data ?? []).filter((i) => channel === "all" || i.channel_slug === channel);
+  const cleared = useCleared();
+  // "Clear old research" hides past ideas; anything shortlisted or being made always stays.
+  const keep = (i: Idea) => ["shortlisted", "selected"].includes(i.status) || !isCleared(cleared.map, "research", i.created_at);
+  const list = (ideas.data ?? []).filter((i) => (channel === "all" || i.channel_slug === channel) && keep(i));
+  const hidden = (ideas.data ?? []).filter((i) => !keep(i)).length;
   const byId = new Map((sources.data ?? []).map((s) => [s.id, s]));
   const weeks = [...new Set(list.map((i) => i.batch_week ?? ""))];
 
   return (
     <>
-      <PageHeader title="Research" intro="Ideas found on Saturday, scored on evidence, originality and demand. Shortlisted ideas are produced on Sunday." />
+      <PageHeader title="Research" intro="Ideas found on Saturday, scored on evidence, originality and demand. Shortlisted ideas are produced on Sunday."
+        actions={<ClearButton label="Clear old research" title="Clear old research from this page?" done="Old research cleared" disabled={!list.length}
+          body="Ideas found so far leave this page, except ones shortlisted or being made. Their sources stay saved, because published videos cite them. New research appears as usual. You can undo this."
+          onClear={() => cleared.clear("research")} />} />
+      {hidden > 0 && <p className="-mt-3 mb-4 text-xs text-muted">{hidden} older idea{hidden === 1 ? "" : "s"} cleared from view.</p>}
       <div role="radiogroup" aria-label="Channel" className="mb-6 flex gap-1">
         {([["all", "Both channels"], ["ai", "Pixel · AI"], ["money", "Penny · Money"]] as const).map(([k, label]) => (
           <button key={k} role="radio" aria-checked={channel === k} onClick={() => setChannel(k)} className={channel === k ? "btn-primary" : "btn-quiet"}>{label}</button>

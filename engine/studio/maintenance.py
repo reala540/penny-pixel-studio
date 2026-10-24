@@ -13,13 +13,33 @@ OWNER_JOBS = ("regenerate_script", "rerender_preview", "regenerate_thumbnails", 
               "run_mission", "recheck_project", "generate_ideas", "refine_idea", "auto_review")
 
 
+START_LABEL = {
+    "regenerate_script": "Rewriting the script", "rerender_preview": "Rebuilding the preview video",
+    "regenerate_thumbnails": "Making new thumbnails", "run_research": "Researching this week's topics",
+    "run_production": "Making this week's videos", "run_mission": "Running your mission",
+    "recheck_project": "Re-checking the facts", "generate_ideas": "Generating ideas",
+    "refine_idea": "Refining an idea", "auto_review": "Reviewing packages automatically",
+}
+
+
 def _finish(conn, job, status: str, output: dict | None = None, error: str | None = None) -> None:
-    db.run(conn, """update generation_jobs set status=%s, output=%s, error_message=%s, finished_at=now()
+    db.run(conn, """update generation_jobs set status=%s, output=%s, error_message=%s, finished_at=now(), progress=null
                     where id=%s""", (status, db.j(output or {}), error, job["id"]))
 
 
-def process_owner_jobs(conn, router: Router, storage, limit: int = 10) -> list[dict]:
+def process_owner_jobs(conn, router: Router, storage, limit: int = 10, rounds: int = 4) -> list[dict]:
+    """Run queued owner jobs. Fixes queued by Auto Review & Post during a round run in the next one (bounded)."""
     produce.apply_brand_overrides(conn)
+    done: list[dict] = []
+    for _ in range(max(rounds, 1)):
+        batch = _process_round(conn, router, storage, limit)
+        done += batch
+        if not batch:
+            break
+    return done
+
+
+def _process_round(conn, router: Router, storage, limit: int) -> list[dict]:
     done = []
     rows = db.all_(conn, """update generation_jobs set status='running', started_at=now(), attempts=attempts+1
                             where id in (select id from generation_jobs where status='queued' and requested_by='owner'
@@ -28,6 +48,7 @@ def process_owner_jobs(conn, router: Router, storage, limit: int = 10) -> list[d
     for job in rows:
         try:
             with jobs.job_context(job["id"]):
+                jobs.progress(conn, START_LABEL.get(job["job_type"], "Working on it"))
                 out = _run_owner_job(conn, router, storage, job)
             _finish(conn, job, "completed", out)
             done.append({"id": str(job["id"]), "type": job["job_type"], "status": "completed"})

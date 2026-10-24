@@ -5,6 +5,8 @@ import { DEFAULT_IDEA_CONFIG } from "../lib/ideas";
 import { useActiveIdeaJob, useIdeaActions, useIdeaRuns, useIdeas } from "../lib/ideasApi";
 import { workerUrl } from "../lib/supabase";
 import type { IdeaGeneratorConfig } from "../lib/types";
+import { isCleared, useCleared } from "../lib/clear";
+import ClearButton from "./ClearButton";
 import IdeaCard from "./IdeaCard";
 import { ErrorNote, Loading, useToast } from "./ui";
 
@@ -18,7 +20,8 @@ export default function IdeaGeneratorPanel() {
   const job = useActiveIdeaJob();
   const active = Boolean(job.data);
   const runs = useIdeaRuns(1, active);
-  const latest = runs.data?.[0];
+  const cleared = useCleared();
+  const latest = runs.data?.[0] && !isCleared(cleared.map, "idea_panel", runs.data[0].started_at) ? runs.data[0] : undefined;
   const ideas = useIdeas({ runId: latest?.id ?? "", limit: 30 }, active);
   const cfg = { ...DEFAULT_IDEA_CONFIG, ...(useSetting<Partial<IdeaGeneratorConfig>>("idea_generator", {}).data ?? {}) };
   const check = useSetting<{ results?: { status: string }[] } | null>("provider_check", null).data;
@@ -44,6 +47,9 @@ export default function IdeaGeneratorPanel() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {latest && !active && <ClearButton label="Clear batch" title="Clear this batch from the panel?" done="Panel cleared"
+            body="The ideas leave this panel so you can start fresh. They stay in the Idea Library. You can undo this."
+            onClear={() => cleared.clear("idea_panel")} />}
           {latest && <button className="btn-quiet" onClick={() => start("regenerate")} disabled={active || generate.isPending || working === 0}><RefreshCw size={14} aria-hidden />Regenerate</button>}
           <button className="btn-primary" onClick={() => start("manual")} disabled={active || generate.isPending || working === 0}>
             <Sparkles size={14} aria-hidden />Generate {cfg.count} Ideas

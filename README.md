@@ -1,4 +1,4 @@
-# Penny & Pixel Studio — AI Content Studio v2.4
+# Penny & Pixel Studio — AI Content Studio v2.5
 
 A free-first, mostly automated content studio for two faceless YouTube channels (**Penny & Pixel AI** with host
 Pixel, **Penny & Pixel Money** with host Penny), a Facebook Page, TikTok and X.
@@ -6,7 +6,16 @@ Pixel, **Penny & Pixel Money** with host Penny), a Facebook Page, TikTok and X.
 - **New here?** Read **[GUIDE.md](GUIDE.md)**: step-by-step setup, written for non-coders.
 - Specification: [docs/SPEC_v2.1.md](docs/SPEC_v2.1.md) · Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) ·
   Providers and free limits: [docs/PROVIDERS_AND_LIMITS.md](docs/PROVIDERS_AND_LIMITS.md) ·
-  Mission Control: [docs/CONTROL_ROOM.md](docs/CONTROL_ROOM.md) · Ideas, themes and API keys: [docs/IDEAS_AND_API_KEYS.md](docs/IDEAS_AND_API_KEYS.md) · Auto Review & Post: [docs/AUTO_REVIEW_AND_POST.md](docs/AUTO_REVIEW_AND_POST.md) · What was tested: [docs/TEST_REPORT.md](docs/TEST_REPORT.md)
+  Mission Control: [docs/CONTROL_ROOM.md](docs/CONTROL_ROOM.md) · Ideas, themes and API keys: [docs/IDEAS_AND_API_KEYS.md](docs/IDEAS_AND_API_KEYS.md) · Auto Review & Post: [docs/AUTO_REVIEW_AND_POST.md](docs/AUTO_REVIEW_AND_POST.md) · Setup, Activity and schedule: [docs/SETUP_ACTIVITY_SCHEDULE.md](docs/SETUP_ACTIVITY_SCHEDULE.md) · What was tested: [docs/TEST_REPORT.md](docs/TEST_REPORT.md)
+
+## New in v2.5
+
+- **Setup page**: every connection step by step with a live ✅ test; paste keys there instead of GitHub (encrypted, only the last 4 characters shown).
+- **Activity page**: what's running now with progress, today's numbers, and a plain-language timeline with a fix button on every problem.
+- **Posting schedule editor** (Settings): days, times, posts per week and pause per account, with a weekly preview and warnings.
+- **Auto Review & Post fixes and retries**: a failed check is repaired and the package re-checked, up to 3 times (adjustable), then posted at the next free slot.
+- **Clear buttons with Undo** on every history list; **Simple / Advanced** menu; first-time tour; plain labels with "?" explanations.
+- **Key guidance on AI APIs**: which providers suit several keys, one key, or no borrowed keys.
 
 ## What it does each week
 

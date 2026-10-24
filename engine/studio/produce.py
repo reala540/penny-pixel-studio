@@ -67,6 +67,12 @@ def sync_config(conn) -> dict:
                    (name, m["id"], m.get("roles", []), m.get("context"), m.get("daily_requests"),
                     m.get("daily_tokens"), m.get("priority", 100)))
     budget.sync_budgets(conn)
+    # The schedule in config/accounts.yaml, for "Reset to default" in the dashboard's posting schedule editor.
+    db.run(conn, """insert into settings (key, value) values ('posting_schedule_defaults', %s)
+                    on conflict (key) do update set value = excluded.value, updated_at = now()""",
+           (db.j({a["label"]: {**a["weekly_targets"], "posting_days": a["posting_days"], "posting_times": a["posting_times"],
+                               "shorts_days": a.get("shorts_days", []), "shorts_times": a.get("shorts_times", [])}
+                  for a in acc["accounts"]}),))
     defaults = {"timezone": acc.get("timezone", "Africa/Nairobi"), "paused": False, "brand_name": b["brand"]["name"],
                 "auto_select_topics": True, "quality_threshold": pipeline.CRITIC_MIN,
                 "telegram_link_code": None}
@@ -107,6 +113,7 @@ def research_batch(conn, router: Router, week: date, fetcher=None, *, brief: str
 def _research_batch(conn, router: Router, week: date, fetcher=None, *, brief: str = "",
                     channel: str | None = None, n_models: int = 3) -> dict:
     apply_brand_overrides(conn)
+    jobs.progress(conn, "Collecting research from your sources", 1, 2)
     report = research.collect(conn, fetcher)
     plan = capacity.plan_batch(conn)
     ideas = {}
@@ -115,6 +122,7 @@ def _research_batch(conn, router: Router, week: date, fetcher=None, *, brief: st
         n = plan["long_per_channel"].get(slug, 0)
         if n <= 0:
             continue
+        jobs.progress(conn, f"Pitching video ideas for the {slug} channel", 2, 2)
         ideas[slug] = len(research.run_ideas(conn, router, slug, n + 1, week,
                                              brief=brief[:2000], n_models=n_models))
     db.audit(conn, "research_batch", "week", week,
@@ -384,13 +392,15 @@ def _produce_batch(conn, router: Router, storage, week: date, *, channel: str | 
         ideas = db.all_(conn, """select * from content_ideas where batch_week=%s and channel_slug=%s
                                  and status in ('shortlisted','selected') order by is_experiment, score desc limit %s""",
                         (week, slug, n))
-        for idea in ideas:
+        for n_done, idea in enumerate(ideas, 1):
+            jobs.progress(conn, f"Making {slug} video {n_done} of {len(ideas)}: {idea['title']}", n_done, len(ideas))
             db.run(conn, "update content_ideas set status='selected' where id=%s", (idea["id"],))
             try:
                 results.append(produce_project(conn, router, storage, idea, week))
             except NeedsReview as exc:
                 results.append({"idea": idea["title"], "status": "needs_review", "error": str(exc)})
             db.run(conn, "update content_ideas set status='produced' where id=%s", (idea["id"],))
+    jobs.progress(conn, "Planning when each post goes out")
     plan_distribution(conn, week, channel=selected_channel)
     from .review import auto  # Auto Review & Post: no-op unless the owner switched it ON
 

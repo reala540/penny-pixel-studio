@@ -1,4 +1,4 @@
-# Auto Review & Post (v2.4)
+# Auto Review & Post (v2.4, fix and retry in v2.5)
 
 One switch decides who approves publishing. **Default: OFF.**
 
@@ -41,6 +41,27 @@ A package (a long video and its Shorts) is auto-approved only if **all** of thes
 If any check fails, or anything errors, the package stays *waiting for approval* and you get a Telegram message with
 the reasons. The mode is re-read immediately before approving (inside a database transaction that locks the
 package), so switching OFF mid-run stops it, and a package you approved or rejected meanwhile is left alone.
+
+## Fix and retry (v2.5)
+
+When a check fails, the studio repairs only that part and runs **every** check again, up to `max_attempts` times
+(Settings → Automation, 0–5, default 3; setting `auto_review_fix`):
+
+| Failed check | Fix |
+|---|---|
+| Banned phrases in post text | Simple swaps, then a model rewrite of that post only (done at once) |
+| Money disclaimer missing | The channel disclaimer is added to the description (done at once) |
+| Posts not ready although the video is | Posts marked ready again (done at once) |
+| Quality gates, open issues, unsupported claims, AI reviewer unsure or reporting issues | `regenerate_script` job with the reviewer's notes as instructions, then re-render |
+| Stock photo without a licence | `rerender_preview` job |
+| Facts expiring within 48 hours | `recheck_project` job |
+| Wrong or disabled account, nothing to post, any policy flag | **Never retried**: sent to you |
+
+Each attempt is an `auto_reviews` row with verdict `fixing`, the attempt number and what was changed, an audit entry
+(`auto_review_fixing`) and a Telegram message "🔧 Fixing: …". Queued fixes run in the same queue run (up to 4 rounds),
+then the package is reviewed again automatically. When it passes, a post whose time slot passed while it waited moves
+to the account's next free slot instead of going out at once. If it still fails after the last attempt it waits for
+you ("Still failing after N automatic fix attempts"). The mode is re-read before every fix and before approving.
 
 ## Publishing safety (unchanged)
 

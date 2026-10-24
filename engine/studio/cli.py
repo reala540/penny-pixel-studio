@@ -26,11 +26,21 @@ import time
 from datetime import date
 from pathlib import Path
 
-from . import config, db
+from . import config, db, jobs
 
 
 def _conn():
-    return db.connect(config.runtime().require_db())
+    from . import secrets
+
+    conn = db.connect(config.runtime().require_db())
+    secrets.apply_saved(conn)  # values saved on the dashboard Setup page win over GitHub secrets
+    return conn
+
+
+def _run_key(kind: str) -> str:
+    """One job row per workflow run (a re-run of the same run reuses it)."""
+    run_id = os.environ.get("GITHUB_RUN_ID") or str(int(time.time()))
+    return f"{kind}:{run_id}:{os.environ.get('GITHUB_RUN_ATTEMPT', '1')}"
 
 
 def _router(conn=None):
@@ -75,7 +85,11 @@ def cmd_research(a):
 
     with _conn() as conn:
         produce.sync_config(conn)
-        _print(produce.research_batch(conn, _router(conn), week_start(date.fromisoformat(a.week) if a.week else None)))
+        week = week_start(date.fromisoformat(a.week) if a.week else None)
+        with jobs.tracked_run(conn, "weekly_research", _run_key("weekly_research"), {"week": str(week)}) as run:
+            out = produce.research_batch(conn, _router(conn), week)
+            run["output"] = {"ideas": out.get("ideas"), "skipped": out.get("skipped")}
+        _print(out)
 
 
 def cmd_produce(a):
@@ -84,8 +98,11 @@ def cmd_produce(a):
     from .storage import default_storage
 
     with _conn() as conn:
-        _print(produce.produce_batch(conn, _router(conn), default_storage(),
-                                     week_start(date.fromisoformat(a.week) if a.week else None)))
+        week = week_start(date.fromisoformat(a.week) if a.week else None)
+        with jobs.tracked_run(conn, "weekly_production", _run_key("weekly_production"), {"week": str(week)}) as run:
+            out = produce.produce_batch(conn, _router(conn), default_storage(), week)
+            run["output"] = {"summary": out.get("summary"), "skipped": out.get("skipped")}
+        _print(out)
 
 
 def cmd_publish(a):

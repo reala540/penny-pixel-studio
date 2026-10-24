@@ -1,4 +1,23 @@
-# Test report — v2.4 Auto Review & Post (24 Oct 2026)
+# Test report — v2.5 Setup, Activity, schedule, auto-fix and Clear (24 Oct 2026)
+
+| Suite | Result |
+|---|---|
+| Engine (pytest, local PostgreSQL with all 8 migrations, real renders) | **104 passed** (13 new: fixes switched off go straight to you; an unsure review queues a rewrite with the reviewer's notes and nothing posts meanwhile; the rewrite runs in the same queue run and the package is then approved; post text fixed in place (banned phrase + disclaimer) then approved; policy flags and wrong accounts never retried; attempts stop at the limit; a missed slot moves to the account's next free slot without clashes; schedule edits validated, owner-only, audited and kept across config syncs; waiting posts moved to new slots; dashboard-saved secrets win and unreadable ones are reported; presence recorded only in GitHub Actions; no client can read saved secrets; live progress and tracked weekly runs) |
+| Worker (vitest + `tsc`, `wrangler deploy --dry-run` 57.6 KiB) | **46 passed** (9 new: setup endpoints owner-only; values encrypted, never returned, audited by hint only; bad pastes refused with plain advice; saving the bot token creates the webhook secret and links the bot; dashboard value used instead of GitHub; Google pair check; status shows where each value lives without values; remove falls back; webhook accepts either owner secret and nothing else) |
+| Dashboard (vitest + `tsc` + build) | **21 passed** (8 new: schedule preview, shared Facebook slots, warnings, pause, junk values; timeline merge and filters; a fix for every problem; Clear only hides what existed) |
+| Browser (Chromium, real PostgREST + real local Worker) | **66/66 new checks**, 0 console errors: Simple menu and Advanced switch saved per studio; first-time tour and replay; plain panel names with "?"; clear objective/finished jobs/history with Undo; running job with step and progress bar, menu indicator; problem with fix button; Setup live checks, copy redirect, encrypted save with hint only, engine reads the Worker's encryption, bad paste refused, remove; schedule edit, preview, audit, reset, warning; fix attempts; AI API labels; usage reset as a view setting with Undo; clear new ideas and Undo; cancel a post and Undo; no sideways scroll at 375 px. Earlier suites: **19/19** Auto Review & Post, v2.3 **56/58** (the 2 misses are test-state assumptions, both behaviours re-checked by hand and working) |
+| npm audit | 0 vulnerabilities (dashboard, worker) |
+
+Bugs found and fixed by these tests: cleaning a post's text erased the disclaimer added in the same fix; moving a
+missed slot updated the wrong row (column name clash); "content expired" pointed to *Reconnect* instead of
+*Re-check the facts*; two buttons were both called "Clear"; cancelled jobs cluttered the timeline; Deploy Worker would
+have re-registered Telegram with the GitHub webhook secret and locked out a Setup-page secret.
+
+Not verifiable here: real platform sign-ins, real Telegram delivery and real provider key checks run when you use
+Setup with your own accounts (the YouTube key check did reach Google from the local Worker and reported the test key
+as invalid, as expected).
+
+## v2.4 Auto Review & Post (24 Oct 2026)
 
 | Suite | Result |
 |---|---|

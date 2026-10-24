@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DragEvent, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import ClearButton from "../components/ClearButton";
 import { ErrorNote, HostMark, Loading, PageHeader, StatusBadge, useToast } from "../components/ui";
 import { must, queueJob, useAccounts, useTimezone } from "../lib/api";
 import { dayLabel, fmtDateTime, fmtTime, KIND_NAME, localDay, moveToDay, weekDays } from "../lib/format";
@@ -161,6 +162,20 @@ function PostPanel({ post, tz, onMove }: { post: Post; tz: string; onMove: (when
           {post.status === "needs_review" && <p className="text-muted">Check the platform first: if the post is already there, don't retry. Use "Post it yourself" in Home to record it.</p>}
           <button className="btn-quiet w-full" onClick={() => retry.mutate()}>Try again</button>
         </div>
+      )}
+      {movable && (
+        <ClearButton label="Cancel this post" className="btn-quiet w-full" danger title="Cancel this post?" done="Post cancelled, slot freed"
+          body="This post won't go out and its time slot is freed. The video and the other posts in the package aren't affected. You can undo this for a few seconds."
+          onClear={async () => {
+            const before = post.status;
+            await must(supabase.from("scheduled_posts").update({ status: "cancelled" }).eq("id", post.id));
+            await supabase.from("audit_logs").insert({ actor: "owner", action: "post_cancelled", target_type: "scheduled_post", target_id: post.id, details: { was: before } });
+            qc.invalidateQueries({ queryKey: ["posts"] });
+            return async () => {
+              await must(supabase.from("scheduled_posts").update({ status: before }).eq("id", post.id).eq("status", "cancelled"));
+              qc.invalidateQueries({ queryKey: ["posts"] });
+            };
+          }} />
       )}
       <Link to={`/review/${post.content_variants?.project_id}`} className="block text-sm font-medium text-pixel underline-offset-2 hover:underline">Open the package</Link>
     </div>

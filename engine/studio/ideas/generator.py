@@ -24,7 +24,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from .. import config, db, notify
+from .. import config, db, jobs, notify
 from ..ai.router import Router
 from ..research import engine as research
 from ..research.sources import ADAPTERS
@@ -398,6 +398,7 @@ def run(conn, router: Router, *, trigger: str = "manual", job_id=None, overrides
     notes: list[str] = []
     try:
         sources_used = {}
+        jobs.progress(conn, "Step 1 of 5: collecting fresh research", 1, 5)
         if cfg["refresh_sources"]:
             try:
                 sources_used = research.collect(conn, fetcher, research_cfg=research_config_for(cfg))
@@ -414,6 +415,7 @@ def run(conn, router: Router, *, trigger: str = "manual", job_id=None, overrides
         candidates: list[dict] = []
         used_providers: set[str] = set()
         target = cfg["count"]
+        jobs.progress(conn, "Step 2 of 5: proposing ideas from the evidence", 2, 5)
         for round_no in range(3):
             if len(candidates) >= target + 4:
                 break
@@ -440,11 +442,13 @@ def run(conn, router: Router, *, trigger: str = "manual", job_id=None, overrides
                                    "generated_by": f"{res.provider}/{res.model}"})
         if not candidates:
             raise RuntimeError("No ideas could be generated: " + " ".join(notes[-2:]))
+        jobs.progress(conn, "Step 3 of 5: removing duplicates", 3, 5)
         twins = semantic_twins(router, candidates)
         if twins:
             candidates = [c for i, c in enumerate(candidates) if i not in twins]
             notes.append(f"Removed {len(twins)} idea(s) that meant the same as another under a different title.")
 
+        jobs.progress(conn, "Step 4 of 5: a second AI is scoring the ideas", 4, 5)
         assessments: dict[str, Assessment] = {}
         assessed_by = None
         try:
@@ -462,6 +466,7 @@ def run(conn, router: Router, *, trigger: str = "manual", job_id=None, overrides
             except Exception:
                 notes.append(f"AI assessment failed ({str(exc)[:120]}); ideas are scored on trend evidence only.")
 
+        jobs.progress(conn, "Step 5 of 5: ranking and saving the best ideas", 5, 5)
         scored = []
         for c in candidates:
             trend, tparts, confidence = trend_score(c["evidence_rows"])

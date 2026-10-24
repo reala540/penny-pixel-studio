@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { decryptJson, encryptJson } from "../src/crypto";
 import { dueIdeaSlot, handleCron, handleFetch, handleTelegram, localParts } from "../src/index";
+import { clearSecretCache } from "../src/setup";
 import type { Env } from "../src/supabase";
 
 const KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="; // same test key as the Python suite
@@ -29,6 +30,7 @@ const calls: { url: string; init?: RequestInit }[] = [];
 beforeEach(() => {
   routes = [];
   calls.length = 0;
+  clearSecretCache();
   vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     calls.push({ url, init });
@@ -183,7 +185,121 @@ describe("telegram connection", () => {
     owner();
     routes.push((u) => (u.includes("/setWebhook") ? ok({ ok: false, description: "Unauthorized" }, 401) : undefined));
     const body = (await (await linkCode(env())).json()) as any;
-    expect(body.telegram.problem).toContain("TELEGRAM_BOT_TOKEN");
+    expect(body.telegram.problem).toContain("rejected the bot token");
+  });
+});
+
+describe("setup wizard", () => {
+  const owner = () => {
+    routes.push((u) => (u.includes("/auth/v1/user") ? ok({ id: "owner" }) : undefined));
+    routes.push((u) => (u.includes("/rest/v1/app_owner") ? ok([{ user_id: "owner" }]) : undefined));
+  };
+  const post = (path: string, body: unknown, e = env(), auth = "Bearer t") =>
+    handleFetch(new Request(`https://w.test/api/setup/${path}`, { method: "POST", body: JSON.stringify(body), headers: { Authorization: auth } }), e);
+
+  it("refuses anyone but the owner", async () => {
+    routes.push((u) => (u.includes("/auth/v1/user") ? ok({}, 401) : undefined));
+    const res = await post("save", { name: "YOUTUBE_API_KEY", value: "AIzaSyExample1234" });
+    expect(res.status).toBe(401);
+    expect(calls.some((c) => c.url.includes("/rest/v1/app_secrets") && c.init?.method === "POST")).toBe(false);
+  });
+
+  it("encrypts a saved value, never returns it, audits only the hint, and tests it", async () => {
+    owner();
+    routes.push((u) => (u.includes("youtube/v3/videoCategories") ? ok({ items: [] }) : undefined));
+    const res = await post("save", { name: "YOUTUBE_API_KEY", value: "  AIzaSyExample1234  " });
+    const body = (await res.json()) as any;
+    expect(res.status).toBe(200);
+    expect(body).toMatchObject({ saved: true, hint: "••••1234", test: { ok: true } });
+    expect(JSON.stringify(body)).not.toContain("AIzaSyExample1234");
+    const write = calls.find((c) => c.url.includes("/rest/v1/app_secrets") && c.init?.method === "POST")!;
+    const row = JSON.parse(String(write.init!.body));
+    expect(row.name).toBe("YOUTUBE_API_KEY");
+    expect(String(write.init!.body)).not.toContain("AIzaSyExample1234");
+    expect(await decryptJson(KEY, row.ciphertext)).toEqual({ value: "AIzaSyExample1234" });
+    const audit = calls.find((c) => c.url.includes("/rest/v1/audit_logs"))!;
+    expect(String(audit.init!.body)).toContain("••••1234");
+    expect(String(audit.init!.body)).not.toContain("AIzaSyExample1234");
+  });
+
+  it("rejects unknown names and badly pasted values with plain advice", async () => {
+    owner();
+    let res = await post("save", { name: "SUPABASE_DB_URL", value: "postgres://x" });
+    expect(res.status).toBe(400);
+    res = await post("save", { name: "TELEGRAM_BOT_TOKEN", value: "not a token" });
+    expect(((await res.json()) as any).error).toContain("spaces");
+    res = await post("save", { name: "GOOGLE_CLIENT_ID", value: "1234567890-abc" });
+    expect(((await res.json()) as any).error).toContain("apps.googleusercontent.com");
+  });
+
+  it("saving a bot token makes a webhook secret and links the bot", async () => {
+    owner();
+    routes.push((u) => (u.includes("/getMe") ? ok({ ok: true, result: { username: "studio_bot" } }) : undefined));
+    routes.push((u) => (u.includes("/setWebhook") ? ok({ ok: true }) : undefined));
+    const e = env({ TELEGRAM_BOT_TOKEN: undefined, TELEGRAM_WEBHOOK_SECRET: undefined });
+    const body = (await (await post("save", { name: "TELEGRAM_BOT_TOKEN", value: "123456789:AAExampleExampleExample_1" }, e)).json()) as any;
+    expect(body.test).toEqual({ ok: true, detail: "Bot @studio_bot is ready." });
+    expect(body.telegram).toEqual({ ok: true });
+    const saved = calls.filter((c) => c.url.includes("/rest/v1/app_secrets") && c.init?.method === "POST").map((c) => JSON.parse(String(c.init!.body)).name);
+    expect(saved).toEqual(["TELEGRAM_BOT_TOKEN", "TELEGRAM_WEBHOOK_SECRET"]);
+    const hook = JSON.parse(String(calls.find((c) => c.url.includes("/setWebhook"))!.init!.body));
+    expect(hook.secret_token).toMatch(/^[A-Za-z0-9_-]{20,}$/);
+  });
+
+  it("uses a dashboard-saved value instead of the GitHub one", async () => {
+    owner();
+    const ct = await encryptJson(KEY, { value: "999999999:AAFromTheDashboardSetupPage_x" });
+    routes.push((u) => (u.includes("/rest/v1/app_secrets") ? ok([{ name: "TELEGRAM_BOT_TOKEN", ciphertext: ct, hint: "••••ge_x", updated_at: "2026-10-25T00:00:00Z" }]) : undefined));
+    routes.push((u) => (u.includes("/getMe") ? ok({ ok: true, result: { username: "b" } }) : undefined));
+    await post("test", { name: "TELEGRAM_BOT_TOKEN" });
+    expect(calls.find((c) => c.url.includes("/getMe"))!.url).toContain("bot999999999:AAFromTheDashboardSetupPage_x/getMe");
+  });
+
+  it("Google: tells a wrong pair from a right one", async () => {
+    owner();
+    routes.push((u) => (u.includes("oauth2.googleapis.com") ? ok({ error: "invalid_grant" }, 400) : undefined));
+    const e = env({ GOOGLE_CLIENT_ID: "1-a.apps.googleusercontent.com", GOOGLE_CLIENT_SECRET: "GOCSPX-secret" });
+    expect(((await (await post("test", { name: "GOOGLE_CLIENT_ID" }, e)).json()) as any).test.ok).toBe(true);
+    routes.unshift((u) => (u.includes("oauth2.googleapis.com") ? ok({ error: "invalid_client" }, 401) : undefined));
+    expect(((await (await post("test", { name: "GOOGLE_CLIENT_SECRET" }, e)).json()) as any).test.ok).toBe(false);
+    const missing = env({ GOOGLE_CLIENT_ID: "1-a.apps.googleusercontent.com", GOOGLE_CLIENT_SECRET: undefined });
+    expect(((await (await post("test", { name: "GOOGLE_CLIENT_ID" }, missing)).json()) as any).test).toMatchObject({ ok: null });
+  });
+
+  it("status shows what is saved where, but never a value", async () => {
+    owner();
+    const ct = await encryptJson(KEY, { value: "AIzaSyFromDashboard9876" });
+    routes.push((u) => (u.includes("/rest/v1/app_secrets") ? ok([{ name: "YOUTUBE_API_KEY", ciphertext: ct, hint: "••••9876", updated_at: "2026-10-25T00:00:00Z" },
+      { name: "PEXELS_API_KEY", ciphertext: "broken", hint: "••••0000", updated_at: "2026-10-25T00:00:00Z" }]) : undefined));
+    routes.push((u) => (u.includes("key=eq.engine_env_presence") ? ok([{ value: { names: { YOUTUBE_API_KEY: true, PEXELS_API_KEY: false }, checked_at: "2026-10-25T01:00:00Z" } }]) : undefined));
+    routes.push((u) => (u.includes("api.github.com") ? ok({ workflows: [] }) : undefined));
+    const body = (await (await post("status", {})).json()) as any;
+    expect(body.core.database.ok).toBe(true);
+    expect(body.core.encryption.ok).toBe(true);
+    expect(body.core.github.ok).toBe(true);
+    expect(body.values.YOUTUBE_API_KEY).toMatchObject({ dashboard: true, hint: "••••9876", github: true, readable: true });
+    expect(body.values.PEXELS_API_KEY).toMatchObject({ dashboard: true, readable: false, github: false });
+    expect(body.values.TELEGRAM_BOT_TOKEN).toMatchObject({ dashboard: false, github: true });
+    expect(JSON.stringify(body)).not.toContain("AIzaSyFromDashboard9876");
+    expect(body.core_names).toContain("TOKEN_ENCRYPTION_KEY");
+  });
+
+  it("the bot works with either the Setup-page or the GitHub webhook secret, nothing else", async () => {
+    const ct = await encryptJson(KEY, { value: "dashboard-hook-secret" });
+    routes.push((u) => (u.includes("/rest/v1/app_secrets") ? ok([{ name: "TELEGRAM_WEBHOOK_SECRET", ciphertext: ct, hint: null, updated_at: "x" }]) : undefined));
+    const hook = (secret: string) => handleFetch(new Request("https://w.test/telegram/webhook", { method: "POST",
+      headers: { "X-Telegram-Bot-Api-Secret-Token": secret }, body: JSON.stringify({ message: { text: "/help", chat: { id: 1 } } }) }), env());
+    expect((await hook("dashboard-hook-secret")).status).toBe(200);
+    expect((await hook("hook-secret")).status).toBe(200);
+    expect((await hook("guess")).status).toBe(403);
+  });
+
+  it("removing a value falls back to GitHub and is audited", async () => {
+    owner();
+    const res = await post("remove", { name: "FRED_API_KEY" });
+    expect(res.status).toBe(200);
+    const del = calls.find((c) => c.init?.method === "DELETE")!;
+    expect(del.url).toContain("app_secrets?name=eq.FRED_API_KEY");
   });
 });
 

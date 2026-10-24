@@ -1,8 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, FlaskConical, KeyRound, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { FormEvent, useMemo, useState } from "react";
+import ClearButton from "../components/ClearButton";
 import { Confirm, ErrorNote, Loading, PageHeader, useToast } from "../components/ui";
 import { must, useSetting } from "../lib/api";
+import { isCleared, useCleared } from "../lib/clear";
 import { callWorker, supabase, workerUrl } from "../lib/supabase";
 
 type Provider = {
@@ -38,6 +40,20 @@ const HEALTH_TONE: Record<string, string> = {
   healthy: "bg-penny-soft text-penny", unknown: "bg-sunken text-muted", degraded: "bg-gold/15 text-ink",
   resting: "bg-gold/15 text-ink", invalid: "bg-alert-soft text-alert", exhausted: "bg-alert-soft text-alert",
 };
+
+/** What each provider's terms say about using several (borrowed) keys. A guide only: nothing is blocked. */
+export const KEY_GUIDE: Record<string, { tone: "more" | "one" | "no" | "check"; label: string; note: string }> = {
+  gemini: { tone: "more", label: "Add more keys", note: "Best-quality writer. Each key must be a different person's own Google project; keys from one project share its limit." },
+  cloudflare: { tone: "more", label: "Add more keys", note: "Always available. Each account gets its own 10,000 free units a day." },
+  zai: { tone: "more", label: "Add more keys", note: "Each key handles one request at a time, so extra keys cut waiting the most." },
+  cerebras: { tone: "more", label: "Add more keys", note: "Very fast. No rule against several keys was found; each owner should check their own terms." },
+  sambanova: { tone: "more", label: "Add more keys", note: "Very fast. No rule against several keys was found; each owner should check their own terms." },
+  groq: { tone: "one", label: "One key only", note: "Groq's usage policy reportedly bans using several accounts to go over its limits. Keep one key." },
+  nvidia: { tone: "no", label: "Borrowed keys not allowed", note: "NVIDIA's free trial is for testing, not for publishing content. Not suitable for posting, borrowed or not." },
+  mistral: { tone: "no", label: "Borrowed keys not allowed", note: "Mistral's terms ban sharing keys between people and making several accounts to get around limits." },
+};
+const GUIDE_TONE = { more: "bg-penny-soft text-penny", one: "bg-gold/15 text-ink", no: "bg-alert-soft text-alert", check: "bg-sunken text-muted" };
+const guideFor = (name: string) => KEY_GUIDE[name] ?? { tone: "check" as const, label: "Check the owner's terms", note: "No rule was found either way. Before adding a borrowed key, its owner should check this provider's terms." };
 
 function stats(rows: Use[]): Stats {
   const today = new Date().toISOString().slice(0, 10);
@@ -79,8 +95,12 @@ export default function ApiManager() {
   });
   const check = useSetting<{ checked_at?: string; results?: { provider: string; status: string; note?: string; error?: string }[] } | null>("provider_check", null).data;
   const refresh = () => qc.invalidateQueries({ queryKey: ["api-manager"] });
+  const cleared = useCleared();
+  // "Reset usage stats" only changes what this page counts; the studio's daily limits still use every call.
+  const usage = useMemo(() => (data.data?.usage ?? []).filter((u) => !isCleared(cleared.map, "api_stats", u.created_at)), [data.data, cleared.map]);
+  const errorsSince = cleared.map.api_errors;
 
-  const totals = useMemo(() => stats(data.data?.usage ?? []), [data.data]);
+  const totals = useMemo(() => stats(usage), [usage]);
   if (data.isLoading) return <><PageHeader title="AI API Manager" /><Loading /></>;
 
   return (
@@ -101,6 +121,14 @@ export default function ApiManager() {
           <div key={k} className="rounded-xl border border-line bg-surface px-4 py-3"><dt className="text-xs text-muted">{k}</dt><dd className="mt-1 font-display text-lg font-semibold tabular-nums text-ink">{v}</dd></div>
         ))}
       </dl>
+      <div className="mb-3 flex flex-wrap gap-2">
+        <ClearButton label="Reset usage stats" title="Reset the usage numbers on this page?" done="Usage stats reset"
+          body="Calls, failures, rate-limit events, tokens and cost start counting from now on this page. Your daily key limits still count every call made today, and nothing is deleted. You can undo this."
+          onClear={() => cleared.clear("api_stats")} />
+        <ClearButton label="Clear errors" title="Clear the error messages?" done="Errors cleared"
+          body="Old error messages are hidden from the keys and providers. New errors still show. Key health isn't changed: press Test on a key to re-check it."
+          onClear={() => cleared.clear("api_errors")} />
+      </div>
       <p className="mb-6 text-xs text-muted">
         <strong className="text-ink">Observed</strong> = counted by this studio from its own calls. <strong className="text-ink">Estimated</strong> = tokens × the prices you enter for a key.
         Providers don't report usage or bills to the studio, so check their own consoles for official numbers.
@@ -112,7 +140,7 @@ export default function ApiManager() {
         {[...(data.data?.providers ?? [])].sort((a, b) => Number(b.enabled) - Number(a.enabled) || a.name.localeCompare(b.name)).map((p) => (
           <ProviderCard key={p.name} p={p} creds={(data.data?.creds ?? []).filter((c) => c.provider === p.name)}
             models={(data.data?.models ?? []).filter((m) => m.provider === p.name)}
-            usage={(data.data?.usage ?? []).filter((u) => u.provider === p.name)}
+            usage={usage.filter((u) => u.provider === p.name)} errorsSince={errorsSince}
             envCheck={check?.results?.find((r) => r.provider === p.name)} onChange={refresh} toast={toast} />
         ))}
       </div>
@@ -163,10 +191,12 @@ function AddKey({ providers, onDone }: { providers: Provider[]; onDone: () => vo
   );
 }
 
-function ProviderCard({ p, creds, models, usage, envCheck, onChange, toast }: {
+function ProviderCard({ p, creds, models, usage, envCheck, onChange, toast, errorsSince }: {
   p: Provider; creds: Cred[]; models: Model[]; usage: Use[]; envCheck?: { status: string; note?: string; error?: string };
-  onChange: () => void; toast: ReturnType<typeof useToast>;
+  onChange: () => void; toast: ReturnType<typeof useToast>; errorsSince?: string;
 }) {
+  const guide = guideFor(p.name);
+  const freshFailure = !errorsSince || usage.some((u) => !u.success && Date.parse(u.created_at) > Date.parse(errorsSince));
   const [showModels, setShowModels] = useState(false);
   const [expanded, setExpanded] = useState(p.enabled || creds.length > 0);  // switched-off providers start folded
   const save = useMutation({
@@ -182,6 +212,7 @@ function ProviderCard({ p, creds, models, usage, envCheck, onChange, toast }: {
         <KeyRound size={16} className="text-muted" aria-hidden />
         <h2 id={`prov-${p.name}`} className="font-display text-base font-semibold text-ink">{p.name}</h2>
         <span className="text-xs text-muted">{p.key_env ? "built-in" : "added here"}</span>
+        <span className={`rounded-md px-2 py-0.5 text-xs font-medium ${GUIDE_TONE[guide.tone]}`} title={guide.note}>{guide.label}</span>
         {resting && <span className="rounded-md bg-gold/15 px-2 py-0.5 text-xs text-ink">resting until {when(p.circuit_open_until)}</span>}
         <label className="ml-auto flex items-center gap-2 text-sm"><input type="checkbox" checked={p.enabled} onChange={(e) => { save.mutate({ enabled: e.target.checked }); if (e.target.checked) setExpanded(true); }} />Use this provider</label>
         <button className="inline-flex items-center gap-1 text-sm text-muted hover:text-ink" onClick={() => setExpanded(!expanded)} aria-expanded={expanded} aria-controls={`prov-body-${p.name}`}>
@@ -199,7 +230,8 @@ function ProviderCard({ p, creds, models, usage, envCheck, onChange, toast }: {
         <NumberField label="Retries on temporary errors" value={p.max_retries} min={0} max={5} onSave={(v) => v != null && save.mutate({ max_retries: v })} />
         {p.key_env && <label className="flex items-center gap-2 self-end pb-2"><input type="checkbox" checked={p.use_env_key} onChange={(e) => save.mutate({ use_env_key: e.target.checked })} />Use the GitHub secret {p.key_env}</label>}
       </div>
-      {p.last_error && <p className="px-4 pb-2 text-xs text-muted">Last provider error: {p.last_error}</p>}
+      <p className={`mx-4 mb-3 rounded-lg px-3 py-2 text-xs ${GUIDE_TONE[guide.tone]}`}><strong>{guide.label}.</strong> {guide.note}</p>
+      {p.last_error && freshFailure && <p className="px-4 pb-2 text-xs text-muted">Last provider error: {p.last_error}</p>}
 
       <div className="overflow-x-auto">
         <table className="w-full min-w-[760px] text-left text-sm">
@@ -218,7 +250,8 @@ function ProviderCard({ p, creds, models, usage, envCheck, onChange, toast }: {
                 <td className="px-4 py-3 text-right text-xs text-muted">Change it in GitHub secrets</td>
               </tr>
             )}
-            {creds.map((c) => <CredRow key={c.id} c={c} strategy={p.key_strategy} usage={usage.filter((u) => u.credential_id === c.id)} onChange={onChange} toast={toast} />)}
+            {creds.map((c) => <CredRow key={c.id} c={errorsSince && c.last_error_at && Date.parse(c.last_error_at) <= Date.parse(errorsSince) ? { ...c, last_error: null } : c}
+              strategy={p.key_strategy} usage={usage.filter((u) => u.credential_id === c.id)} onChange={onChange} toast={toast} />)}
             {!creds.length && !p.key_env && <tr><td colSpan={6} className="px-4 py-3 text-sm text-muted">No keys yet: add one above.</td></tr>}
           </tbody>
         </table>

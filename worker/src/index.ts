@@ -3,11 +3,13 @@
 //   /api/oauth/start   owner-only: returns the platform sign-in URL
 //   /oauth/:p/callback platform redirects here; tokens are encrypted and stored
 //   /telegram/webhook  Telegram bot commands (verified secret header, linked owner chat only)
+//   /api/setup/*       owner-only: Setup page status, save/test/remove values (encrypted, never returned)
 //   cron (15 min)      dispatches GitHub only when a post is due or a job is queued
 
 import { randomToken, timingSafeEqual } from "./crypto";
 import { addCredential, addProvider, deleteCredential, InputError, replaceCredential, testCredential } from "./credentials";
 import { handleCallback, startUrl } from "./oauth";
+import { ensureWebhookSecret, removeValue, saveValue, SetupError, setupStatus, testValue, withSavedSecrets, isManaged } from "./setup";
 import { Env, Supabase } from "./supabase";
 
 const WORKFLOWS: Record<string, string> = {
@@ -119,11 +121,11 @@ const hookSecret = (env: Env) => (env.TELEGRAM_WEBHOOK_SECRET ?? "").trim();
 
 /** Point the bot at this Worker (idempotent) and explain any problem in plain words. */
 export async function connectTelegram(env: Env, hookUrl: string): Promise<{ ok: boolean; problem?: string }> {
-  if (!env.TELEGRAM_BOT_TOKEN) return { ok: false, problem: "TELEGRAM_BOT_TOKEN is not set. Add it as a GitHub secret and run Deploy Worker again." };
+  if (!env.TELEGRAM_BOT_TOKEN) return { ok: false, problem: "The Telegram bot token isn't set. Add it on the Setup page (step Telegram)." };
   const secret = hookSecret(env);
-  if (!secret) return { ok: false, problem: "TELEGRAM_WEBHOOK_SECRET is not set. Add it as a GitHub secret and run Deploy Worker again." };
+  if (!secret) return { ok: false, problem: "The Telegram webhook secret isn't set. Save the bot token again on the Setup page and one is made for you." };
   if (!/^[A-Za-z0-9_-]{1,256}$/.test(secret)) {
-    return { ok: false, problem: "TELEGRAM_WEBHOOK_SECRET may only use letters, numbers, _ and -. Change the GitHub secret and run Deploy Worker again." };
+    return { ok: false, problem: "TELEGRAM_WEBHOOK_SECRET may only use letters, numbers, _ and -. Remove it on the Setup page (or fix the GitHub secret) and save the bot token again." };
   }
   try {
     const r = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/setWebhook`, {
@@ -134,7 +136,7 @@ export async function connectTelegram(env: Env, hookUrl: string): Promise<{ ok: 
     const body = (await r.json().catch(() => ({}))) as { ok?: boolean; description?: string };
     if (body.ok) return { ok: true };
     if (r.status === 401 || r.status === 404) {
-      return { ok: false, problem: "Telegram rejected TELEGRAM_BOT_TOKEN. Copy the token from @BotFather again, update the GitHub secret and run Deploy Worker again." };
+      return { ok: false, problem: "Telegram rejected the bot token. Copy it from @BotFather again and save it on the Setup page." };
     }
     return { ok: false, problem: `Telegram said: ${body.description ?? `HTTP ${r.status}`}` };
   } catch (e) {
@@ -142,9 +144,12 @@ export async function connectTelegram(env: Env, hookUrl: string): Promise<{ ok: 
   }
 }
 
-export async function handleTelegram(env: Env, req: Request): Promise<Response> {
+/** Both the Setup-page secret and the GitHub one are the owner's: Deploy Worker re-registers the bot with the
+ *  GitHub value, so either is accepted. */
+export async function handleTelegram(env: Env, req: Request, githubSecret?: string): Promise<Response> {
   const secret = req.headers.get("X-Telegram-Bot-Api-Secret-Token") ?? "";
-  if (!hookSecret(env) || !timingSafeEqual(secret, hookSecret(env))) {
+  const accepted = [hookSecret(env), (githubSecret ?? "").trim()].filter(Boolean);
+  if (!accepted.some((s) => timingSafeEqual(secret, s))) {
     return new Response("forbidden", { status: 403 });
   }
   const update = (await req.json().catch(() => ({}))) as any;
@@ -274,10 +279,44 @@ async function ownerOrNull(env: Env, req: Request): Promise<string | null> {
   return new Supabase(env).ownerFromToken(auth.startsWith("Bearer ") ? auth.slice(7) : null);
 }
 
-export async function handleFetch(req: Request, env: Env): Promise<Response> {
+export async function handleFetch(req: Request, rawEnv: Env): Promise<Response> {
   const url = new URL(req.url);
-  if (req.method === "OPTIONS") return new Response(null, { headers: cors(env) });
-  if (url.pathname === "/health") return json(env, { ok: true });
+  if (req.method === "OPTIONS") return new Response(null, { headers: cors(rawEnv) });
+  if (url.pathname === "/health") return json(rawEnv, { ok: true });
+  // values saved on the dashboard Setup page win over the GitHub secrets of the same name
+  const env = await withSavedSecrets(rawEnv);
+
+  if (url.pathname.startsWith("/api/setup/") && req.method === "POST") {
+    const owner = await ownerOrNull(env, req);
+    if (!owner) return json(env, { error: "not authorised" }, 401);
+    const body = ((await req.json().catch(() => null)) ?? {}) as { name?: unknown; value?: unknown };
+    try {
+      if (url.pathname === "/api/setup/status") return json(env, await setupStatus(rawEnv, env));
+      if (url.pathname === "/api/setup/test") {
+        if (!isManaged(body.name)) return json(env, { error: "Unknown setting." }, 400);
+        return json(env, { test: await testValue(env, body.name, url.origin) });
+      }
+      if (url.pathname === "/api/setup/remove") {
+        await removeValue(env, body.name);
+        return json(env, { removed: true });
+      }
+      if (url.pathname === "/api/setup/save") {
+        const saved = await saveValue(env, body.name, body.value);
+        let fresh = { ...(await withSavedSecrets(rawEnv)), [body.name as string]: saved.value } as Env;
+        let telegramLink: { ok: boolean; problem?: string } | undefined;
+        if (body.name === "TELEGRAM_BOT_TOKEN" || body.name === "TELEGRAM_WEBHOOK_SECRET") {
+          fresh = await ensureWebhookSecret(fresh);
+          telegramLink = await connectTelegram(fresh, `${url.origin}/telegram/webhook`);
+        }
+        return json(env, { saved: true, hint: saved.hint, test: await testValue(fresh, body.name as never, url.origin), telegram: telegramLink });
+      }
+      return json(env, { error: "not found" }, 404);
+    } catch (e) {
+      if (e instanceof SetupError) return json(env, { error: e.message }, 400);
+      console.error("setup", url.pathname, (e as Error).message);
+      return json(env, { error: "Something went wrong on the server; nothing was saved." }, 500);
+    }
+  }
 
   if (url.pathname === "/api/dispatch" && req.method === "POST") {
     const owner = await ownerOrNull(env, req);
@@ -340,7 +379,7 @@ export async function handleFetch(req: Request, env: Env): Promise<Response> {
   const cb = url.pathname.match(/^\/oauth\/(youtube|facebook|tiktok|x)\/callback$/);
   if (cb && req.method === "GET") return handleCallback(env, req, cb[1] as any);
 
-  if (url.pathname === "/telegram/webhook" && req.method === "POST") return handleTelegram(env, req);
+  if (url.pathname === "/telegram/webhook" && req.method === "POST") return handleTelegram(env, req, rawEnv.TELEGRAM_WEBHOOK_SECRET);
 
   return json(env, { error: "not found" }, 404);
 }

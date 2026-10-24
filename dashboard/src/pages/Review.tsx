@@ -184,7 +184,7 @@ function Detail({ id }: { id: string }) {
             <div className="flex flex-col gap-2">
               <button className="btn-primary" onClick={() => setConfirm("approve")} disabled={approve.isPending}>Approve package</button>
               <button className="btn-quiet" onClick={() => setRegen(true)}>Rewrite with a note</button>
-              <button className="btn-danger" onClick={() => setConfirm("reject")}>Reject</button>
+              <button className="btn-danger" onClick={() => setConfirm("reject")}>Discard package</button>
             </div>
           )}
         </aside>
@@ -193,9 +193,9 @@ function Detail({ id }: { id: string }) {
       <Confirm open={confirm === "approve"} title="Approve this package?"
         body={<>The video, its Shorts and {variants.length} post{variants.length === 1 ? "" : "s"} will be published at their scheduled times.</>}
         confirmLabel="Approve package" onCancel={() => setConfirm(null)} onConfirm={() => { setConfirm(null); approve.mutate(); }} />
-      <Confirm open={confirm === "reject"} title="Reject this package?" danger
-        body="The video, its Shorts and all their scheduled posts will be cancelled. The script stays in the Library."
-        confirmLabel="Reject" onCancel={() => setConfirm(null)} onConfirm={() => { setConfirm(null); reject.mutate(); }} />
+      <Confirm open={confirm === "reject"} title="Discard this package?" danger
+        body="The video, its Shorts and all their scheduled posts are rejected and cancelled, and their time slots are freed. The script stays in the Library (status Rejected), so you can see what was discarded."
+        confirmLabel="Discard package" onCancel={() => setConfirm(null)} onConfirm={() => { setConfirm(null); reject.mutate(); }} />
       {regen && <RegenerateDialog project={project} onClose={() => setRegen(false)} />}
 
       <div role="tablist" aria-label="Package parts" className="mt-8 flex gap-1 overflow-x-auto border-b border-line">

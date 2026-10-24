@@ -2,9 +2,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Pause, Play } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import ClearButton from "../components/ClearButton";
 import Rundown from "../components/Rundown";
 import { Confirm, ErrorNote, HostTag, Loading, PageHeader, StatusBadge, useToast } from "../components/ui";
 import { must, useAccounts, useSaveSetting, useSetting, useTimezone } from "../lib/api";
+import { useCleared, visibleAfterClear } from "../lib/clear";
+import { fixFor } from "../lib/labels";
 import { localDay, weekDays } from "../lib/format";
 import { signedUrl, supabase } from "../lib/supabase";
 import type { Post, Project } from "../lib/types";
@@ -190,7 +193,7 @@ function Health() {
     queryFn: async () => {
       const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
       const [failed, providers, budget, reservations] = await Promise.all([
-        must(supabase.from("generation_jobs").select("id, job_type, error_message, status").in("status", ["failed", "blocked"]).gte("created_at", since).limit(5)),
+        must(supabase.from("generation_jobs").select("id, job_type, error_message, status, updated_at").in("status", ["failed", "blocked"]).gte("created_at", since).order("updated_at", { ascending: false }).limit(20)),
         must(supabase.from("ai_providers").select("name, enabled, last_error, last_success_at, circuit_open_until")),
         must(supabase.from("budgets").select("monthly_cap_usd").eq("service", "x_api")),
         must(supabase.from("budget_reservations").select("amount_usd, status").eq("service", "x_api").eq("month", new Date().toISOString().slice(0, 7) + "-01")),
@@ -198,9 +201,11 @@ function Health() {
       return { failed: failed as any[], providers: providers as any[], cap: Number((budget as any[])[0]?.monthly_cap_usd ?? 1), spent: (reservations as any[]).filter((r) => r.status === "committed").reduce((a, r) => a + Number(r.amount_usd), 0) };
     },
   });
+  const cleared = useCleared();
   if (health.isLoading) return <Loading />;
   const d = health.data;
   if (!d) return <ErrorNote error={health.error} />;
+  const problems = visibleAfterClear(d.failed, cleared.map, "rundown_problems", (f) => f.updated_at).slice(0, 5);
   const enabled = d.providers.filter((p) => p.enabled);
   const resting = enabled.filter((p) => p.circuit_open_until && Date.parse(p.circuit_open_until) > Date.now());
   const working = enabled.filter((p) => p.last_success_at);
@@ -218,8 +223,17 @@ function Health() {
           </span>
         </Row>
         <Row label="Problems this week">
-          {d.failed.length === 0 ? "None" : (
-            <ul className="space-y-1">{d.failed.map((f) => <li key={f.id}><span className="font-medium">{f.job_type.replace(/_/g, " ")}</span>: {String(f.error_message ?? "").slice(0, 90)}</li>)}</ul>
+          {problems.length === 0 ? "None" : (
+            <>
+              <ul className="space-y-1.5">{problems.map((f) => {
+                const fix = fixFor(f.error_message);
+                return <li key={f.id}><span className="font-medium">{f.job_type.replace(/_/g, " ")}</span>: {String(f.error_message ?? "").slice(0, 90)}
+                  {fix && <Link to={fix.to} className="ml-1 text-xs font-medium text-pixel hover:underline">{fix.label}</Link>}</li>;
+              })}</ul>
+              <div className="mt-2"><ClearButton title="Clear this week's problems?" done="Problems cleared" className="btn-quiet px-2.5 py-1 text-xs"
+                body="These problems are hidden from this list. New ones still show, and the Activity page keeps the full history. You can undo this."
+                onClear={() => cleared.clear("rundown_problems")} /></div>
+            </>
           )}
         </Row>
       </dl>

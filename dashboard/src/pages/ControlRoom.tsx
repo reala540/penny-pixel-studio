@@ -6,9 +6,12 @@ import {
 } from "lucide-react";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
+import ClearButton from "../components/ClearButton";
 import IdeaGeneratorPanel from "../components/IdeaGeneratorPanel";
+import Term from "../components/Term";
 import { Empty, ErrorNote, StatusBadge, useToast } from "../components/ui";
 import { must, queueJob, runWorkflow } from "../lib/api";
+import { isCleared, useCleared } from "../lib/clear";
 import { compact, embedTitle, jobLabel, relativeTime, workflowLabel } from "../lib/controlRoom";
 import { supabase, workerUrl } from "../lib/supabase";
 
@@ -142,7 +145,10 @@ export default function ControlRoom({ demo = false }: { demo?: boolean }) {
   });
 
   const activity = demo ? [...activityOverride, ...DEMO_ACTIVITY] : activityQuery.data ?? [];
-  const jobs = demo ? DEMO_JOBS : jobsQuery.data ?? [];
+  const cleared = useCleared();
+  const allJobs = demo ? DEMO_JOBS : jobsQuery.data ?? [];
+  // "Clear finished" hides finished and failed runs from this list; anything queued or running always shows.
+  const jobs = allJobs.filter((j) => ["queued", "running"].includes(j.status) || !isCleared(cleared.map, "missions", j.updated_at));
   const providers = demo ? DEMO_PROVIDERS : providersQuery.data?.providers ?? [];
   const modelRows = demo ? DEMO_MODELS : providersQuery.data?.models ?? [];
   const accounts = demo ? [] : providersQuery.data?.accounts ?? [];
@@ -247,7 +253,13 @@ export default function ControlRoom({ demo = false }: { demo?: boolean }) {
           <label className="cr-field"><span>Channel</span><select className="cr-input" value={channel} onChange={(e) => setChannel(e.target.value)}><option value="all">Both channels</option><option value="ai">Pixel · AI</option><option value="money">Penny · Money</option></select></label>
           <label className="cr-field"><span>Council depth</span><select className="cr-input" value={models} onChange={(e) => setModels(Number(e.target.value))}><option value={2}>Focused · 2 models</option><option value={3}>Balanced · 3 models</option><option value={5}>Wide · 5 models</option></select></label>
           <label className="cr-field"><span>Outcome</span><select className="cr-input" value={missionType} onChange={(e) => setMissionType(e.target.value as "research" | "production")}><option value="research">Research & ideas</option><option value="production">Research + review package</option></select></label>
-          <button className="cr-primary ml-auto" disabled={mission.isPending || objective.trim().length < 12}><Send size={15} />{mission.isPending ? "Queueing…" : "Launch mission"}</button>
+          {objective && <button type="button" className="cr-button ml-auto" onClick={() => {
+            const [before, idea] = [objective, ideaId];
+            setObjective("");
+            setIdeaId(null);
+            toast("Objective cleared", "good", { label: "Undo", run: () => { setObjective(before); setIdeaId(idea); } });
+          }}><X size={14} />Clear objective</button>}
+          <button className={`cr-primary ${objective ? "" : "ml-auto"}`} disabled={mission.isPending || objective.trim().length < 12}><Send size={15} />{mission.isPending ? "Queueing…" : "Launch mission"}</button>
         </div>
         {ideaId && <p className="mt-2 text-xs text-[color:var(--cr-muted)]">Prepared from an idea in your library. Edit anything before you launch; launching still stops at review for your approval.</p>}
       </form>
@@ -278,7 +290,7 @@ export default function ControlRoom({ demo = false }: { demo?: boolean }) {
 
         <section className="min-w-0 space-y-4" aria-label="Agent activity">
           <div className="cr-panel overflow-hidden">
-            <PanelTitle id="handoffs-title" icon={Activity} title="Live handoffs" meta={lastUpdate ? `Last event ${relativeTime(lastUpdate)}` : "Awaiting first run"} />
+            <PanelTitle id="handoffs-title" icon={Activity} title="Who's working" meta={lastUpdate ? `Last event ${relativeTime(lastUpdate)}` : "Awaiting first run"} />
             <div className="cr-handoffs">
               {STAGES.map((stage, index) => {
                 const latest = activity.find((a) => stage.roles.includes(a.role as never));
@@ -297,7 +309,7 @@ export default function ControlRoom({ demo = false }: { demo?: boolean }) {
 
           <div className="cr-panel">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[color:var(--cr-line)] px-4 py-3">
-              <PanelTitle id="stream-title" icon={Wifi} title="Reasoning trail" meta={`${filtered.length} events`} />
+              <PanelTitle id="stream-title" icon={Wifi} title="What the AI did" meta={`${filtered.length} events`} />
               <div className="flex gap-1" role="group" aria-label="Filter activity">
                 {(["all", "research", "writing", "review"] as Filter[]).map((f) => <button key={f} onClick={() => setFilter(f)} aria-pressed={filter === f} className={`cr-filter ${filter === f ? "selected" : ""}`}>{f === "all" ? "All" : f === "writing" ? "Create" : f === "review" ? "Challenge" : "Research"}</button>)}
               </div>
@@ -312,7 +324,12 @@ export default function ControlRoom({ demo = false }: { demo?: boolean }) {
 
         <aside className="min-w-0 space-y-4">
           <section className="cr-panel" aria-labelledby="jobs-title">
-            <PanelTitle id="jobs-title" icon={Clock3} title="Run queue" meta={`${jobs.length} recent`} />
+            <PanelTitle id="jobs-title" icon={Clock3} title="Jobs in progress" meta={`${jobs.length} recent`} />
+            {!demo && jobs.some((j) => !["queued", "running"].includes(j.status)) && (
+              <div className="px-4 pb-2"><ClearButton label="Clear finished" className="cr-button" title="Clear finished jobs from this list?" done="Finished jobs cleared"
+                body="Finished, failed and cancelled jobs leave this list. Anything queued or running stays, and the Activity page keeps the full history. You can undo this."
+                onClear={() => cleared.clear("missions")} /></div>
+            )}
             {jobs.length === 0 ? <p className="p-4 text-sm text-[color:var(--cr-muted)]">No jobs yet. Your first mission will appear here.</p> : <ul className="divide-y divide-[color:var(--cr-line)]">
               {jobs.slice(0, 6).map((j) => <li key={j.id} className="px-4 py-3">
                 <div className="flex items-center gap-2"><span className="text-xs font-medium text-[color:var(--cr-ink)]">{jobLabel(j.job_type)}</span><span className="ml-auto"><StatusBadge status={j.status} /></span></div>
@@ -324,7 +341,7 @@ export default function ControlRoom({ demo = false }: { demo?: boolean }) {
           </section>
 
           <section className="cr-panel" aria-labelledby="actions-title">
-            <PanelTitle id="actions-title" icon={Square} title="Operator actions" />
+            <PanelTitle id="actions-title" icon={Square} title="Quick actions" />
             <div className="grid gap-2 p-3">
               <button className="cr-action" onClick={() => quickRun.mutate("research")} disabled={quickRun.isPending}><Search size={15} /><span><strong>Research this week</strong><small>Collect sources and pitch ideas</small></span><ChevronRight size={14} /></button>
               <button className="cr-action" onClick={() => quickRun.mutate("produce")} disabled={quickRun.isPending}><Sparkles size={15} /><span><strong>Build review packages</strong><small>Scripts, checks, previews, schedule</small></span><ChevronRight size={14} /></button>
@@ -333,7 +350,7 @@ export default function ControlRoom({ demo = false }: { demo?: boolean }) {
           </section>
 
           <section className="cr-panel" aria-labelledby="readiness-title">
-            <PanelTitle id="readiness-title" icon={Settings2} title="Readiness" />
+            <PanelTitle id="readiness-title" icon={Settings2} title="Ready to run" />
             <dl className="space-y-3 px-4 py-4 text-xs">
               <ReadinessRow ok={connected > 0 || demo} label="Social accounts" value={demo ? "Sample only" : `${connected} of ${accounts.length} connected`} />
               <ReadinessRow ok={providers.some((p) => p.enabled)} label="Model routing" value={`${providers.filter((p) => p.enabled).length} providers enabled`} />
@@ -359,7 +376,7 @@ function Clock() {
 }
 
 function PanelTitle({ id, icon: Icon, title, meta }: { id: string; icon: typeof Activity; title: string; meta?: string }) {
-  return <div className="flex items-center gap-2 px-4 py-3"><Icon size={15} className="text-[color:var(--cr-accent)]" /><h2 id={id} className="cr-panel-title">{title}</h2>{meta && <span className="ml-auto text-xs text-[color:var(--cr-faint)]">{meta}</span>}</div>;
+  return <div className="flex items-center gap-2 px-4 py-3"><Icon size={15} className="text-[color:var(--cr-accent)]" /><h2 id={id} className="cr-panel-title"><Term>{title}</Term></h2>{meta && <span className="ml-auto text-xs text-[color:var(--cr-faint)]">{meta}</span>}</div>;
 }
 
 function ActivityItem({ row }: { row: ActivityRow }) {

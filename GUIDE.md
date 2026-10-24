@@ -443,6 +443,60 @@ Telegram tells you why.
 * Switch it in **Settings → Automation** (it asks you to confirm), or in Telegram with `/autopost on confirm`.
 * Switch it off with the same switch or `/autopost off`. Posts that haven't gone out yet come back to Review.
 * The menu always shows **Auto Review & Post: ON/OFF**, and Telegram's `/status` shows it too.
+* **When a check fails, the studio fixes it and tries again** (new in v2.5). It repairs only the part that failed
+  (post text, the script, the facts or a photo) and runs every check again, up to 3 times. You can change the number
+  (0–5) in **Settings → Automation**. If it passes, it posts at the next free time on that account's schedule. A wrong
+  account or a policy concern is never retried; anything still failing comes to you on Telegram.
+
+---
+
+## Part J3 — Easier to run (new in v2.5)
+
+### Step 28. The Setup page
+
+Open **Setup** in the menu. Every step tests itself and shows ✅ when it works: the basics, Telegram, AI keys,
+YouTube, Facebook, TikTok, X, research keys, your posting schedule and your first video. A bar at the top shows how
+far you are, and you can stop and continue any time.
+
+* **Paste values on the Setup page instead of GitHub.** Press **Save & test**: the value is encrypted on the server,
+  the page only ever shows the last 4 characters, and the studio checks it with the real service straight away.
+* Each platform step shows the exact **redirect address** to paste on the platform's website, with a **Copy** button.
+* **Don't delete anything from GitHub.** Values already in GitHub keep working. A value saved on the Setup page wins
+  over the GitHub one. Once a value is saved there, Setup shows *Also in GitHub: safe to remove there*; removing it is
+  optional.
+* **These must always stay in GitHub:** `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`,
+  `SUPABASE_DB_URL`, `TOKEN_ENCRYPTION_KEY`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `WORKER_GITHUB_TOKEN` and the
+  `DASHBOARD_URL` variable. The studio needs them before it can reach its own database.
+
+### Step 29. See what's running: the Activity page
+
+**Activity** shows what the studio is doing right now (with progress, e.g. "Step 3 of 5: removing duplicates"),
+today's numbers, the six steps of the studio (Ideas → Research → Write → Check → Review → Post) and a timeline of
+everything in plain words. **Problems** filters to what went wrong, and each problem has a button that takes you to the
+fix. The line at the bottom of the menu always says whether the studio is working or idle.
+
+### Step 30. Your posting schedule
+
+**Settings → Posting schedule**: for each account choose the days, the times (up to 4 a day), how many posts of each
+type per week, or pause the account. The preview shows the week before you save, and it warns you if the posts don't
+fit the days you chose, two posts are less than an hour apart, or YouTube's daily upload limit would be passed.
+Changes apply from the next production run; tick *Also move posts already waiting* to move planned posts too.
+**Reset to default** puts back the schedule from `config/accounts.yaml`.
+
+### Step 31. Clear buttons
+
+Most lists have a **Clear** button: the objective and the idea batch in Mission Control, finished jobs, this week's
+problems, the activity history, old research, rejected drafts in the Library, new ideas, idea history, AI usage numbers
+and errors, and the automatic review log. Calendar has **Cancel this post** and Review has **Discard package**.
+Clear always asks first, and most clears have **Undo** for a few seconds. Published posts and the audit log can never
+be cleared.
+
+### Step 32. Simple or Advanced menu, and the tour
+
+New studios start with the **Simple** menu (This Week, Activity, Review, Calendar, Ideas, Setup, Settings). Switch to
+**Advanced** at the bottom of the menu (or Settings → Appearance) for Mission Control, Research, Library and AI APIs.
+A 5-step tour appears the first time you sign in; replay it from **Help**. A small **?** next to a technical word
+explains it.
 
 ---
 
@@ -455,9 +509,9 @@ Telegram tells you why.
    - look at **Facts**: every fact shows its source link,
    - pick a **Thumbnail**,
    - check the **Posts** text for each account,
-   - press **Approve package**, or **Rewrite with a note** (e.g. "make the opening more personal"), or **Reject**.
+   - press **Approve package**, or **Rewrite with a note** (e.g. "make the opening more personal"), or **Discard package**.
 3. Short on time? **Approve all that passed every check** approves only the green ones.
-4. Look at **Rundown → Your quick jobs** (e.g. "set this YouTube video to Public"), do them, press **Done**.
+4. Look at **This Week → Your quick jobs** (e.g. "set this YouTube video to Public"), do them, press **Done**.
 5. Reply to comments yourself on each app. Telegram gives you the links when posts go out.
 
 **Handy Telegram commands:** `/status`, `/week`, `/review`, `/failed`, `/budget`, `/pause`, `/resume confirm`, `/autopost` (`on confirm` / `off`).
@@ -489,7 +543,8 @@ Telegram tells you why.
 | Vercel says a deployment is "Blocked" | On the free plan the commit author must be you. Commit with your GitHub account (atonymutembei@gmail.com) |
 | A GitHub run is red | Open it → read the last red lines. Most often a secret name is misspelled |
 | "No free AI provider available" | Your AI keys are missing or used up for today. Add more keys (step 6) or wait until tomorrow |
-| No Telegram messages | Check `TELEGRAM_BOT_TOKEN` in GitHub and run **Deploy Worker** again, then `/link` again |
+| No Telegram messages | Setup → Telegram: paste the bot token and press **Save & test**, then get a link code and send `/link` again |
+| Not sure what failed | Activity → **Problems**: each problem has a button to the fix |
 | Nothing posted at the posting time | Is publishing paused (red bar at the top)? Is the Worker deployed? Is the post *Scheduled* (approved)? |
 | YouTube says private | Normal until the Google audit (step 18) |
 | Storage almost full | Daily maintenance deletes old previews. You can also delete old ones in Supabase → Storage |
@@ -509,12 +564,13 @@ Actions → Runners → New self-hosted runner** and follow the commands. Then c
 | Want to change | Where |
 |---|---|
 | How Penny or Pixel sound | Dashboard → Settings → Channel voices |
-| Posting days and times | `config/accounts.yaml` |
+| Posting days and times | Dashboard → Settings → Posting schedule |
 | Words the writers must never use | `config/brand.yaml` → `banned_phrases` |
 | Which AI services to use | Dashboard → Settings → AI writers, or `config/providers.yaml` |
 | Research sources | `config/research.yaml` |
 | X monthly limit (max $1) | Dashboard → Settings → Budget |
-| Timezone | Dashboard → Settings → Schedule |
+| Timezone | Dashboard → Settings → Timezone |
+| Keys and logins (Telegram, platforms, research) | Dashboard → Setup |
 
 Edit files on GitHub by opening the file and pressing the ✏️ pencil, then **Commit changes**.
 
