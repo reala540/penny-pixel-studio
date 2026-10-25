@@ -237,10 +237,12 @@ def produce_project(conn, router: Router, storage, idea: dict, week: date, *, pr
             save_script(conn, child["id"], short.model_dump(), "ai", [trail])
             db.run(conn, "update content_projects set fresh_until=%s, quality_report=%s, status='rendering' where id=%s",
                    (db.one(conn, "select fresh_until from content_projects where id=%s", (pid,))["fresh_until"],
-                    db.j({"derived_from": str(pid), "issues": []}), child["id"]))
+                    db.j({"derived_from": str(pid), "issues": [], "writers": trail.get("companies", [])}), child["id"]))
             children.append(str(child["id"]))
         qr = db.one(conn, "select quality_report from content_projects where id=%s", (pid,))["quality_report"] or {}
         qr["package_problems"] = problems
+        # the post texts and Shorts were written by this model: it can't review the package either
+        qr["writers"] = sorted(set(qr.get("writers") or []) | set(trail.get("companies") or []))
         db.run(conn, "update content_projects set recipe = recipe || %s, quality_report=%s where id=%s",
                (db.j({"package": pdata}), db.j(qr), pid))
         return {"children": children}

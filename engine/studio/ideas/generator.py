@@ -426,7 +426,7 @@ def run(conn, router: Router, *, trigger: str = "manual", job_id=None, overrides
             except Exception as exc:
                 notes.append(f"Idea round {round_no + 1} failed: {str(exc)[:160]}")
                 continue
-            used_providers.add(res.provider)
+            used_providers |= res.companies()  # later rounds and the scorer use other companies
             if res.substituted_from:
                 notes.append(f"{res.substituted_from} was unavailable; {res.provider}/{res.model} proposed ideas instead.")
             for c in res.data.ideas:
@@ -457,14 +457,9 @@ def run(conn, router: Router, *, trigger: str = "manual", job_id=None, overrides
             if ar.substituted_from:
                 notes.append(f"{ar.substituted_from} was unavailable; {assessed_by} assessed the ideas instead.")
             assessments = {a.id.strip().upper(): a for a in ar.data.assessments}
-        except Exception as exc:
-            try:  # the independent reviewer failed: any available model is better than none, and we say so
-                ar = assess(router, cfg, candidates, exclude=set())
-                assessed_by = f"{ar.provider}/{ar.model}"
-                assessments = {a.id.strip().upper(): a for a in ar.data.assessments}
-                notes.append(f"No independent reviewer was available; {assessed_by} (also a proposer) assessed the ideas.")
-            except Exception:
-                notes.append(f"AI assessment failed ({str(exc)[:120]}); ideas are scored on trend evidence only.")
+        except Exception as exc:  # STRICT: a proposer's company never scores its own ideas, even as a fallback
+            notes.append(f"No independent AI could score the ideas ({str(exc)[:120]}); they're scored on trend "
+                         "evidence only.")
 
         jobs.progress(conn, "Step 5 of 5: ranking and saving the best ideas", 5, 5)
         scored = []
@@ -540,7 +535,7 @@ def refine(conn, router: Router, idea_id, note: str) -> dict:
             "markets": new.markets}
     a = None
     try:
-        ar = assess(router, cfg, [item], exclude={res.provider})
+        ar = assess(router, cfg, [item], exclude=set(res.companies()))
         a = next((x for x in ar.data.assessments if x.id.strip().upper() == "I1"), None)
     except Exception:
         pass

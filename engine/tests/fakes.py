@@ -42,10 +42,18 @@ SENTENCES = [
 FILLER_SENTENCE_GROUPS = 3  # tests shrink this to render short videos
 
 
+TAGS = ["", "truly", "honestly", "really", "clearly", "simply", "plainly", "frankly", "quietly", "calmly"]
+
+
 def scene_text(i: int, words: int = 2) -> str:
-    """Varied, number-free filler narration (distinct sentences per scene)."""
+    """Varied, number-free filler narration: no sentence repeats anywhere (the padding check would catch it)."""
     n = 3 * words
-    return " ".join(SENTENCES[(i * n + j) % len(SENTENCES)] for j in range(n))
+    out = []
+    for j in range(n):
+        k = i * n + j
+        s, tag = SENTENCES[k % len(SENTENCES)], TAGS[(k // len(SENTENCES)) % len(TAGS)]
+        out.append(f"{s[:-1]}, {tag}." if tag else s)
+    return " ".join(out)
 
 
 def fake_provider_config():
@@ -105,6 +113,37 @@ def respond(role: str, prompt: str):
             first = text.split(" — ")[-1].strip() or text
             facts.append({"key": f"F{i}", "text": first[:200], "source_ref": label, "data_period": "2026"})
         return {"facts": facts, "context": "Background from the sources.", "open_questions": []}
+    if role == "scriptwriter" and "Plan the outline" in prompt:
+        keys = re.findall(r"^(F\d+) \(S\d+", prompt, flags=re.M)
+        bodies = [keys[i::3] for i in range(3)]
+        return {"title": "The real numbers, explained", "hook": "Most advice skips the math. We won't.",
+                "promise": "You will know exactly what to do next.",
+                "hook_candidates": ["What if the obvious answer is wrong?"],
+                "sections": [{"name": "The problem", "kind": "problem", "purpose": "Show the cost", "fact_keys": []},
+                             {"name": "What you'll learn", "kind": "learn", "purpose": "Roadmap", "fact_keys": []}]
+                            + [{"name": f"Step {n}", "kind": "body", "purpose": "Teach one step", "fact_keys": b}
+                               for n, b in enumerate(bodies, 1)]
+                            + [{"name": "Limits", "kind": "limits", "purpose": "Be honest", "fact_keys": []},
+                               {"name": "Wrap-up", "kind": "wrap", "purpose": "Recap", "fact_keys": []}],
+                "cta": "Subscribe for one useful idea every week." + (" This is general education, not personal advice."
+                                                                       if "Penny" in prompt else "")}
+    if role == "scriptwriter" and "Write ONLY section" in prompt:
+        n = int(re.search(r"Write ONLY section (\d+)", prompt).group(1))
+        use = re.search(r"Facts to use here: ([^.\n]*)", prompt).group(1)
+        texts = dict(re.findall(r"^(F\d+) \(S\d+[^)]*\): (.*)$", prompt, flags=re.M))
+        scenes, claims = [], []
+        for fk in re.findall(r"F\d+", use):
+            claims.append({"key": f"C{len(claims) + 1}", "text": texts[fk], "kind": "fact", "fact_refs": [fk]})
+            lead = ["Start with the data:", "Now look at this:", "Here is the next piece:", "Then consider this:",
+                    "One more thing matters:", "Put that next to this:"][(n + len(scenes)) % 6]
+            scenes.append({"narration": f"{lead} {texts[fk]}. " + scene_text(n * 7 + len(scenes), 1),
+                           "visual": {"type": "stat", "stat_value": "Key fact", "stat_label": texts[fk][:60]},
+                           "claim_keys": [claims[-1]["key"]]})
+        if not scenes or "body" not in prompt.split("Write ONLY section", 1)[1][:80]:
+            scenes.append({"narration": scene_text(n * 7 + 5, FILLER_SENTENCE_GROUPS),
+                           "visual": {"type": "list", "headline": "What to do",
+                                      "items": ["Write it down", "Check the math", "Decide on Sunday"]}, "claim_keys": []})
+        return {"scenes": scenes, "claims": claims}
     if role == "scriptwriter":
         if "Rewrite ONLY these scenes" in prompt:
             n = len(re.search(r"scene numbers \[([^\]]*)\]", prompt).group(1).split(","))

@@ -8,7 +8,7 @@ from collections import Counter
 from .. import config
 from .models import Script, ShortScript, est_seconds
 
-MIN_LONG_SECONDS = 240  # real videos: 4+ minutes (tests lower this to keep renders quick)
+MIN_LONG_SECONDS = 480  # long videos run 8-14 minutes (tests lower this to keep renders quick)
 
 NUMBER_RE = re.compile(r"(?<![\w.])(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*(%|percent|k|m|bn|billion|million|thousand)?",
                        re.IGNORECASE)
@@ -50,6 +50,12 @@ def sentence_stats(text: str) -> dict:
             "max_words": max(lengths or [0]), "repeated_openers": repeated}
 
 
+def repeated_sentences(text: str, min_words: int = 7) -> list[str]:
+    """Sentences (7+ words) that appear more than once: padding, not content."""
+    seen = Counter(re.sub(r"[^a-z0-9 ]", "", s.lower()).strip() for s in re.split(r"(?<=[.!?])\s+", text))
+    return [s for s, n in seen.items() if n > 1 and len(s.split()) >= min_words]
+
+
 def check_long(script: Script, channel: str) -> list[str]:
     issues: list[str] = []
     cfg = config.services()["render"]
@@ -59,9 +65,12 @@ def check_long(script: Script, channel: str) -> list[str]:
     if not 6 <= len(script.scenes) <= 40:
         issues.append(f"Needs 6-40 scenes, has {len(script.scenes)}")
     if dur < MIN_LONG_SECONDS:
-        issues.append(f"Too short: about {dur / 60:.1f} min (aim for 5-8 min)")
+        issues.append(f"Too short: about {dur / 60:.1f} min (aim for {MIN_LONG_SECONDS // 60}-{cfg['max_long_minutes']} min)")
     if dur > cfg["max_long_minutes"] * 60:
         issues.append(f"Too long: about {dur / 60:.1f} min (max {cfg['max_long_minutes']})")
+    padding = repeated_sentences(script.full_text())
+    if padding:
+        issues.append(f"Repeats itself to fill time: \"{padding[0][:80]}\"" + (f" and {len(padding) - 1} more" if len(padding) > 1 else ""))
     if len(script.hook.split()) > 45:
         issues.append("Hook is longer than 45 words")
     if not script.cta.strip():
