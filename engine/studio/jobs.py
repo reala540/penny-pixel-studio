@@ -46,7 +46,10 @@ def check_stop(conn) -> None:
     """Raise Stopped if the owner asked to stop after this process started (database clock on both sides).
     The first call only notes the start time."""
     global _process_started
-    row = db.one(conn, "select now() as now, (select value #>> '{}' from settings where key='stop_requested_at') as stop")
+    try:
+        row = db.one(conn, "select now() as now, (select value #>> '{}' from settings where key='stop_requested_at') as stop")
+    except Exception:  # the check is best effort: a database hiccup never stops the work
+        return
     if _process_started is None:
         _process_started = row["now"]
         return

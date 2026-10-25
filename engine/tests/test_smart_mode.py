@@ -15,6 +15,7 @@ def _heads(conn):
 
 def test_risky_packages_always_wait_for_a_person(synced, monkeypatch, silent_tts):
     _produce_week(synced, monkeypatch)
+    monkeypatch.setattr(auto, "TRUST_PERIOD", {"ai": 5, "money": 10})  # live config: Pixel has none (owner's choice)
     heads = _heads(synced)
     ai, money = auto._family(synced, heads["ai"]["id"]), auto._family(synced, heads["money"]["id"])
     db.run(synced, "update content_ideas set score_breakdown = score_breakdown || '{\"evergreen\": true}'")

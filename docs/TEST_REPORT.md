@@ -1,4 +1,13 @@
-# Test report — v2.8 Smart Mode, code-checked money math, honest claims, categories (25 Oct 2026)
+# Test report — v3.0 Stop & clear, automatic replacement, deep research (25 Oct 2026)
+
+| Suite | Result |
+|---|---|
+| Engine (pytest, local PostgreSQL with all 11 migrations, real renders) | **143 passed** (full run: 141 passed, 2 failed; both fixed and re-run: a test fake without a database, and a test that still expected Pixel's old trust period). New: Stop & clear erases what the running work made and keeps approved and published work; a published package can never be erased; a running engine stops at its next step; a reminder first, then a safer replacement; nothing is erased without a replacement; trust periods, quality problems and the weekly limit always wait; sensitive money ideas are never the replacement; articles are read (menus, scripts and boilerplate dropped); related sources added once; too little material stops before writing; fact sheets see article text; a short section gets one follow-up |
+| Worker (vitest + `tsc`) | **51 passed** (Stop & clear: owner only, content runs cancelled but never publishing, files removed; hourly wake-up for due replacements) |
+| Dashboard (vitest + `tsc` + build) | **32 passed** |
+| Not verified here | Reading real articles, Wikipedia and Hacker News search: this sandbox's network blocks those sites. The first real check is the next package made on GitHub. |
+
+## v2.8 Smart Mode, code-checked money math, honest claims, categories (25 Oct 2026)
 
 | Suite | Result |
 |---|---|
