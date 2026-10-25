@@ -60,7 +60,7 @@ def ground_facts(facts: FactSheet, sources: list[dict]) -> tuple[FactSheet, list
 
 
 def check_claims(router: Router, script: Script, facts: FactSheet, sources: list[dict],
-                 exclude_provider: str | None = None) -> list[dict]:
+                 exclude: set[str] | None = None) -> list[dict]:
     """Return one record per claim with a status decided by code, informed by the checker model."""
     evidence = evidence_text(facts, sources)
     factual = [c for c in script.claims if c.kind == "fact"]
@@ -75,7 +75,7 @@ def check_claims(router: Router, script: Script, facts: FactSheet, sources: list
                   "status and copy the exact supporting sentence from the source into supporting_quote. If the "
                   "source does not clearly say it, mark it unsupported. Do not use outside knowledge.\n\n" + listing)
         res = router.complete("claim_checker", prompt, schema=ClaimVerdicts, temperature=0.0,
-                              exclude={exclude_provider} if exclude_provider else None)
+                              exclude=exclude)
         verdicts = {v.key: v for v in res.data.verdicts}
     now = datetime.now(timezone.utc)
     for c in script.claims:

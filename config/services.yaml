@@ -48,7 +48,9 @@ render:
   preview:
     long: { width: 854, height: 480, crf: 30 }
     short: { width: 480, height: 854, crf: 30 }
-  max_long_minutes: 9
+  min_long_minutes: 8                # long videos: 8-14 minutes, aiming for about 11
+  target_long_minutes: 11
+  max_long_minutes: 14
   max_short_seconds: 58
 
 publishing:

@@ -17,9 +17,11 @@ adapters:
       money: ["personal finance", "inflation", "interest rates", "salary negotiation", "job market"]
     hl: "en-US"
     gl: "US"
+    editions: ["US", "GB", "CA", "AU"]   # English-language editions in the channels' main markets
   google_trends_rss:
     enabled: true
-    geo: ["US", "KE", "GB"]
+    # every target country of either channel; a trending search only counts when it's about AI or money
+    geo: ["US", "GB", "CA", "AU", "DE", "NL", "CH", "SG"]
   hacker_news:
     enabled: true
     min_points: 150
@@ -32,7 +34,10 @@ adapters:
       - { name: "Hugging Face Blog", url: "https://huggingface.co/blog/feed.xml", topic: ai, credibility: official }
       - { name: "Federal Reserve press releases", url: "https://www.federalreserve.gov/feeds/press_all.xml", topic: money, credibility: official }
       - { name: "BLS latest numbers", url: "https://www.bls.gov/feed/bls_latest.rss", topic: money, credibility: primary_data }
-      - { name: "Central Bank of Kenya", url: "https://www.centralbank.go.ke/feed/", topic: money, credibility: official }
+      - { name: "Consumer Financial Protection Bureau", url: "https://www.consumerfinance.gov/about-us/newsroom/feed/", topic: money, credibility: official }
+      - { name: "Bank of England news", url: "https://www.bankofengland.co.uk/rss/news", topic: money, credibility: official }
+      - { name: "Bank of Canada press releases", url: "https://www.bankofcanada.ca/content_type/press-releases/feed/", topic: money, credibility: official }
+      - { name: "Reserve Bank of Australia media releases", url: "https://www.rba.gov.au/rss/rss-cb-media-releases.xml", topic: money, credibility: official }
   reddit_rss:
     enabled: true
     subreddits:

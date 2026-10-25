@@ -4,6 +4,10 @@ Safeguards (each is tested):
   * only explicitly approved variants with an approval record are published;
   * the post's account must match the variant's account;
   * a post that already has a published_posts row is never sent again;
+  * the exact same video or text (by SHA-256 fingerprint) is never sent to the same account twice, enforced by a
+    unique index in the database as well as here;
+  * an attempt is recorded before anything is sent; an attempt that never finished or ended unclear blocks that post
+    until the owner confirms it isn't on the platform;
   * expired time-sensitive content is blocked until rechecked;
   * media without license records is blocked;
   * ambiguous failures go to human review, never blind retry;
@@ -12,8 +16,12 @@ Safeguards (each is tested):
 
 from __future__ import annotations
 
+import hashlib
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+import psycopg
 
 from .. import config, db, notify, oauth
 from ..errors import AmbiguousPublish, AuthError, BudgetExceeded, PermanentError, QuotaError, StudioError, TransientError
@@ -126,6 +134,29 @@ def final_media(conn, storage, ctx: dict) -> tuple[Path | None, Path | None]:
     return out, thumb
 
 
+def fingerprint(ctx: dict, video: Path | None) -> str:
+    """SHA-256 of what would be posted: the video file's bytes, or the normalised text for text-only posts."""
+    h = hashlib.sha256()
+    if video is not None:
+        with open(video, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    text = f"{ctx.get('kind')}|{ctx.get('title') or ''}|{ctx.get('body') or ''}"
+    h.update(re.sub(r"\s+", " ", text).strip().lower().encode())
+    return h.hexdigest()
+
+
+def unclear_attempt(conn, post_id) -> dict | None:
+    return db.one(conn, """select * from publish_attempts where scheduled_post_id=%s and cleared_at is null
+                             and (outcome is null or outcome = 'ambiguous') order by id desc limit 1""", (post_id,))
+
+
+def _finish_attempt(conn, attempt_id, outcome: str, detail: str | None = None) -> None:
+    db.run(conn, "update publish_attempts set outcome=%s, detail=%s, finished_at=now() where id=%s and outcome is null",
+           (outcome, (detail or "")[:500] or None, attempt_id))
+
+
 def publish_post(conn, storage, post: dict, adapters: dict | None = None, now: datetime | None = None) -> str:
     now = now or datetime.now(timezone.utc)
     adapters = adapters or {k: v() for k, v in ADAPTERS.items()}
@@ -133,6 +164,12 @@ def publish_post(conn, storage, post: dict, adapters: dict | None = None, now: d
     if db.one(conn, "select 1 from published_posts where scheduled_post_id=%s", (post["id"],)):
         db.run(conn, "update scheduled_posts set status='published', locked_until=null where id=%s", (post["id"],))
         return "already_published"
+    if ctx and (launch := db.one(conn, """select launch_date from channel_profiles where slug=%s and launch_date is not null
+                                         and launch_date > (%s at time zone %s)::date""",
+                                 (ctx["channel_slug"], now, db.get_setting(conn, "timezone", "Africa/Nairobi")))):
+        db.run(conn, "update scheduled_posts set status='scheduled', attempts=greatest(attempts-1,0), locked_until=null "
+                     "where id=%s", (post["id"],))
+        return "not_launched"  # this channel launches on launch['launch_date']: nothing goes out before
     problems = safety_problems(conn, post, ctx, now)
     if problems:
         if problems == ["paused"]:
@@ -146,15 +183,46 @@ def publish_post(conn, storage, post: dict, adapters: dict | None = None, now: d
                     "; ".join(problems), link=f"{config.runtime().dashboard_url}/calendar",
                     dedupe_key=f"blocked:{post['id']}")
         return "blocked"
+    unclear = unclear_attempt(conn, post["id"])
+    if unclear:  # it may already be on the platform: never send again until the owner checks
+        reason = (f"An earlier attempt ({unclear['started_at']:%d %b %H:%M} UTC) didn't finish clearly. Check the "
+                  "platform: if it's there, record it as posted; if not, press Try again.")
+        db.run(conn, "update scheduled_posts set status='needs_review', last_error=%s, locked_until=null where id=%s",
+               (reason, post["id"]))
+        db.audit(conn, "publish_held_unclear_attempt", "scheduled_post", post["id"], {"attempt": unclear["id"]})
+        return "needs_review"
     adapter = adapters[ctx["platform"]]
     acc = {"id": ctx["social_account_id"], "platform": ctx["platform"], "label": ctx["account_label"]}
     cap = adapter.capability(conn, acc, ctx["kind"])
     if not cap.can_publish:
         _manual(conn, post, ctx, cap.reason, storage=storage)
         return "manual"
+    attempt = None
     try:
         token, tokens = oauth.access_token(conn, acc)
         video, thumb = final_media(conn, storage, ctx)
+        digest = fingerprint(ctx, video)
+        twin = db.one(conn, """select pp.url, pp.published_at from published_posts pp
+                               where pp.social_account_id=%s and pp.content_sha256=%s limit 1""", (acc["id"], digest))
+        if twin:
+            detail = (f"Duplicate: this exact {'video' if video else 'text'} was already posted to {ctx['account_label']} "
+                      f"on {twin['published_at']:%d %b %Y} ({twin['url'] or 'no link'}). Not sent again.")
+            db.run(conn, """insert into publish_attempts (scheduled_post_id, social_account_id, content_sha256, outcome,
+                                                          detail, finished_at) values (%s,%s,%s,'blocked_duplicate',%s,now())""",
+                   (post["id"], acc["id"], digest, detail))
+            db.run(conn, "update scheduled_posts set status='blocked', last_error=%s, locked_until=null where id=%s",
+                   (detail, post["id"]))
+            db.audit(conn, "publish_duplicate_blocked", "scheduled_post", post["id"], {"sha256": digest, "twin": twin["url"]})
+            notify.send(conn, "publish_blocked", f"Duplicate stopped ({ctx['account_label']})", detail,
+                        link=f"{config.runtime().dashboard_url}/calendar", dedupe_key=f"dup:{post['id']}")
+            return "duplicate"
+        try:  # written down before anything is sent; the unique index stops a second runner starting the same post
+            attempt = db.one(conn, """insert into publish_attempts (scheduled_post_id, social_account_id, content_sha256)
+                                      values (%s,%s,%s) returning id""", (post["id"], acc["id"], digest))["id"]
+        except psycopg.errors.UniqueViolation:
+            return "busy"
+        db.audit(conn, "publish_attempt_started", "scheduled_post", post["id"],
+                 {"attempt": attempt, "account": ctx["account_label"], "sha256": digest})
         variant = dict(ctx)
         variant["synthetic_media"] = bool((config.services()["publishing"].get("ai_disclosure") or {})
                                           .get("label_synthetic_media", False))
@@ -165,19 +233,27 @@ def publish_post(conn, storage, post: dict, adapters: dict | None = None, now: d
         else:
             result = adapter.publish(conn, acc, variant, video, thumb, token)
     except AmbiguousPublish as exc:
+        if attempt:
+            _finish_attempt(conn, attempt, "ambiguous", str(exc))
         db.run(conn, "update scheduled_posts set status='needs_review', last_error=%s, locked_until=null where id=%s",
                (str(exc), post["id"]))
         notify.send(conn, "publish_ambiguous", "Please check a post", str(exc),
                     link=f"{config.runtime().dashboard_url}/calendar", dedupe_key=f"ambiguous:{post['id']}")
         return "needs_review"
     except AuthError as exc:
+        if attempt:
+            _finish_attempt(conn, attempt, "not_sent", str(exc))
         oauth.mark_broken(conn, acc["id"], str(exc))
         _manual(conn, post, ctx, f"Connection problem: {exc}. Reconnect the account in Settings", status="needs_manual")
         return "auth_failed"
     except BudgetExceeded as exc:
+        if attempt:
+            _finish_attempt(conn, attempt, "not_sent", str(exc))
         _manual(conn, post, ctx, str(exc))
         return "budget"
-    except (TransientError, QuotaError) as exc:
+    except (TransientError, QuotaError) as exc:  # adapters raise these only when nothing reached the platform
+        if attempt:
+            _finish_attempt(conn, attempt, "not_sent", str(exc))
         if post["attempts"] >= MAX_ATTEMPTS:
             _manual(conn, post, ctx, f"Failed {post['attempts']} times: {exc}", status="failed")
             return "failed"
@@ -186,14 +262,17 @@ def publish_post(conn, storage, post: dict, adapters: dict | None = None, now: d
                (str(exc), 15 * post["attempts"], post["id"]))
         return "retry"
     except (PermanentError, StudioError) as exc:
+        if attempt:
+            _finish_attempt(conn, attempt, "not_sent", str(exc))
         _manual(conn, post, ctx, f"Could not publish automatically: {exc}", status="failed")
         return "failed"
     with db.transaction(conn):
         db.run(conn, """insert into published_posts (scheduled_post_id, platform, platform_post_id, url, visibility, method,
-                                                     verified_at)
-                        values (%s,%s,%s,%s,%s,%s,%s)""",
+                                                     verified_at, social_account_id, content_sha256)
+                        values (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                (post["id"], ctx["platform"], result.platform_post_id, result.url, result.visibility, result.method,
-                now if result.method == "api" else None))
+                now if result.method == "api" else None, acc["id"], digest))
+        _finish_attempt(conn, attempt, "published", result.url)
         db.run(conn, "update scheduled_posts set status='published', last_error=null, locked_until=null where id=%s",
                (post["id"],))
         db.run(conn, "update content_variants set status='published' where id=%s", (ctx["id"],))

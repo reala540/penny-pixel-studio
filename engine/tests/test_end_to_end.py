@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
+import psycopg
 import pytest
 
 from studio import config, db, oauth, produce
@@ -89,6 +90,11 @@ def test_journey_research_script_video_review(synced, monkeypatch, silent_tts):
     # roles were spread across different providers (writer != voice editor / critic / checker)
     writer = [p for r, p in router.calls if r == "scriptwriter"][0]
     assert all(p != writer for r, p in router.calls if r in ("voice_editor", "critic", "claim_checker"))
+    for p in longs:  # per video: no check was made by a company that wrote or edited any of its text
+        writers = set(p["quality_report"]["writers"])
+        sv = db.one(synced, "select provider_trail from script_versions where id=%s", (p["current_script_version_id"],))
+        checks = [t for t in sv["provider_trail"] if t["step"] in ("critic", "critic_recheck", "hook_pick")]
+        assert writers and checks and all(not (set(t["companies"]) & writers) for t in checks)
     claims = db.all_(synced, "select status from research_claims")
     assert claims and all(c["status"] == "supported" for c in claims)
     money = next(p for p in longs if p["channel_slug"] == "money")
@@ -100,12 +106,16 @@ def test_journey_research_script_video_review(synced, monkeypatch, silent_tts):
     assert db.one(synced, "select count(*) n from notifications where kind='week_ready'")["n"] == 1
 
 
-def test_provider_outage_falls_back_to_free_alternative(synced, monkeypatch, silent_tts):
+def test_provider_outage_falls_back_but_never_lets_a_writer_check_itself(synced, monkeypatch, silent_tts):
     router, _, _, out = _produce_week(synced, monkeypatch, failing={"alpha"})
-    assert {p["status"] for p in out["projects"]} == {"ready_for_review"}
     assert sum(1 for _, p in router.calls if p == "alpha") == 1  # circuit opened after the first quota error
     used = {p for r, p in router.calls if p != "alpha"}
-    assert used >= {"beta", "gamma"}
+    assert used >= {"beta", "gamma"}  # writing moved to the companies still working
+    # beta wrote, gamma polished the voice: with alpha down nobody independent is left to critique, so the package
+    # waits (and retries later) instead of letting a writer check its own work
+    assert {p["status"] for p in out["projects"]} == {"retrying"}
+    err = db.one(synced, "select error_message from generation_jobs where job_type='script' order by updated_at desc limit 1")
+    assert "No independent AI available" in err["error_message"]
 
 
 def test_failed_render_resumes_from_saved_stage(synced, monkeypatch, silent_tts):
@@ -220,11 +230,26 @@ def test_journey_approval_schedule_publish_and_no_duplicates(produced):
     # X spend recorded within budget
     spent = db.one(conn, "select coalesce(sum(amount_usd),0) s from budget_reservations where status='committed'")["s"]
     assert 0 < float(spent) <= 1.0
-    # duplicate prevention: force posts back to scheduled and run again -> no new platform calls
+    # duplicate prevention is enforced by the database: a published post can't be put back in the queue, removed,
+    # or rewritten, and nothing is sent again
     before = len(platform.requests)
-    db.run(conn, "update scheduled_posts set status='scheduled', locked_until=null")
+    for sql in ("update scheduled_posts set status='scheduled', locked_until=null where status='published'",
+                "delete from published_posts", "update published_posts set content_sha256='x'",
+                "delete from publish_attempts", "update audit_logs set action='edited'", "delete from audit_logs"):
+        with pytest.raises(psycopg.errors.RaiseException):
+            db.run(conn, sql)
     again = runner.run_due(conn, storage, _adapters(platform), now=far_future)
-    assert set(again) == {"already_published"} and len(platform.requests) == before
+    assert sum(again.values()) == 0 and len(platform.requests) == before
+    assert db.one(conn, "select count(*) n from published_posts where content_sha256 is null and method <> 'manual'")["n"] == 0
+    attempts = db.all_(conn, "select scheduled_post_id, social_account_id, content_sha256, outcome from publish_attempts")
+    assert attempts and {a["outcome"] for a in attempts} <= {"published", "blocked_duplicate"}
+    for a in attempts:  # the sample week has word-for-word identical X posts: the second one is stopped
+        if a["outcome"] == "blocked_duplicate":
+            assert db.one(conn, "select 1 from published_posts where social_account_id=%s and content_sha256=%s",
+                          (a["social_account_id"], a["content_sha256"]))
+    assert db.all_(conn, "select * from audit_chain_problems()") == []
+    actions = {r["action"] for r in db.all_(conn, "select action from audit_logs")}
+    assert {"publish_attempt_started", "published", "scheduled_posts_update", "content_projects_update"} <= actions
 
 
 def test_expired_finance_data_blocks_publication(produced):

@@ -18,6 +18,7 @@ brand:
 channels:
   ai:
     display_name: "Penny & Pixel AI"
+    launch_date: "2026-10-25"     # nothing from this channel is posted anywhere before this day
     host_persona: >
       Pixel — a curious, upbeat tinkerer who actually tests the tools before talking
       about them. Explains the "so what" of every AI story in plain words, admits when
@@ -37,6 +38,11 @@ channels:
     audience_profile:
       who: "Busy people 18–40 who want to use AI at work and in life without the hype"
       knowledge: "beginner to intermediate"
+      markets: ["US", "GB", "CA", "AU", "DE", "NL"]   # in priority order: research, ideas and examples follow it
+      writing: >
+        Write in American English for viewers in the United States first, then the UK, Canada, Australia, Germany
+        and the Netherlands. Use tools and examples available in those countries; when a tool, price or law differs
+        by country (for example GDPR in Europe), say so in one sentence. Prices in US dollars.
     design:
       primary: "#1E1B4B"
       secondary: "#22D3EE"
@@ -47,6 +53,7 @@ channels:
 
   money:
     display_name: "Penny & Pixel Money"
+    launch_date: "2026-11-01"     # one week after Pixel
     host_persona: >
       Penny — a warm, sharp friend who is good with numbers. Calm, never preachy,
       allergic to hype and get-rich-quick talk. Shows the math, names the trade-offs,
@@ -66,6 +73,12 @@ channels:
     audience_profile:
       who: "Young professionals and families who want to feel in control of money"
       knowledge: "beginner"
+      markets: ["US", "CA", "GB", "AU", "CH", "SG"]   # in priority order: research, ideas and examples follow it
+      writing: >
+        Write in American English. Use US dollars and US rules as the main example (401(k), IRA, FICO score, APR,
+        FDIC). When a rule differs, name the Canadian, UK or Australian equivalent briefly (RRSP/TFSA, ISA/workplace
+        pension, superannuation) and say the details differ by country and personal situation. Never give
+        country-specific tax or legal advice: explain how it works and point to the official source.
     design:
       primary: "#064E3B"
       secondary: "#F5B841"

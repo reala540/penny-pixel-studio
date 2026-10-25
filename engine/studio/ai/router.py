@@ -62,14 +62,44 @@ class AIResult:
     credential_label: str | None = None
     substituted_from: str | None = None    # first-choice provider/model when another one answered
 
+    def companies(self) -> frozenset[str]:
+        return companies(self.provider, self.model)
+
     def trail(self) -> dict:
-        return {"provider": self.provider, "model": self.model,
+        return {"provider": self.provider, "model": self.model, "companies": sorted(self.companies()),
                 "in": self.input_tokens, "out": self.output_tokens}
 
 
 def family(provider: str) -> str:
     """The company behind a provider: extra accounts added as "cloudflare2", "cloudflare3"… belong to "cloudflare"."""
     return re.sub(r"\d+$", "", provider)
+
+
+# Who made a model, from its id. The same model served by another host (gpt-oss on Groq, OVH or Cloudflare) is still
+# the same maker's work, so it can't independently check itself.
+MAKERS: list[tuple[str, str]] = [
+    (r"gemini|gemma|^google/|/google/", "google"), (r"gpt-oss|^openai/|/openai/", "openai"),
+    (r"llama|^meta-|/meta/", "meta"), (r"nemotron|^nvidia/|/nvidia/", "nvidia"), (r"glm|^z-ai/|zai-org", "zhipu"),
+    (r"mistral|mixtral|magistral|codestral|ministral|devstral", "mistral"), (r"kimi|moonshot", "moonshot"),
+    (r"deepseek", "deepseek"), (r"qwen|qwq", "alibaba"), (r"aion", "aion"), (r"claude|anthropic", "anthropic"),
+]
+# Hosts that are also model makers.
+HOST_COMPANY = {"gemini": "google", "zai": "zhipu"}
+
+
+def host_company(provider: str) -> str:
+    fam = family(provider)
+    return HOST_COMPANY.get(fam, fam)
+
+
+def model_maker(model: str, provider: str = "") -> str:
+    return next((maker for pattern, maker in MAKERS if re.search(pattern, model or "", re.IGNORECASE)),
+                host_company(provider) if provider else "")
+
+
+def companies(provider: str, model: str) -> frozenset[str]:
+    """Every company behind an answer: the one that runs the model and the one that made it."""
+    return frozenset({host_company(provider), model_maker(model, provider)} - {""})
 
 
 def extract_json(text: str) -> Any:
@@ -302,7 +332,7 @@ class Router:
 
     def complete(self, role: str, prompt: str, *, system: str | None = None, schema: Type[T] | None = None,
                  temperature: float = 0.7, max_tokens: int = 4096, exclude: set[str] | None = None,
-                 only: Candidate | None = None) -> AIResult:
+                 only: Candidate | None = None, prefer: set[str] | None = None) -> AIResult:
         """Run `prompt` on the best free model for `role`, falling back across providers."""
         messages = [{"role": "system", "content": (system + "\n\n" if system else "") + SYSTEM_GUARD},
                     {"role": "user", "content": prompt}]
@@ -313,10 +343,18 @@ class Router:
             )
         tried: list[dict] = []
         # "cloudflare2" is another account at the same company: it can't independently check "cloudflare"'s work.
-        avoid = {family(p) for p in (exclude or set())}
-        cands = [only] if only else [c for c in self.candidates(role) if family(c.provider) not in avoid]
+        # STRICT: a checker never comes from a company that wrote or edited the work (`exclude` holds company names,
+        # e.g. from AIResult.companies(); provider names like "cloudflare2" also work). There is no fallback.
+        avoid = {host_company(p) for p in (exclude or set())}
+        cands = [only] if only else [c for c in self.candidates(role) if not (companies(c.provider, c.model) & avoid)]
         if not cands:
+            if avoid and self.candidates(role):
+                raise QuotaError(f"No independent AI available for '{role}': every available model comes from a company "
+                                 f"that wrote this ({', '.join(sorted(avoid))}). Add a key from another company, or "
+                                 "wait for quotas to reset.")
             raise QuotaError(f"No free AI provider available for role '{role}'. Add API keys or wait for quotas to reset.")
+        if prefer:  # e.g. a fix goes to a company that already wrote this, so more companies stay free to check it
+            cands.sort(key=lambda c: not (companies(c.provider, c.model) <= prefer))
         last_error: Exception | None = None
         first = cands[0]
 

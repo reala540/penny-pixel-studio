@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildTimeline, inFilter, jobTitle, type JobRow } from "./activity";
+import { buildTimeline, inFilter, jobTitle, stillFailing, type JobRow } from "./activity";
 import { isCleared, visibleAfterClear } from "./clear";
 import { fixFor } from "./labels";
 
@@ -44,5 +44,20 @@ describe("activity timeline", () => {
     expect(isCleared(map, "activity", "2026-10-25T09:00:01Z")).toBe(false);
     expect(isCleared(map, "missions", "2026-10-25T08:00:00Z")).toBe(false);
     expect(visibleAfterClear([{ at: "2026-10-25T08:00:00Z" }, { at: "2026-10-25T10:00:00Z" }], map, "activity", (x) => x.at)).toHaveLength(1);
+  });
+});
+
+describe("problems that were fixed", () => {
+  it("a retry that worked clears the earlier failure of the same package, and only that one", () => {
+    const failed = [
+      { id: "a", job_type: "produce_idea", project_id: "p1", input: { content_idea_id: "i1" }, updated_at: "2026-10-24T20:15:00Z" },
+      { id: "b", job_type: "produce_idea", project_id: "p2", input: { content_idea_id: "i2" }, updated_at: "2026-10-24T20:15:00Z" },
+      { id: "c", job_type: "generate_ideas", project_id: null, input: {}, updated_at: "2026-10-24T21:00:00Z" },
+    ];
+    const done = [
+      { job_type: "produce_idea", project_id: "p1", input: { content_idea_id: "i1" }, updated_at: "2026-10-24T20:44:00Z" },
+      { job_type: "generate_ideas", project_id: null, input: {}, updated_at: "2026-10-24T20:00:00Z" },  // before: doesn't count
+    ];
+    expect(stillFailing(failed, done).map((f) => f.id)).toEqual(["b", "c"]);
   });
 });

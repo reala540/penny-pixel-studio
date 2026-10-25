@@ -109,6 +109,27 @@ class CriticReport(BaseModel):
         return min(self.hook, self.originality, self.clarity, self.pacing, self.value)
 
 
+class OutlineSection(BaseModel):
+    name: str = Field(description="Short section heading")
+    kind: Literal["problem", "learn", "body", "limits", "wrap"] = "body"
+    purpose: str = Field(description="What this section must achieve for the viewer, in one sentence")
+    fact_keys: list[str] = Field(default_factory=list, description="Fact keys (F1...) this section uses")
+
+
+class Outline(BaseModel):
+    title: str
+    hook: str
+    promise: str = Field(description="One sentence: what the viewer will get")
+    hook_candidates: list[str] = Field(default_factory=list)
+    sections: list[OutlineSection]
+    cta: str
+
+
+class SectionDraft(BaseModel):
+    scenes: list[Scene]
+    claims: list[Claim] = Field(default_factory=list)
+
+
 class SceneRewrite(BaseModel):
     scenes: list[Scene]
 

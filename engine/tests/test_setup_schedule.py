@@ -79,7 +79,7 @@ def test_config_sync_keeps_the_dashboard_schedule_and_stores_defaults(synced):
     reset_role(c)
     produce.sync_config(c)
     assert account(c, "X")["weekly_targets"]["posting_times"] == ["06:30"]
-    assert db.get_setting(c, "posting_schedule_defaults")["X"]["posting_times"] == ["08:30"]
+    assert db.get_setting(c, "posting_schedule_defaults")["X"]["posting_times"] == ["17:30"]
 
 
 def test_dashboard_saved_secrets_win_and_bad_ones_are_reported(synced, monkeypatch):

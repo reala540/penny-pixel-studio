@@ -46,7 +46,10 @@ def conn(db_url, tmp_path, monkeypatch):
         monkeypatch.delenv(k, raising=False)
     c = db.connect(db_url)
     tables = [r["tablename"] for r in db.all_(c, "select tablename from pg_tables where schemaname='public'")]
+    # throwaway test database: switch the permanence triggers off only for this wipe between tests
+    c.execute("set session_replication_role = replica")
     c.execute("truncate " + ", ".join(f"public.{t}" for t in tables) + " restart identity cascade")
+    c.execute("set session_replication_role = origin")
     c.execute("delete from storage.objects")
     yield c
     c.close()
@@ -57,4 +60,5 @@ def synced(conn):
     from studio import produce
 
     produce.sync_config(conn)
+    db.run(conn, "update channel_profiles set launch_date = null")  # tests set launch dates themselves
     return conn

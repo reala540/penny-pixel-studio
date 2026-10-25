@@ -164,7 +164,7 @@ def test_failed_assessment_scores_on_evidence_only_and_says_so(sources):
     c = sources
     g.run(c, FakeRouter(fail_assessment=True), overrides={"refresh_sources": False, "notify": False})
     run = db.one(c, "select * from idea_runs")
-    assert any("AI assessment failed" in n for n in run["notes"])
+    assert any("No independent AI could score the ideas" in n for n in run["notes"])
     for r in db.all_(c, "select * from generated_ideas"):
         assert float(r["total"]) <= 70 and "assessment unavailable" in r["score_explanation"]
 
@@ -211,4 +211,5 @@ def test_config_is_validated_and_shapes_research():
     assert rc["adapters"]["google_news_rss"]["enabled"] is False          # not an allowed source
     glob = g.research_config_for(g.validate_config({"categories": ["AI tools"]}))
     assert "AI tools" in glob["adapters"]["google_news_rss"]["queries"]["ai"]
-    assert glob["adapters"]["google_trends_rss"]["geo"] == g.GLOBAL_TRENDS_GEOS
+    assert glob["adapters"]["google_trends_rss"]["geo"] == ["US", "GB", "CA", "AU", "DE", "NL", "CH", "SG"]
+    assert g.channel_markets(["money"]) == ["US", "CA", "GB", "AU", "CH", "SG"]

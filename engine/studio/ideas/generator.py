@@ -25,7 +25,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from .. import config, db, jobs, notify
-from ..ai.router import Router
+from ..ai.router import Router, companies
 from ..research import engine as research
 from ..research.sources import ADAPTERS
 from ..similarity import lexical_similarity, tokens
@@ -34,7 +34,14 @@ WEIGHTS = {"trend": 70, "originality": 10, "international": 10, "feasibility": 5
 EVIDENCE_DAYS = 14
 DUPLICATE_SIMILARITY = 0.45          # TF-IDF cosine on title + summary
 DIVERSITY_SIMILARITY = 0.35
-GLOBAL_TRENDS_GEOS = ["US", "GB", "IN", "NG", "KE", "ZA", "CA", "AU"]
+def channel_markets(channels: list[str]) -> list[str]:
+    """The channels' target countries in priority order (config/brand.yaml), used when no region is chosen."""
+    out: list[str] = []
+    for c in channels:
+        for m in (config.brand()["channels"].get(c, {}).get("audience_profile") or {}).get("markets") or []:
+            if m not in out:
+                out.append(m)
+    return out or ["US"]
 SENSITIVE_WORDS = set("""election elections vote voting war wars military religion religious abortion vaccine vaccines
 medical medicine diagnosis cure cancer suicide crypto bitcoin gambling betting lawsuit politics political immigration
 """.split())
@@ -89,12 +96,13 @@ def research_config_for(cfg: dict) -> dict:
     for name, a in (rc.get("adapters") or {}).items():
         if name in ADAPTERS and name not in cfg["sources"]:
             a["enabled"] = False
-    regions = cfg["region"] if isinstance(cfg["region"], list) else None
+    chosen = cfg["region"] if isinstance(cfg["region"], list) else None
+    regions = chosen or channel_markets(cfg["channels"])  # default: the channels' own target countries
     lang = cfg["languages"][0]
     news = rc.get("adapters", {}).get("google_news_rss")
     if news:
-        if regions:
-            news["gl"], news["hl"] = regions[0], f"{lang}-{regions[0]}"
+        if chosen:
+            news["gl"], news["hl"], news["editions"] = chosen[0], f"{lang}-{chosen[0]}", chosen[:4]
         else:
             news["hl"] = f"{lang}-{news.get('gl', 'US')}"
         for cat in cfg["categories"][:6]:
@@ -105,7 +113,7 @@ def research_config_for(cfg: dict) -> dict:
                 news["queries"][topic].append(cat)
     trends = rc.get("adapters", {}).get("google_trends_rss")
     if trends:
-        trends["geo"] = regions or GLOBAL_TRENDS_GEOS
+        trends["geo"] = regions
     return rc
 
 
@@ -236,7 +244,8 @@ class AssessmentList(BaseModel):
 def _brief(cfg: dict) -> str:
     brand = config.brand()
     chans = [brand["channels"][c] for c in cfg["channels"]]
-    region = "a global audience" if cfg["region"] == "global" else "audiences in " + ", ".join(cfg["region"])
+    markets = cfg["region"] if isinstance(cfg["region"], list) else channel_markets(cfg["channels"])
+    region = "viewers in " + ", ".join(markets) + " (in that order of priority)"
     audience = cfg["audience"] or "; ".join(c["audience_profile"]["who"] for c in chans)
     return (f"Studio: {brand['brand']['name']}. Channels: "
             + "; ".join(f"{c['display_name']} ({c['topic_focus']})" for c in chans)
@@ -426,7 +435,7 @@ def run(conn, router: Router, *, trigger: str = "manual", job_id=None, overrides
             except Exception as exc:
                 notes.append(f"Idea round {round_no + 1} failed: {str(exc)[:160]}")
                 continue
-            used_providers.add(res.provider)
+            used_providers |= companies(res.provider, res.model)  # later rounds and the scorer use other companies
             if res.substituted_from:
                 notes.append(f"{res.substituted_from} was unavailable; {res.provider}/{res.model} proposed ideas instead.")
             for c in res.data.ideas:
@@ -457,14 +466,9 @@ def run(conn, router: Router, *, trigger: str = "manual", job_id=None, overrides
             if ar.substituted_from:
                 notes.append(f"{ar.substituted_from} was unavailable; {assessed_by} assessed the ideas instead.")
             assessments = {a.id.strip().upper(): a for a in ar.data.assessments}
-        except Exception as exc:
-            try:  # the independent reviewer failed: any available model is better than none, and we say so
-                ar = assess(router, cfg, candidates, exclude=set())
-                assessed_by = f"{ar.provider}/{ar.model}"
-                assessments = {a.id.strip().upper(): a for a in ar.data.assessments}
-                notes.append(f"No independent reviewer was available; {assessed_by} (also a proposer) assessed the ideas.")
-            except Exception:
-                notes.append(f"AI assessment failed ({str(exc)[:120]}); ideas are scored on trend evidence only.")
+        except Exception as exc:  # STRICT: a proposer's company never scores its own ideas, even as a fallback
+            notes.append(f"No independent AI could score the ideas ({str(exc)[:120]}); they're scored on trend "
+                         "evidence only.")
 
         jobs.progress(conn, "Step 5 of 5: ranking and saving the best ideas", 5, 5)
         scored = []
@@ -540,7 +544,7 @@ def refine(conn, router: Router, idea_id, note: str) -> dict:
             "markets": new.markets}
     a = None
     try:
-        ar = assess(router, cfg, [item], exclude={res.provider})
+        ar = assess(router, cfg, [item], exclude=set(companies(res.provider, res.model)))
         a = next((x for x in ar.data.assessments if x.id.strip().upper() == "I1"), None)
     except Exception:
         pass

@@ -1,4 +1,4 @@
-# Penny & Pixel Studio — AI Content Studio v2.6
+# Penny & Pixel Studio — AI Content Studio v2.7
 
 A free-first, mostly automated content studio for two faceless YouTube channels (**Penny & Pixel AI** with host
 Pixel, **Penny & Pixel Money** with host Penny), a Facebook Page, TikTok and X.
@@ -7,6 +7,17 @@ Pixel, **Penny & Pixel Money** with host Penny), a Facebook Page, TikTok and X.
 - Specification: [docs/SPEC_v2.1.md](docs/SPEC_v2.1.md) · Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) ·
   Providers and free limits: [docs/PROVIDERS_AND_LIMITS.md](docs/PROVIDERS_AND_LIMITS.md) ·
   Mission Control: [docs/CONTROL_ROOM.md](docs/CONTROL_ROOM.md) · Ideas, themes and API keys: [docs/IDEAS_AND_API_KEYS.md](docs/IDEAS_AND_API_KEYS.md) · Auto Review & Post: [docs/AUTO_REVIEW_AND_POST.md](docs/AUTO_REVIEW_AND_POST.md) · Setup, Activity and schedule: [docs/SETUP_ACTIVITY_SCHEDULE.md](docs/SETUP_ACTIVITY_SCHEDULE.md) · What was tested: [docs/TEST_REPORT.md](docs/TEST_REPORT.md)
+
+## New in v2.7
+
+- **Strictly independent checks**: every company that writes or edits text (by host and by model maker) is kept away from every check: facts, critic, hook choice, idea scoring and the final publishing review. No fallback: a step waits instead.
+- **Strict audit trail**: the audit log is append-only and hash-chained (`audit_chain_problems()` lists any tampering); every status change of packages, posts and schedules is recorded automatically.
+- **Strictly no duplicate uploads**: an attempt is recorded before anything is sent; an unclear attempt blocks the post until you retry; the same video or text (SHA-256) can never be posted twice to one account; published posts are permanent.
+- **8-14 minute videos** written from an outline (problem, what you'll learn, 3-5 teaching parts, limits, wrap-up), deepened when short, never padded.
+- **Target countries** per channel (Pixel: US, UK, CA, AU, DE/NL; Penny: US, CA, UK, AU, CH/SG); off-topic trending searches no longer become ideas.
+- **Launch dates** (Pixel 25 Oct, Penny 1 Nov 2026) and a smaller starting schedule timed for US viewers.
+- **YouTube sign-in asks for read-only analytics and revenue reports**, ready for per-video results.
+- **Migration 10** (`20261027000010_strict_audit_publishing.sql`): apply after merging (First-time setup → keys_only, or `studio migrate`).
 
 ## New in v2.6
 

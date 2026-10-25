@@ -54,6 +54,14 @@ const AUDIT_TEXT: Record<string, (d: Record<string, unknown>) => string> = {
 
 export const isTopJob = (j: Pick<JobRow, "job_type">) => j.job_type in JOB_LABEL;
 
+type JobLike = { job_type: string; project_id?: string | null; input?: any; updated_at: string };
+const sameWork = (j: JobLike) => [j.job_type, j.project_id ?? "", j.input?.content_idea_id ?? j.input?.generated_idea_id ?? ""].join("|");
+
+/** Failures a later run of the same job (same package or idea) has since fixed don't need anyone any more. */
+export function stillFailing<T extends JobLike>(failed: T[], finished: JobLike[]): T[] {
+  return failed.filter((f) => !finished.some((d) => sameWork(d) === sameWork(f) && d.updated_at > f.updated_at));
+}
+
 export function jobTitle(j: JobRow): string {
   const base = JOB_LABEL[j.job_type] ?? j.job_type.replace(/_/g, " ");
   const what = j.content_projects?.title;

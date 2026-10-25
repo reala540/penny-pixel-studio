@@ -13,11 +13,15 @@ from .. import config, db, similarity
 from ..ai.router import Router
 from .sources import ADAPTERS, Fetcher, SourceItem
 
-AI_WORDS = set("ai llm gpt model models chatbot openai anthropic claude gemini nvidia agent agents robot automation "
-               "machine learning neural chip chips software app tool tools deepmind copilot mistral open-source".split())
+AI_WORDS = set("ai llm gpt chatgpt model models chatbot openai anthropic claude gemini nvidia agent agents robot robots "
+               "automation machine learning neural chip chips software app apps tool tools deepmind copilot mistral "
+               "open-source iphone android apple microsoft google meta samsung tech cyber hack hacked cloud quantum "
+               "deepfake grok perplexity midjourney".split())
 MONEY_WORDS = set("money finance financial budget budgeting invest investing investment stock stocks salary pay "
                   "inflation rate rates interest mortgage debt loan loans savings save tax taxes economy economic "
-                  "jobs job career income bank banks credit retirement pension wealth price prices".split())
+                  "jobs job career income bank banks credit retirement pension wealth price prices tariff tariffs rent "
+                  "fed irs 401k ira layoffs hiring wage wages cost costs mortgage insurance gold dollar stimulus "
+                  "unemployment recession".split())
 CRED_WEIGHT = {"official": 1.0, "primary_data": 1.0, "reputable_media": 0.7, "community": 0.4, "unrated": 0.3}
 
 
