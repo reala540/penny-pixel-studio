@@ -94,3 +94,19 @@ def test_fact_sheets_read_the_article_text_not_just_the_headline(monkeypatch):
     facts, _, _ = pipeline.build_fact_sheet(router, {"title": "AI ROI"}, sources)
     assert "42% of firms saw no gain" in seen[0]
     assert facts.facts  # numbers found in the article text count as grounded
+
+
+def test_a_section_written_too_short_gets_one_follow_up(monkeypatch):
+    from studio.script.models import Fact, FactSheet
+
+    monkeypatch.setattr(pipeline, "SHORT_SECTION", 0.6)
+    router = ScriptedRouter(monkeypatch)
+    facts = FactSheet(facts=[Fact(key=f"F{i}", text=f"Fact {i} from the report.", source_ref="S1") for i in range(1, 7)],
+                      context="")
+    script, _ = pipeline.draft(router, "ai", {"title": "AI ROI", "angle": ""}, facts)
+    follow_ups = sum(1 for sc in script.scenes if sc.visual.headline == "More")
+    assert follow_ups >= 1
+    assert [r for r, _ in router.calls].count("scriptwriter") == 1 + 7 + follow_ups  # outline, 7 sections, follow-ups
+    monkeypatch.setattr(pipeline, "SHORT_SECTION", 0)
+    again, _ = pipeline.draft(ScriptedRouter(monkeypatch), "ai", {"title": "AI ROI", "angle": ""}, facts)
+    assert not any(sc.visual.headline == "More" for sc in again.scenes)

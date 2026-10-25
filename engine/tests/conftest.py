@@ -43,6 +43,7 @@ def offline_research(monkeypatch):
 
     monkeypatch.setattr(deepen, "fetcher", lambda: None)
     monkeypatch.setattr(pipeline, "MIN_LONG_FACTS", 3)
+    monkeypatch.setattr(pipeline, "SHORT_SECTION", 0)  # sample sections are short on purpose: renders stay quick
 
 
 TABLES_KEEP = {"schema_migrations"}
