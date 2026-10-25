@@ -1,4 +1,4 @@
-# Penny & Pixel Studio — AI Content Studio v2.9
+# Penny & Pixel Studio — AI Content Studio v3.0
 
 A free-first, mostly automated content studio for two faceless YouTube channels (**Penny & Pixel AI** with host
 Pixel, **Penny & Pixel Money** with host Penny), a Facebook Page, TikTok and X.
@@ -7,6 +7,13 @@ Pixel, **Penny & Pixel Money** with host Penny), a Facebook Page, TikTok and X.
 - Specification: [docs/SPEC_v2.1.md](docs/SPEC_v2.1.md) · Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) ·
   Providers and free limits: [docs/PROVIDERS_AND_LIMITS.md](docs/PROVIDERS_AND_LIMITS.md) ·
   Mission Control: [docs/CONTROL_ROOM.md](docs/CONTROL_ROOM.md) · Ideas, themes and API keys: [docs/IDEAS_AND_API_KEYS.md](docs/IDEAS_AND_API_KEYS.md) · Auto Review & Post: [docs/AUTO_REVIEW_AND_POST.md](docs/AUTO_REVIEW_AND_POST.md) · Setup, Activity and schedule: [docs/SETUP_ACTIVITY_SCHEDULE.md](docs/SETUP_ACTIVITY_SCHEDULE.md) · What was tested: [docs/TEST_REPORT.md](docs/TEST_REPORT.md)
+
+## New in v3.0
+
+- **Stop & clear** (Activity → Running now): one button stops everything that is making content (the GitHub runs and the engine, which stops at its next step) and erases what that work made, from the ideas it started from to the research, scripts, videos, files and planned posts. Packages you approved or scheduled and anything published are kept; the audit log records it.
+- **Held packages don't wait forever**: when Smart Mode holds a package because it is sensitive, you get a reminder in the app and on Telegram after 12 hours. After 24 hours the studio makes a safer package from an evergreen, non-sensitive idea and only then erases the held one. At most 2 per channel per week; trust periods, quality or policy problems and anything approved, scheduled or published always wait for you. Change it in Settings → Automation.
+- **Ideas say whether they are evergreen** (judged by the independent assessor). Before, every generated idea counted as news, so Smart Mode held all of them.
+- **Migration 11** (`20261028000011_stop_clear_auto_replace.sql`): apply after merging.
 
 ## New in v2.9
 
