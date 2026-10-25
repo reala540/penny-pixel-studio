@@ -48,7 +48,8 @@ type ProviderRow = {
   circuit_open_until: string | null;
 };
 type ModelRow = { provider: string; model: string; roles: string[]; enabled: boolean };
-type AccountRow = { id: string; label: string; oauth_connections?: { status: string }[] | null };
+// One connection per account, so the database returns an object; older responses used a one-item list.
+type AccountRow = { id: string; label: string; oauth_connections?: { status: string } | { status: string }[] | null };
 type Filter = "all" | "research" | "writing" | "review";
 
 const ROLE_GROUP: Record<string, Exclude<Filter, "all">> = {
@@ -157,7 +158,10 @@ export default function ControlRoom({ demo = false, embedded = false }: { demo?:
   const failed = jobs.filter((j) => ["failed", "blocked", "needs_review"].includes(j.status));
   const activeProviders = new Set(activity.filter((a) => Date.now() - Date.parse(a.created_at) < 90_000).map((a) => a.provider));
   const filtered = activity.filter((a) => filter === "all" || ROLE_GROUP[a.role ?? ""] === filter);
-  const connected = accounts.filter((a) => a.oauth_connections?.[0]?.status === "connected").length;
+  const connected = accounts.filter((a) => {
+    const c = a.oauth_connections;
+    return (Array.isArray(c) ? c[0] : c)?.status === "connected";
+  }).length;
   const lastUpdate = activity[0]?.created_at;
 
   const refresh = () => {

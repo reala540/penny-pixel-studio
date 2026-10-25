@@ -11,8 +11,16 @@ runs:
     - name: System packages (FFmpeg, Inter font)
       shell: bash
       run: |
-        sudo apt-get update -qq
-        sudo apt-get install -y -qq ffmpeg fonts-inter fonts-dejavu-core > /dev/null
+        # a slow or broken package mirror must not hang the run: each try is limited, and tried three times
+        apt="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+        for try in 1 2 3; do
+          if timeout 150 sudo apt-get $apt update -qq && \
+             timeout 240 sudo apt-get $apt install -y -qq ffmpeg fonts-inter fonts-dejavu-core > /dev/null; then
+            exit 0
+          fi
+          echo "Package download try $try didn't finish; trying again"; sleep 10
+        done
+        exit 1
     - name: Cache voice models and rendered scenes
       uses: actions/cache@v5
       with:
