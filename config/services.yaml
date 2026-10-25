@@ -55,7 +55,7 @@ render:
 
 # Auto Review & Post only ever approves low-risk packages ("Smart Mode"). See engine/studio/review/auto.py.
 smart_mode:
-  trust_period: { ai: 5, money: 10 }   # packages you approve yourself before the studio may approve any for you
+  trust_period: { ai: 0, money: 10 }   # packages you approve yourself before the studio may approve any for you (Pixel: none, owner's choice)
 
 publishing:
   ai_disclosure:

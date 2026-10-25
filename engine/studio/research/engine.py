@@ -113,12 +113,15 @@ def recent_sources(conn, channel: str, days: int = 21, limit: int = 60) -> list[
          limit %s""", (channel, days, limit))
 
 
-def source_block(sources: list[dict]) -> str:
+def source_block(sources: list[dict], body_chars: int = 0) -> str:
+    """Sources as <source> tags. `body_chars` adds that much of each article's full text (fact sheets need it)."""
     lines = []
     for i, s in enumerate(sources, 1):
         when = s["published_at"].date().isoformat() if s.get("published_at") else "date unknown"
+        body = (s.get("body_text") or "")[:body_chars] if body_chars else ""
         lines.append(f'<source id="S{i}" publisher="{s.get("publisher") or s["adapter"]}" published="{when}" '
-                     f'credibility="{s["credibility"]}">{s["title"]} — {(s.get("summary") or "")[:300]}</source>')
+                     f'credibility="{s["credibility"]}">{s["title"]} — {(s.get("summary") or "")[:300]}'
+                     f'{chr(10) + body if body else ""}</source>')
     return "\n".join(lines)
 
 

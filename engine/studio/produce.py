@@ -13,6 +13,7 @@ from .errors import NeedsReview
 from .media import render as rendering
 from .media import stock, thumbnails
 from .media.visuals import Theme
+from .research import deepen
 from .research import engine as research
 from .script import pipeline
 from .script.models import Script, ShortScript
@@ -222,6 +223,12 @@ def produce_project(conn, router: Router, storage, idea: dict, week: date, *, pr
     project = project or ensure_project(conn, channel, "long", idea["title"], week, idea_id=idea["id"])
     pid = project["id"]
     report = stage or (lambda *_: None)
+    if not project.get("current_script_version_id"):
+        report("Reading the full articles behind this idea", 1, 4)
+        try:  # a feed line is too little for an honest 8-14 minute video: read the articles and add related ones
+            print("deep research:", deepen.deepen(conn, router, idea, channel), flush=True)
+        except Exception as exc:  # research problems never block: the fact gate in the script step decides
+            print("deep research failed:", str(exc)[:200], flush=True)
     sources = _sources_for(conn, list(idea["source_ids"]))
     idea_d = {"title": idea["title"], "angle": idea.get("angle") or ""}
     holder: dict = {}

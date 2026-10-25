@@ -1,4 +1,4 @@
-# Penny & Pixel Studio — AI Content Studio v2.8
+# Penny & Pixel Studio — AI Content Studio v2.9
 
 A free-first, mostly automated content studio for two faceless YouTube channels (**Penny & Pixel AI** with host
 Pixel, **Penny & Pixel Money** with host Penny), a Facebook Page, TikTok and X.
@@ -8,9 +8,17 @@ Pixel, **Penny & Pixel Money** with host Penny), a Facebook Page, TikTok and X.
   Providers and free limits: [docs/PROVIDERS_AND_LIMITS.md](docs/PROVIDERS_AND_LIMITS.md) ·
   Mission Control: [docs/CONTROL_ROOM.md](docs/CONTROL_ROOM.md) · Ideas, themes and API keys: [docs/IDEAS_AND_API_KEYS.md](docs/IDEAS_AND_API_KEYS.md) · Auto Review & Post: [docs/AUTO_REVIEW_AND_POST.md](docs/AUTO_REVIEW_AND_POST.md) · Setup, Activity and schedule: [docs/SETUP_ACTIVITY_SCHEDULE.md](docs/SETUP_ACTIVITY_SCHEDULE.md) · What was tested: [docs/TEST_REPORT.md](docs/TEST_REPORT.md)
 
+## New in v2.9
+
+- **Deep research before every long video**: the studio reads the full articles behind an idea (not just the feed headline) and adds related, independent sources: Wikipedia background and articles found through Hacker News search, one per publisher, up to 10 sources. Fact sheets now see the article text and aim for 12-25 facts.
+- **Material check**: a long video needs at least 10 checkable facts. With fewer, the package stops *before* any writing, with a clear message, instead of padding or inventing numbers.
+- **Sections are written to length**: when a model writes a section at under 60% of its length, it is asked once to continue with a worked example, a concrete step or a fact.
+- **Pixel posts by itself**: Pixel's trust period is off (owner's choice). Smart Mode still holds time-sensitive topics and partly supported facts for you. Penny keeps her 10-video trust period.
+- No new migration.
+
 ## New in v2.8
 
-- **Smart Mode for Auto Review & Post**: a package posts by itself only when it is low risk. These always wait for you: the first 5 Pixel and first 10 Penny packages you approve (trust period), time-sensitive topics, sensitive money advice (taxes, debt, investing picks, guarantees) and any fact only partly backed by a source.
+- **Smart Mode for Auto Review & Post**: a package posts by itself only when it is low risk. These always wait for you: the first 10 Penny packages you approve (trust period; Pixel has none), time-sensitive topics, sensitive money advice (taxes, debt, investing picks, guarantees) and any fact only partly backed by a source.
 - **Money math is recalculated by code**, not judged by an AI: each number claim carries its formula; inputs must come from the sources or be stated, and a wrong result is fixed or the package waits.
 - **No invented hands-on tests**: "I tested / we tried" sentences are removed from scripts, titles and posts. Pixel researches and compares from dated sources.
 - **Money titles name the country** whose rules they use (for example "(US)" for a 401(k) video).

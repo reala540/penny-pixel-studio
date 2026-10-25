@@ -35,6 +35,16 @@ def db_url():
         c.execute(f"drop database if exists {name} with (force)")
 
 
+@pytest.fixture(autouse=True)
+def offline_research(monkeypatch):
+    """Tests never go to the network, and the small sample sources make fewer facts than a real idea needs."""
+    from studio.research import deepen
+    from studio.script import pipeline
+
+    monkeypatch.setattr(deepen, "fetcher", lambda: None)
+    monkeypatch.setattr(pipeline, "MIN_LONG_FACTS", 3)
+
+
 TABLES_KEEP = {"schema_migrations"}
 
 
