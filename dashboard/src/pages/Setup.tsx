@@ -284,9 +284,11 @@ function AiStep({ done }: { done: boolean }) {
 
 const PLATFORM_STEPS: Record<Platform, { n: number; names: [string, string]; labels: [string, string]; where: ReactNode }> = {
   youtube: { n: 3, names: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"], labels: ["Client ID", "Client secret"], where: <>
-    Go to <b>console.cloud.google.com</b> → create a project → <b>APIs &amp; Services → Library</b> → enable <b>YouTube Data API v3</b>.
-    Then <b>OAuth consent screen</b> (External, add yourself as a test user) → <b>Credentials → Create credentials → OAuth client ID → Web application</b>.
-    Under <b>Authorised redirect URIs</b> paste the address below, create it, and copy the Client ID and Client secret here.</> },
+    Go to <b>console.cloud.google.com</b> → create a project → <b>APIs &amp; Services → Library</b> → enable <b>YouTube Data API v3</b> and
+    <b>YouTube Analytics API</b>. Then <b>Google Auth Platform</b>: Branding (External), Data Access (scopes <b>youtube.upload</b>, <b>youtube.readonly</b>,
+    <b>yt-analytics.readonly</b>, <b>yt-analytics-monetary.readonly</b>), Audience → <b>Publish app</b> (In production, so logins don't expire weekly),
+    then <b>Clients → Create client → Web application</b>. Under <b>Authorised redirect URIs</b> paste the address below, create it, and copy the
+    Client ID and Client secret here.</> },
   facebook: { n: 4, names: ["FACEBOOK_APP_ID", "FACEBOOK_APP_SECRET"], labels: ["App ID", "App secret"], where: <>
     Go to <b>developers.facebook.com → My Apps → Create app</b> (type Business). Add <b>Facebook Login for Business</b>; in its settings paste the address below under
     <b> Valid OAuth Redirect URIs</b>. Then <b>App settings → Basic</b>: copy the App ID and App secret here.</> },
