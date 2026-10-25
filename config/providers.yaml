@@ -150,11 +150,16 @@ providers:
         daily_requests: 40
         context: 200000
         priority: 40
-      - id: minimax-m3.1-flash:cloud
+      - id: minimax-m2.5:cloud
         roles: [claim_checker, critic]
         daily_requests: 40
         context: 200000
         priority: 45
+      - id: cogito-2.1:671b-cloud
+        roles: [claim_checker, critic]
+        daily_requests: 40
+        context: 128000
+        priority: 50
 
   # ---------------- Tier 3 (no-key emergency backups) ----------------
   llm7:

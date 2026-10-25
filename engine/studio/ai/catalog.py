@@ -39,7 +39,15 @@ def _version(model_id: str) -> tuple:
     return (stable, *nums)
 
 
+def _plain(model_id: str) -> str:
+    """'glm-4.7:cloud' and 'glm-4.7-cloud' are the same model as 'glm-4.7' (the hosted name differs by suffix)."""
+    return re.sub(r"(?::|-)cloud$", "", model_id.removeprefix("models/").lower())
+
+
 def pick_substitute(missing: str, available: list[str], free_only: bool = False) -> str | None:
+    same_model = [m for m in available if _plain(m) == _plain(missing)]
+    if same_model:  # the same model under its listed name: never swap it for a different (maybe paid) one
+        return same_model[0]
     fam = family(missing)
     pool = [m for m in available if not NOT_CHAT.search(m) and (not free_only or m.endswith(":free"))]
     same = [m for m in pool if family(m) == fam]

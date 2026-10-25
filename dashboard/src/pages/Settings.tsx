@@ -78,7 +78,7 @@ function KeyCheckPanel() {
   const keyCheck = useKeyCheck();
   const results = check.data?.results ?? [];
   return (
-    <Section id="key-check" title="AI key check" intro="One short test request per service. A pass means the key works with at least one model; it doesn't prove every model or job works.">
+    <Section id="key-check" title="AI key check" intro="One short test request for every model that's switched on, with the keys the studio really uses: built-in services, services you added, and keys saved here or in GitHub secrets.">
       <div className="max-w-3xl rounded-xl border border-line bg-surface p-4 text-sm">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p>{ready.checkedAt ? <>Last checked {new Date(ready.checkedAt).toLocaleString()}{ready.stale && <span className="ml-1 font-medium text-alert">(older than {STALE_HOURS} hours: results may have changed)</span>}</> : "Not checked yet."}</p>
@@ -91,7 +91,8 @@ function KeyCheckPanel() {
             {results.map((r) => (
               <li key={r.provider} className="flex items-start gap-2">
                 <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${r.status === "ok" ? "bg-penny" : r.status === "no key" ? "bg-line" : "bg-alert"}`} aria-hidden />
-                <span><span className="font-medium">{r.provider}</span>: <span className="text-muted">{r.status === "ok" ? r.note ?? "works" : r.status === "no key" ? "no key" : (r.error ?? "failed").slice(0, 120)}</span></span>
+                <span><span className="font-medium">{r.provider}</span>: <span className="text-muted">{r.status === "ok" ? r.note ?? "works" : r.status === "no key" ? "no key" : (r.error ?? "failed").slice(0, 160)}</span>
+                  {r.status === "ok" && r.error && <span className="block text-xs text-alert">Not working: {r.error.slice(0, 200)}</span>}</span>
               </li>
             ))}
           </ul>

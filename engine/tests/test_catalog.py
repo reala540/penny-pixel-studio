@@ -45,3 +45,10 @@ def test_reads_the_replacement_a_provider_suggests():
            'Please update your code to use models/gemini-3.1-pro-preview for the latest features"')
     assert catalog.suggested_replacement(msg) == "gemini-3.1-pro-preview"
     assert catalog.suggested_replacement("404 not found") is None
+
+
+def test_a_hosted_name_is_the_same_model_not_a_reason_to_swap_it():
+    listed = ["glm-4.7", "glm-5.3", "minimax-m2.5", "gpt-oss:120b"]
+    assert catalog.pick_substitute("glm-4.7:cloud", listed) == "glm-4.7"      # not the newer (paid) glm-5.3
+    assert catalog.pick_substitute("minimax-m2.5-cloud", listed) == "minimax-m2.5"
+    assert catalog.pick_substitute("gpt-oss:120b-cloud", listed) == "gpt-oss:120b"

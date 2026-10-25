@@ -127,7 +127,15 @@ class Router:
         self.client = client or httpx.Client(timeout=httpx.Timeout(120.0, connect=15.0))
         cfg = provider_config if provider_config is not None else config.providers()
         custom = getattr(self.usage, "custom_providers", lambda: {})() if provider_config is None else {}
-        self.cfg = {**cfg, "providers": {**(custom or {}), **(cfg.get("providers") or {})}}
+        providers = {**(custom or {}), **(cfg.get("providers") or {})}
+        extra = getattr(self.usage, "extra_models", lambda: {})() if provider_config is None else {}
+        for name, models in (extra or {}).items():  # models added in the AI API Manager to a built-in provider
+            if name in providers and not providers[name].get("custom"):
+                known = {m["id"] for m in providers[name].get("models", [])}
+                added = [m for m in models if m["id"] not in known]
+                if added:
+                    providers[name] = {**providers[name], "models": list(providers[name].get("models", [])) + added}
+        self.cfg = {**cfg, "providers": providers}
         self.job_id = job_id
         self.pool = CredentialPool(self.usage)
         self.sleep = sleep
