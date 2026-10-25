@@ -1,4 +1,12 @@
-# Test report — v2.6 Five pages and Create one package (24 Oct 2026)
+# Test report — v2.7 Strict checks, audit trail, duplicates, long videos, markets (25 Oct 2026)
+
+| Suite | Result |
+|---|---|
+| Engine (pytest, local PostgreSQL with all 10 migrations, real renders) | **123 passed** (new: a writer's company never checks its work, per video; with too few companies the package waits; equal-rank rotation; extra accounts count as one company; the same video never goes to one account twice, also blocked by the database; a crashed upload waits for the owner, then posts once; the audit log can't be edited or deleted and an edit behind the triggers' back is detected; published posts and attempts are permanent; nothing from a channel is scheduled or sent before its launch day; off-topic trends are dropped; scripts carry each channel's markets) |
+| Worker (vitest + `tsc`) | **47 passed** (Cloudflare key test by short message) |
+| Dashboard (vitest + `tsc`) | **32 passed** (a failure fixed by a later run no longer shows) |
+
+## v2.6 Five pages and Create one package (24 Oct 2026)
 
 | Suite | Result |
 |---|---|
