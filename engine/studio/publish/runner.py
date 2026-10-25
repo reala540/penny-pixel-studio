@@ -224,8 +224,11 @@ def publish_post(conn, storage, post: dict, adapters: dict | None = None, now: d
         db.audit(conn, "publish_attempt_started", "scheduled_post", post["id"],
                  {"attempt": attempt, "account": ctx["account_label"], "sha256": digest})
         variant = dict(ctx)
+        # YouTube's "altered or synthetic content" label: on for every video if configured, and for any video that
+        # contains a realistic AI-generated scene (marked ai_generated in its render recipe)
+        scenes = ((ctx.get("recipe") or {}).get("render") or {}).get("scenes", [])
         variant["synthetic_media"] = bool((config.services()["publishing"].get("ai_disclosure") or {})
-                                          .get("label_synthetic_media", False))
+                                          .get("label_synthetic_media", False)) or any(sc.get("ai_generated") for sc in scenes)
         if ctx["platform"] == "facebook":
             result = adapter.publish(conn, acc, variant, video, thumb, token, tokens.get("page_id") or ctx["external_id"])
         elif ctx["platform"] == "x":

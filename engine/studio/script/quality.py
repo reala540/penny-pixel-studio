@@ -50,6 +50,46 @@ def sentence_stats(text: str) -> dict:
             "max_words": max(lengths or [0]), "repeated_openers": repeated}
 
 
+# The studio researches from sources; it doesn't use tools hands-on, so the script must never say it did.
+INVENTED_TEST = re.compile(r"\b(I|we|I've|we've|I have|we have)\s+(personally\s+)?(tried|tested|been testing|been using|"
+                           r"put .{0,20} to the test|ran .{0,20} through)\b", re.IGNORECASE)
+
+
+def invented_tests(text: str) -> list[str]:
+    return [m.group(0) for m in INVENTED_TEST.finditer(text)]
+
+
+def drop_invented_tests(text: str) -> str:
+    """Remove whole sentences that claim a hands-on test (post texts are short; a sentence is the safe unit)."""
+    parts = re.split(r"(?<=[.!?])\s+", text)
+    return " ".join(p for p in parts if not INVENTED_TEST.search(p)).strip()
+
+
+# Money rules that only apply in one country: a video built on them says which country in its title.
+COUNTRY_TERMS = {
+    "US": r"401\(?k\)?|\bIRAs?\b|\bRoth\b|\bFICO\b|\bIRS\b|\bHSAs?\b|\b529 plans?\b|Social Security|\bFDIC\b|\bW-2\b|\b1099\b|Medicare",
+    "UK": r"\bISAs?\b|\bHMRC\b|\bLISA\b|National Insurance|State Pension",
+    "Canada": r"\bRRSPs?\b|\bTFSAs?\b|\bFHSA\b|\bCRA\b|\bCPP\b",
+    "Australia": r"superannuation|\bATO\b|\bHECS\b|Centrelink",
+}
+COUNTRY_MARK = {"US": r"\b(US|U\.S\.|USA|America|Americans?)\b", "UK": r"\b(UK|U\.K\.|Britain|British)\b",
+                "Canada": r"\bCanad(a|ian)\b", "Australia": r"\bAustralian?\b"}
+
+
+def main_country(text: str) -> str | None:
+    """The country whose money rules a script relies on most, if any."""
+    hits = {c: len(re.findall(p, text, re.IGNORECASE if c == "Australia" else 0)) for c, p in COUNTRY_TERMS.items()}
+    best = max(hits, key=hits.get)
+    return best if hits[best] else None
+
+
+def with_country(title: str, country: str | None, limit: int = 100) -> str:
+    if not country or re.search(COUNTRY_MARK[country], title):
+        return title
+    tagged = f"{title.rstrip()} ({country})"
+    return tagged if len(tagged) <= limit else title
+
+
 def repeated_sentences(text: str, min_words: int = 7) -> list[str]:
     """Sentences (7+ words) that appear more than once: padding, not content."""
     seen = Counter(re.sub(r"[^a-z0-9 ]", "", s.lower()).strip() for s in re.split(r"(?<=[.!?])\s+", text))
@@ -68,6 +108,9 @@ def check_long(script: Script, channel: str) -> list[str]:
         issues.append(f"Too short: about {dur / 60:.1f} min (aim for {MIN_LONG_SECONDS // 60}-{cfg['max_long_minutes']} min)")
     if dur > cfg["max_long_minutes"] * 60:
         issues.append(f"Too long: about {dur / 60:.1f} min (max {cfg['max_long_minutes']})")
+    claimed = invented_tests(script.full_text() + " " + script.hook + " " + script.title)
+    if claimed:
+        issues.append(f"Claims a hands-on test that didn't happen: \"{claimed[0]}\" (say what the sources found)")
     padding = repeated_sentences(script.full_text())
     if padding:
         issues.append(f"Repeats itself to fill time: \"{padding[0][:80]}\"" + (f" and {len(padding) - 1} more" if len(padding) > 1 else ""))
@@ -104,6 +147,9 @@ def check_short(short: ShortScript, channel: str) -> list[str]:
         issues.append(f"Short too thin: ~{dur:.0f}s")
     if not 2 <= len(short.scenes) <= 8:
         issues.append("Short needs 2-8 scenes")
+    claimed = invented_tests(" ".join(s.narration for s in short.scenes) + " " + short.hook + " " + short.title)
+    if claimed:
+        issues.append(f"Claims a hands-on test that didn't happen: \"{claimed[0]}\"")
     issues += _common(" ".join(s.narration for s in short.scenes) + " " + short.hook + " " + short.caption, channel,
                       require_disclaimer=False)
     return issues

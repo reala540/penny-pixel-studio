@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from pathlib import Path
 
-from . import budget, capacity, config, db, jobs, notify, schedule
+from . import budget, capacity, config, db, jobs, notify, schedule, similarity
 from .ai.router import Router
 from .errors import NeedsReview
 from .media import render as rendering
@@ -191,6 +191,29 @@ def ensure_project(conn, channel: str, fmt: str, title: str, week: date, idea_id
     return p
 
 
+REPEAT_SCRIPT = 0.55  # TF-IDF cosine of the whole narration (with word pairs): same topic ~0.3, near copy 0.6+
+REPEAT_TITLE = 0.7
+
+
+def repeats_earlier(conn, channel: str, project_id, script: Script) -> str | None:
+    """The issue to raise if this script is too similar to another long video of the channel from the last 180 days."""
+    rows = db.all_(conn, """select p.title, sv.body from content_projects p join script_versions sv on sv.id = p.current_script_version_id
+                            where p.channel_slug=%s and p.format='long' and p.id<>%s and p.parent_project_id is null
+                              and p.status not in ('rejected','failed') and p.created_at > now() - interval '180 days'
+                            order by p.created_at desc limit 200""", (channel, project_id))
+    if not rows:
+        return None
+    text = " ".join(s.narration for s in script.scenes)
+    others = [" ".join(sc.get("narration", "") for sc in (r["body"] or {}).get("scenes", [])) for r in rows]
+    score, i, _ = similarity.max_similarity(text, others)
+    if score >= REPEAT_SCRIPT:
+        return f"Too similar to an earlier video, '{rows[i]['title']}' ({score:.0%} alike): make it clearly different"
+    t_score, j, _ = similarity.max_similarity(script.title, [r["title"] for r in rows])
+    if t_score >= REPEAT_TITLE:
+        return f"Title too close to an earlier video, '{rows[j]['title']}' ({t_score:.0%} alike)"
+    return None
+
+
 def produce_project(conn, router: Router, storage, idea: dict, week: date, *, project: dict | None = None,
                     stage=None) -> dict:
     """One idea's package. Every stage is resumable: finished stages are skipped when it runs again.
@@ -205,6 +228,10 @@ def produce_project(conn, router: Router, storage, idea: dict, week: date, *, pr
 
     def do_script(_):
         result = pipeline.write_long(router, channel, idea_d, sources)
+        twin = repeats_earlier(conn, channel, pid, result.script)
+        if twin:  # too close to a video the channel already made: a person decides (YouTube penalises repetition)
+            result.issues.append(twin)
+            result.report["issues"] = result.issues
         sv = save_script(conn, pid, result.script.model_dump(), "ai", result.trail, result.claims, result.facts, sources)
         supported = [c for c in result.claims if c["status"] in ("supported", "partially_supported")]
         fresh = None

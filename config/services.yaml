@@ -59,11 +59,13 @@ smart_mode:
 
 publishing:
   ai_disclosure:
-    description_line: "Narrated with an AI voice. Researched with AI tools and reviewed by a human before publishing."
+    # must stay true whoever approves: Smart Mode can approve low-risk videos without a person
+    description_line: "Narrated with an AI voice. Researched with AI tools; every fact is checked against the sources listed above."
     label_synthetic_media: false   # set true if a video shows realistic AI-generated people, places or events
   youtube:
     api_audited: false      # until Google's audit passes, API uploads are locked to private
-    category_id: "27"       # Education
+    category_id: "27"       # Education (fallback)
+    category_ids: { ai: "28", money: "27" }   # Pixel: Science & Technology; Penny: Education
     default_language: "en"
   tiktok:
     direct_post_approved: false   # until TikTok audit passes, use inbox drafts

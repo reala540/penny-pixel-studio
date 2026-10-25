@@ -71,6 +71,11 @@ def _facts_block(facts: FactSheet) -> str:
 
 VISUALS = ("Choose a visual type per scene: chart (only with real numbers from the fact sheet), stat, list, steps, "
            "comparison, quote, title_card or stock (with a short stock_query).")
+CALCULATIONS = ("Any number you work out yourself (a total, a difference, interest, a percentage) is a claim with "
+                "kind=calculation: put the exact arithmetic in expression using only numbers and + - * / ** ( ), "
+                "write percentages as decimals (5% -> 0.05), and state every assumption in the claim text, e.g. "
+                "'Saving $200 a month for 10 years adds up to $24,000' with expression 200*12*10. Code recalculates "
+                "each one: a wrong or unexplained number fails the video.")
 SECTION_GUIDE = {
     "problem": "Straight after the hook, show the concrete problem and the result the viewer will get. No greeting.",
     "learn": "Give a short roadmap: exactly what the viewer will learn, in the order the sections below cover it.",
@@ -138,7 +143,7 @@ def draft(router: Router, channel: str, idea: dict, facts: FactSheet) -> tuple[S
             "Continue naturally from the text above: don't re-introduce the video, don't repeat earlier points, "
             "no filler. " + (f"End with this call to action: {outline.cta} " if sec.kind == "wrap" else "")
             + VISUALS + " List every factual statement in claims (keys C1, C2...) with fact_refs; scenes list the "
-            "claim keys they use; mark opinions kind=opinion."),
+            "claim keys they use; mark opinions kind=opinion. " + CALCULATIONS),
             schema=SectionDraft, temperature=0.8, max_tokens=5000, prefer=wrote)
         wrote |= res.companies()
         tokens_in, tokens_out = tokens_in + res.input_tokens, tokens_out + res.output_tokens
@@ -169,7 +174,7 @@ def rewrite_scenes(router: Router, channel: str, script: Script, scene_numbers: 
     prompt = (f"{voice_brief(channel)}\n\nFact sheet:\n{_facts_block(facts)}\n\nRewrite ONLY these scenes of the "
               f"script '{script.title}' (scene numbers {scene_numbers}):\n{json.dumps(target, indent=1)}\n\n"
               f"Fix these problems:\n- " + "\n- ".join(instructions) +
-              "\n\nKeep claim_keys valid. If a fact cannot be supported, remove that statement. "
+              "\n\nKeep claim_keys valid. If a fact cannot be supported, remove that statement. " + CALCULATIONS + " "
               f"Return exactly {len(scene_numbers)} scenes in the same order.")
     res = router.complete("scriptwriter", prompt, schema=SceneRewrite, temperature=0.6, prefer=prefer)
     if len(res.data.scenes) != len(scene_numbers):
@@ -258,7 +263,8 @@ def write_long(router: Router, channel: str, idea: dict, sources: list[dict]) ->
         for i, sc in enumerate(script.scenes, 1):
             if any(c["key"] in sc.claim_keys for c in bad):
                 targets.append(i)
-        notes += [f"Claim {c['key']} '{c['text']}' is {c['status']}: remove or restate using the fact sheet" for c in bad]
+        notes += [f"Claim {c['key']} '{c['text']}' is {c['status']} ({c['note']}): fix the number or its arithmetic, "
+                  "or remove the statement" for c in bad]
         notes += issues
         if any(x.startswith("Too short") for x in issues):
             notes.append("The video is too short: make each of these scenes about 90-100 words by adding a worked "
@@ -335,4 +341,20 @@ def make_package(router: Router, channel: str, script: Script, facts: FactSheet)
     pkg.shorts = good_shorts
     for field_name in ("youtube_title", "youtube_description", "x_post", "facebook_post"):
         setattr(pkg, field_name, quality.remove_banned(getattr(pkg, field_name)))
+    # never claim a hands-on test: a bad title falls back to the checked script title, other texts lose the sentence
+    if quality.invented_tests(pkg.youtube_title):
+        problems.append(f"Title claimed a hands-on test; using the script title instead ('{pkg.youtube_title}')")
+        pkg.youtube_title = script.title[:100]
+    for field_name in ("youtube_description", "x_post", "facebook_post"):
+        text = getattr(pkg, field_name)
+        if quality.invented_tests(text):
+            setattr(pkg, field_name, quality.drop_invented_tests(text))
+            problems.append(f"Removed a claimed hands-on test from the {field_name.replace('_', ' ')}")
+    # a money video built on one country's rules says so in its title, e.g. "Credit scores explained (US)"
+    if channel == "money":
+        country = quality.main_country(script.full_text() + " " + script.title)
+        tagged = quality.with_country(pkg.youtube_title, country)
+        if tagged != pkg.youtube_title:
+            problems.append(f"Title marked as {country}-specific")
+            pkg.youtube_title = tagged
     return pkg, problems, res.trail()
