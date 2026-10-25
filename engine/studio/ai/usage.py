@@ -112,6 +112,9 @@ class MemoryUsageStore:
     def custom_providers(self):
         return {}
 
+    def extra_models(self):
+        return {}
+
 
 def _locked(fn):
     """psycopg connections may be shared by the router's worker threads; serialise access."""
@@ -282,6 +285,19 @@ class DbUsageStore:
                               where provider=%s and quota_group=%s""", (reason[:500], cred.provider, cred.quota_group))
 
     @_locked
+    def extra_models(self):
+        """Models added in the AI API Manager to a built-in provider: {provider: [model, ...]}."""
+        rows = db.all_(self.conn, """select m.provider, m.model, m.roles, m.daily_request_limit, m.priority
+                                      from ai_model_configs m join ai_providers p on p.name = m.provider
+                                     where p.key_env is not null and m.enabled""")
+        out: dict[str, list[dict]] = {}
+        for m in rows:
+            roles = list(m["roles"] or [])
+            out.setdefault(m["provider"], []).append(
+                {"id": m["model"], "roles": roles, "daily_requests": m["daily_request_limit"], "priority": m["priority"] or 100,
+                 "kind": "embeddings" if roles == ["embeddings"] else "chat"})
+        return out
+
     def custom_providers(self):
         """Providers added in the AI API Manager (not in providers.yaml), with their models."""
         rows = db.all_(self.conn, "select name, enabled, base_url, commercial_use_ok from ai_providers where key_env is null")

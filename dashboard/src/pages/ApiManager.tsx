@@ -5,6 +5,7 @@ import ClearButton from "../components/ClearButton";
 import { Confirm, ErrorNote, Loading, PageHeader, useToast } from "../components/ui";
 import { must, useSetting } from "../lib/api";
 import { isCleared, useCleared } from "../lib/clear";
+import { useKeyCheck } from "../lib/readiness";
 import { callWorker, supabase, workerUrl } from "../lib/supabase";
 
 type Provider = {
@@ -192,7 +193,7 @@ function AddKey({ providers, onDone }: { providers: Provider[]; onDone: () => vo
 }
 
 function ProviderCard({ p, creds, models, usage, envCheck, onChange, toast, errorsSince }: {
-  p: Provider; creds: Cred[]; models: Model[]; usage: Use[]; envCheck?: { status: string; note?: string; error?: string };
+  p: Provider; creds: Cred[]; models: Model[]; usage: Use[]; envCheck?: { status: string; note?: string; error?: string; models?: { model: string; status: string; error?: string }[] };
   onChange: () => void; toast: ReturnType<typeof useToast>; errorsSince?: string;
 }) {
   const guide = guideFor(p.name);
@@ -246,8 +247,9 @@ function ProviderCard({ p, creds, models, usage, envCheck, onChange, toast, erro
                 <td className="px-2 py-3"><span className={`rounded-md px-2 py-0.5 text-xs ${envCheck?.status === "ok" ? HEALTH_TONE.healthy : envCheck?.status === "failed" ? HEALTH_TONE.invalid : HEALTH_TONE.unknown}`}>{envCheck?.status ?? "not checked"}</span></td>
                 <td className="px-2 py-3 text-xs text-muted">Provider's own limits</td>
                 <td className="px-2 py-3"><StatsCell s={envStats} /></td>
-                <td className="px-2 py-3 text-xs text-muted">{envCheck?.note ?? envCheck?.error ?? "Checked by First-time setup (keys only)"}</td>
-                <td className="px-4 py-3 text-right text-xs text-muted">Change it in GitHub secrets</td>
+                <td className="px-2 py-3 text-xs text-muted">{envCheck?.note ?? envCheck?.error ?? "Not checked yet"}
+                  {envCheck?.status === "ok" && envCheck.error && <span className="block text-alert">Not working: {envCheck.error.slice(0, 160)}</span>}</td>
+                <td className="px-4 py-3 text-right text-xs text-muted"><EnvKeyTest /><span className="mt-1 block">Change it in GitHub secrets</span></td>
               </tr>
             )}
             {creds.map((c) => <CredRow key={c.id} c={errorsSince && c.last_error_at && Date.parse(c.last_error_at) <= Date.parse(errorsSince) ? { ...c, last_error: null } : c}
@@ -265,6 +267,18 @@ function ProviderCard({ p, creds, models, usage, envCheck, onChange, toast, erro
       </div>
       </div>}
     </section>
+  );
+}
+
+/** A GitHub-secret key can only be tested by the engine on GitHub, so this runs the studio's key check. */
+function EnvKeyTest() {
+  const toast = useToast();
+  const keyCheck = useKeyCheck();
+  return (
+    <button className="btn-quiet px-2 py-1 text-xs" disabled={keyCheck.running || keyCheck.run.isPending}
+      onClick={() => keyCheck.run.mutate(undefined, { onSuccess: () => toast("Testing every AI key and model. Results appear here in a few minutes."), onError: (e) => toast((e as Error).message, "bad") })}>
+      <FlaskConical size={12} aria-hidden />{keyCheck.running ? "Testing…" : "Test"}
+    </button>
   );
 }
 

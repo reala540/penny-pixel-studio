@@ -255,7 +255,15 @@ def cmd_providers(a):
 
 
 def run_provider_check(conn) -> list[dict]:
-    """The key check, also run as the owner job "check_providers" (the dashboard's Test again)."""
+    """The key check, also run as the owner job "check_providers" (the dashboard's Test again).
+
+    With the database it checks exactly what the studio uses: every enabled provider (built-in and added in the
+    AI API Manager), every model switched on for it, with the keys the router would use. Without a database
+    (a first run on a new machine) it checks the GitHub-secret keys of providers.yaml."""
+    if conn is not None:
+        results = _check_all_models(conn)
+        _report_providers(results, conn)
+        return results
     from .ai import catalog
     from .ai.credentials import ENV_LABEL, Credential
     from .ai.router import Candidate, Router
@@ -311,6 +319,76 @@ def run_provider_check(conn) -> list[dict]:
                                                "providers": found})
     _report_providers(results, conn)
     return results
+
+
+def _check_all_models(conn) -> list[dict]:
+    from concurrent.futures import ThreadPoolExecutor
+
+    from .ai import catalog
+    from .ai.router import Candidate, Router
+    from .ai.usage import DbUsageStore
+
+    cfg = config.providers()
+    found = catalog.refresh(cfg)
+    db.set_setting(conn, "model_catalog", {"checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                           "providers": found})
+    class CheckStore(DbUsageStore):
+        """Each model is judged on its own: one failing model doesn't rest its provider or key for the others,
+        and a provider that is resting is still tested (the result says why it rests)."""
+
+        def open_circuit(self, *a, **k):
+            return None
+
+        def group_rest(self, *a, **k):
+            return None
+
+        def circuit_open(self, *a, **k):
+            return False
+
+        def credential_resting(self, *a, **k):
+            return False
+
+    store = CheckStore(conn)
+    router = Router(store)
+    overrides = store.overrides()
+
+    def check(item) -> dict:
+        name, p = item
+        ov = overrides.get(name, {})
+        if not ov.get("enabled", p.get("enabled", False)):
+            return {"provider": name, "status": "off"}
+        env_key = router._env_key(p)
+        if not env_key and not store.credential_rows(name) and not p.get("key_optional"):
+            return {"provider": name, "status": "no key", "env": p.get("key_env")}
+        missing = ov.get("missing") or {}
+        per_model: list[dict] = []
+        for m in p.get("models", []):
+            mov = (ov.get("models") or {}).get(m["id"], {})
+            if m.get("kind", "chat") != "chat" or (mov and mov.get("enabled") is False):
+                continue
+            model = missing.get(m["id"], m["id"]) if m["id"] in missing else m["id"]
+            if model is None:
+                per_model.append({"model": m["id"], "status": "failed", "error": "no longer offered"})
+                continue
+            cand = Candidate(name, model, p["base_url"].rstrip("/"), env_key, 0, None, None)
+            try:
+                router.complete("test", "Reply with the single word: ready", only=cand, max_tokens=600, temperature=0)
+                per_model.append({"model": model, "status": "ok", **({"replaces": m["id"]} if model != m["id"] else {})})
+            except Exception as exc:
+                per_model.append({"model": model, "status": "failed", "error": _short_error(exc)})
+        ok = [x for x in per_model if x["status"] == "ok"]
+        bad = [x for x in per_model if x["status"] != "ok"]
+        if not per_model:
+            return {"provider": name, "status": "failed", "error": "no chat model switched on", "models": []}
+        out = {"provider": name, "status": "ok" if ok else "failed", "models": per_model,
+               "note": f"{len(ok)} of {len(per_model)} models work: " + ", ".join(x["model"] for x in ok) if ok else None}
+        if bad:
+            out["error"] = "; ".join(f"{x['model']}: {x['error']}" for x in bad)[:400]
+        return out
+
+    with ThreadPoolExecutor(max_workers=6, thread_name_prefix="key-check") as pool:
+        results = list(pool.map(check, sorted((router.cfg.get("providers") or {}).items())))
+    return [r for r in results if r["status"] != "off"]
 
 
 def _short_error(exc: Exception) -> str:
