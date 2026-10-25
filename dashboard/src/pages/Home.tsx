@@ -9,7 +9,7 @@ import { Confirm, ErrorNote, HostTag, Loading, PageHeader, StatusBadge, useToast
 import { must, useAccounts, useSaveSetting, useSetting, useTimezone } from "../lib/api";
 import { useCleared, visibleAfterClear } from "../lib/clear";
 import { fixFor } from "../lib/labels";
-import { jobTitle, useRunningJobs } from "../lib/activity";
+import { jobTitle, stillFailing, useRunningJobs } from "../lib/activity";
 import { fmtDateTime, localDay, statusText, weekDays } from "../lib/format";
 import { useKeyCheck, useReadiness } from "../lib/readiness";
 import { projectPath } from "../lib/routes";
@@ -113,15 +113,18 @@ function NeedsYou({ readiness }: { readiness: ReturnType<typeof useReadiness> })
     refetchInterval: 30_000,
     queryFn: async () => {
       const since = new Date(Date.now() - 3 * 86_400_000).toISOString();
-      const [jobs, posts, review, accounts] = await Promise.all([
+      const types = ["produce_idea", "run_mission", "run_production", "run_research", "generate_ideas", "regenerate_script", "rerender_preview", "weekly_production", "weekly_research"];
+      const [failed, done, posts, review, accounts] = await Promise.all([
         must(supabase.from("generation_jobs").select("id, job_type, error_message, input, project_id, updated_at, content_projects(title)").eq("status", "failed")
-          .in("job_type", ["produce_idea", "run_mission", "run_production", "run_research", "generate_ideas", "regenerate_script", "rerender_preview", "weekly_production", "weekly_research"])
-          .gte("updated_at", since).order("updated_at", { ascending: false }).limit(4)),
+          .in("job_type", types).gte("updated_at", since).order("updated_at", { ascending: false }).limit(20)),
+        must(supabase.from("generation_jobs").select("job_type, input, project_id, updated_at").eq("status", "completed")
+          .in("job_type", types).gte("updated_at", since).limit(200)),
         must(supabase.from("scheduled_posts").select("id, status, last_error, scheduled_at, social_accounts(label)").in("status", ["failed", "blocked", "needs_review"]).gte("updated_at", since).limit(5)),
         must(supabase.from("content_projects").select("id, title, status, channel_slug").in("status", ["ready_for_review", "needs_attention"]).is("parent_project_id", null).order("created_at", { ascending: false }).limit(6)),
         must(supabase.from("social_accounts").select("id, label, enabled, oauth_connections(status)")),
       ]);
-      return { jobs: jobs as any[], posts: posts as any[], review: review as any[], accounts: accounts as any[] };
+      const jobs = stillFailing(failed as any[], done as any[]).slice(0, 4);  // a retry that worked clears its failure
+      return { jobs, posts: posts as any[], review: review as any[], accounts: accounts as any[] };
     },
   });
   const cleared = useCleared();
@@ -319,13 +322,15 @@ function Health() {
     queryKey: ["health"],
     queryFn: async () => {
       const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
-      const [failed, providers, budget, reservations] = await Promise.all([
-        must(supabase.from("generation_jobs").select("id, job_type, error_message, status, updated_at").in("status", ["failed", "blocked"]).gte("created_at", since).order("updated_at", { ascending: false }).limit(20)),
+      const [failedRaw, done, providers, budget, reservations] = await Promise.all([
+        must(supabase.from("generation_jobs").select("id, job_type, error_message, status, input, project_id, updated_at").in("status", ["failed", "blocked"]).gte("created_at", since).order("updated_at", { ascending: false }).limit(40)),
+        must(supabase.from("generation_jobs").select("job_type, input, project_id, updated_at").eq("status", "completed").gte("created_at", since).limit(500)),
         must(supabase.from("ai_providers").select("name, enabled, last_error, last_success_at, circuit_open_until")),
         must(supabase.from("budgets").select("monthly_cap_usd").eq("service", "x_api")),
         must(supabase.from("budget_reservations").select("amount_usd, status").eq("service", "x_api").eq("month", new Date().toISOString().slice(0, 7) + "-01")),
       ]);
-      return { failed: failed as any[], providers: providers as any[], cap: Number((budget as any[])[0]?.monthly_cap_usd ?? 1), spent: (reservations as any[]).filter((r) => r.status === "committed").reduce((a, r) => a + Number(r.amount_usd), 0) };
+      const failed = stillFailing(failedRaw as any[], done as any[]).slice(0, 20);
+      return { failed, providers: providers as any[], cap: Number((budget as any[])[0]?.monthly_cap_usd ?? 1), spent: (reservations as any[]).filter((r) => r.status === "committed").reduce((a, r) => a + Number(r.amount_usd), 0) };
     },
   });
   const cleared = useCleared();
