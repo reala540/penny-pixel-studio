@@ -64,25 +64,6 @@ providers:
         context: 131000
         priority: 30
 
-  nvidia:
-    tier: 1
-    enabled: true
-    base_url: "https://integrate.api.nvidia.com/v1"
-    key_env: NVIDIA_API_KEY
-    commercial_use: assumed
-    notes: "Free with NVIDIA Developer Program membership; check terms for production use."
-    models:
-      - id: z-ai/glm-5.2
-        roles: [claim_checker, angle_selector, brainstormer]
-        daily_requests: 2000
-        context: 200000
-        priority: 15
-      - id: nvidia/nemotron-3-super-120b-a12b
-        roles: [brainstormer, critic, research_summarizer]
-        daily_requests: 2000
-        context: 262000
-        priority: 25
-
   mistral:
     tier: 1
     enabled: true
@@ -162,58 +143,18 @@ providers:
     base_url: "https://ollama.com/v1"
     key_env: OLLAMA_API_KEY
     commercial_use: assumed
-    notes: "Session and weekly limits (unpublished)."
+    notes: "Free tier: light use, one request at a time; only '-cloud' models marked free work. Checking jobs only."
     models:
-      - id: deepseek-v4-pro
-        roles: [scriptwriter, research_summarizer]
+      - id: glm-4.7:cloud
+        roles: [critic, claim_checker, angle_selector]
         daily_requests: 40
-        context: 1000000
-        priority: 40
-      - id: kimi-k3
-        roles: [scriptwriter, brainstormer]
-        daily_requests: 40
-        context: 1000000
-        priority: 45
-
-  zai:
-    tier: 2
-    enabled: false
-    base_url: "https://open.bigmodel.cn/api/paas/v4"
-    key_env: ZAI_API_KEY
-    commercial_use: assumed
-    notes: "One concurrent request."
-    models:
-      - id: glm-4.7-flash
-        roles: [brainstormer, critic]
-        daily_requests: 200
         context: 200000
-        priority: 50
-
-  cerebras:
-    tier: 2
-    enabled: false
-    base_url: "https://api.cerebras.ai/v1"
-    key_env: CEREBRAS_API_KEY
-    commercial_use: assumed
-    models:
-      - id: zai-glm-4.7
-        roles: [claim_checker, critic]
-        daily_requests: 100
-        context: 128000
         priority: 40
-
-  sambanova:
-    tier: 2
-    enabled: false
-    base_url: "https://api.sambanova.ai/v1"
-    key_env: SAMBANOVA_API_KEY
-    commercial_use: assumed
-    models:
-      - id: DeepSeek-V3.1
-        roles: [brainstormer]
-        daily_requests: 20
-        context: 128000
-        priority: 60
+      - id: minimax-m3.1-flash:cloud
+        roles: [claim_checker, critic]
+        daily_requests: 40
+        context: 200000
+        priority: 45
 
   # ---------------- Tier 3 (no-key emergency backups) ----------------
   llm7:
