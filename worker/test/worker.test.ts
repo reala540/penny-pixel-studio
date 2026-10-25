@@ -383,6 +383,31 @@ describe("AI API Manager", () => {
     expect(meta.separate_account_attested).toBe(true);
   });
 
+  it("replaces a GitHub-secret key with one saved here and stops using the secret", async () => {
+    owner();
+    routes.push((u) => (u.includes("ai_providers?name=eq.mistral&select=key_env") ? ok([{ key_env: "MISTRAL_API_KEY" }]) : undefined));
+    routes.push((u) => (u.includes("ai_providers?name=eq.mistral") && !u.includes("select=key_env") ? ok([{ name: "mistral", base_url: "https://m.test/v1" }]) : undefined));
+    routes.push((u, i) => (u.endsWith("/rest/v1/ai_credentials") && i?.method === "POST" ? ok([{ id: "44444444-4444-4444-4444-444444444444" }], 201) : undefined));
+    routes.push((u) => (u.includes("ai_credentials?id=eq.") ? ok([{ id: "44444444-4444-4444-4444-444444444444", key_hint: "••••zz9f" }]) : undefined));
+    const res = await call("/api/credentials/replace-env", { provider: "mistral", key: KEY });
+    expect(res.status).toBe(200);
+    expect(await res.text()).not.toContain(KEY);
+    const meta = JSON.parse(String(calls.find((c) => c.url.endsWith("/rest/v1/ai_credentials") && c.init?.method === "POST")!.init!.body));
+    expect(meta).toMatchObject({ provider: "mistral", label: "Replaces MISTRAL_API_KEY", priority: 10 });
+    const patch = calls.find((c) => c.url.includes("ai_providers?name=eq.mistral") && c.init?.method === "PATCH")!;
+    expect(JSON.parse(String(patch.init!.body))).toMatchObject({ use_env_key: false });
+    expect(calls.some((c) => c.url.includes("api.github.com"))).toBe(false);  // GitHub secrets are never touched
+  });
+
+  it("only replaces services that have a GitHub secret", async () => {
+    owner();
+    routes.push((u) => (u.includes("ai_providers?name=eq.xkiro&select=key_env") ? ok([{ key_env: null }]) : undefined));
+    routes.push((u) => (u.includes("ai_providers?name=eq.xkiro") ? ok([{ name: "xkiro", base_url: "https://x.test/v1" }]) : undefined));
+    const res = await call("/api/credentials/replace-env", { provider: "xkiro", key: KEY });
+    expect(res.status).toBe(400);
+    expect(calls.some((c) => c.url.endsWith("/rest/v1/ai_credentials") && c.init?.method === "POST")).toBe(false);
+  });
+
   it("tests a stored key against the provider's model list without exposing it", async () => {
     owner();
     const id = "33333333-3333-3333-3333-333333333333";

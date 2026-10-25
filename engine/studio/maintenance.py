@@ -120,7 +120,8 @@ def _run_owner_job(conn, router: Router, storage, job: dict) -> dict:
     if t == "check_providers":
         from .cli import run_provider_check
 
-        results = run_provider_check(conn)
+        only = str(inp.get("provider") or "") or None
+        results = run_provider_check(conn, only)
         return {"ok": sum(1 for r in results if r["status"] == "ok"), "checked": len(results)}
     if t == "auto_review":
         from .review import auto
