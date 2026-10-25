@@ -81,7 +81,7 @@ MAKERS: list[tuple[str, str]] = [
     (r"gemini|gemma|^google/|/google/", "google"), (r"gpt-oss|^openai/|/openai/", "openai"),
     (r"llama|^meta-|/meta/", "meta"), (r"nemotron|^nvidia/|/nvidia/", "nvidia"), (r"glm|^z-ai/|zai-org", "zhipu"),
     (r"mistral|mixtral|magistral|codestral|ministral|devstral", "mistral"), (r"kimi|moonshot", "moonshot"),
-    (r"deepseek", "deepseek"), (r"qwen|qwq", "alibaba"), (r"aion", "aion"), (r"claude|anthropic", "anthropic"),
+    (r"deepseek", "deepseek"), (r"minimax", "minimax"), (r"cogito", "deepcogito"), (r"qwen|qwq", "alibaba"), (r"aion", "aion"), (r"claude|anthropic", "anthropic"),
 ]
 # Hosts that are also model makers.
 HOST_COMPANY = {"gemini": "google", "zai": "zhipu"}
