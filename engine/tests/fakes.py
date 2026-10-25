@@ -21,7 +21,7 @@ SENTENCES = [
     "Ask yourself what you would do if the price doubled tomorrow.",
     "Friends often give advice that fit their life rather than yours.",
     "Your future self will thank you for one boring automatic rule.",
-    "We tested both paths side by side so you can see the trade-off clearly.",
+    "Put both paths side by side and the trade-off becomes clear.",
     "That gap looks tiny in week one and huge by the end of the year.",
     "Be suspicious of anything that promises results without effort.",
     "Good systems beat willpower because they keep working on bad days.",

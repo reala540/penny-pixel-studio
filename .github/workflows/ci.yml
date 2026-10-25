@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   engine:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned: ubuntu-latest moves to 26.04, which broke the backup step
     timeout-minutes: 40
     services:
       postgres:
@@ -30,7 +30,7 @@ jobs:
       - run: cd engine && pytest -q
 
   worker:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned: ubuntu-latest moves to 26.04, which broke the backup step
     timeout-minutes: 10
     defaults:
       run:
@@ -45,7 +45,7 @@ jobs:
       - run: npx vitest run
 
   dashboard:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned: ubuntu-latest moves to 26.04, which broke the backup step
     timeout-minutes: 10
     defaults:
       run:

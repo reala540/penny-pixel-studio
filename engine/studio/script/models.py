@@ -65,8 +65,9 @@ class Scene(BaseModel):
 class Claim(BaseModel):
     key: str = Field(description="C1, C2, ...")
     text: str
-    kind: Literal["fact", "opinion"] = "fact"
+    kind: Literal["fact", "opinion", "calculation"] = "fact"
     fact_refs: list[str] = Field(default_factory=list, description="Fact keys from the fact sheet (F1...)")
+    expression: str = Field(default="", description="For kind=calculation: the exact arithmetic, e.g. 200*12*10")
 
 
 class Script(BaseModel):

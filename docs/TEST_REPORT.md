@@ -1,4 +1,12 @@
-# Test report — v2.7 Strict checks, audit trail, duplicates, long videos, markets (25 Oct 2026)
+# Test report — v2.8 Smart Mode, code-checked money math, honest claims, categories (25 Oct 2026)
+
+| Suite | Result |
+|---|---|
+| Engine (pytest, local PostgreSQL with all 10 migrations, real renders) | **130 passed** (new: Smart Mode holds trust-period, time-sensitive and sensitive-money packages and posts low-risk ones; money math recalculated by code, including wrong results, invented inputs and unsafe formulas; "I tested" claims removed from scripts, titles and posts; money titles carry the country; Pixel uploads in category 28 and Penny in 27; a near-copy of an earlier video is held back) |
+| Worker (vitest + `tsc`) | unchanged: **47 passed** |
+| Dashboard (vitest + `tsc`) | **32 passed** |
+
+## v2.7 Strict checks, audit trail, duplicates, long videos, markets (25 Oct 2026)
 
 | Suite | Result |
 |---|---|

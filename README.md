@@ -1,4 +1,4 @@
-# Penny & Pixel Studio — AI Content Studio v2.7
+# Penny & Pixel Studio — AI Content Studio v2.8
 
 A free-first, mostly automated content studio for two faceless YouTube channels (**Penny & Pixel AI** with host
 Pixel, **Penny & Pixel Money** with host Penny), a Facebook Page, TikTok and X.
@@ -7,6 +7,17 @@ Pixel, **Penny & Pixel Money** with host Penny), a Facebook Page, TikTok and X.
 - Specification: [docs/SPEC_v2.1.md](docs/SPEC_v2.1.md) · Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) ·
   Providers and free limits: [docs/PROVIDERS_AND_LIMITS.md](docs/PROVIDERS_AND_LIMITS.md) ·
   Mission Control: [docs/CONTROL_ROOM.md](docs/CONTROL_ROOM.md) · Ideas, themes and API keys: [docs/IDEAS_AND_API_KEYS.md](docs/IDEAS_AND_API_KEYS.md) · Auto Review & Post: [docs/AUTO_REVIEW_AND_POST.md](docs/AUTO_REVIEW_AND_POST.md) · Setup, Activity and schedule: [docs/SETUP_ACTIVITY_SCHEDULE.md](docs/SETUP_ACTIVITY_SCHEDULE.md) · What was tested: [docs/TEST_REPORT.md](docs/TEST_REPORT.md)
+
+## New in v2.8
+
+- **Smart Mode for Auto Review & Post**: a package posts by itself only when it is low risk. These always wait for you: the first 5 Pixel and first 10 Penny packages you approve (trust period), time-sensitive topics, sensitive money advice (taxes, debt, investing picks, guarantees) and any fact only partly backed by a source.
+- **Money math is recalculated by code**, not judged by an AI: each number claim carries its formula; inputs must come from the sources or be stated, and a wrong result is fixed or the package waits.
+- **No invented hands-on tests**: "I tested / we tried" sentences are removed from scripts, titles and posts. Pixel researches and compares from dated sources.
+- **Money titles name the country** whose rules they use (for example "(US)" for a 401(k) video).
+- **Repetition check**: a script or title too close to one from the last 180 days is held back.
+- **YouTube categories per channel** (Pixel: Science & Technology, Penny: Education), English audio language, and the AI-content label set per video from what is in it.
+- **Brand art** for both channels in `docs/brand/`; the weekly backup runs on Ubuntu 24.04 again.
+- No new migration.
 
 ## New in v2.7
 

@@ -70,8 +70,11 @@ class YouTube:
         pub = config.services()["publishing"]["youtube"]
         tags = [t for t in (variant.get("tags") or []) if t][:30]
         meta = {"snippet": {"title": (variant.get("title") or "")[:100], "description": (variant.get("body") or "")[:4900],
-                            "tags": tags, "categoryId": pub.get("category_id", "27"),
-                            "defaultLanguage": pub.get("default_language", "en")},
+                            "tags": tags,
+                            "categoryId": str((pub.get("category_ids") or {}).get(variant.get("channel_slug"))
+                                              or pub.get("category_id", "27")),
+                            "defaultLanguage": pub.get("default_language", "en"),
+                            "defaultAudioLanguage": pub.get("default_language", "en")},  # better automatic captions
                 "status": {"privacyStatus": "public" if audited else "private", "selfDeclaredMadeForKids": False,
                            "containsSyntheticMedia": bool(variant.get("synthetic_media", False))}}
         size = video.stat().st_size
