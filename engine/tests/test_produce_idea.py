@@ -61,6 +61,9 @@ def test_other_projects_of_the_same_week_are_never_planned_or_approved(synced, m
            (first["project_id"], first["project_id"]))
     db.run(c, "insert into settings (key, value) values ('auto_review_post', 'true') on conflict (key) do update set value='true'")
     monkeypatch.setattr(auto, "ai_review", lambda r, f, v, conn: (PolicyReview(publishable=True, confidence=0.97, summary="ok"), "beta/b1"))
+    # the sample ideas produce near-identical scripts and have no trust history: those rules have their own tests
+    monkeypatch.setattr(produce, "repeats_earlier", lambda *a: None)
+    monkeypatch.setattr(auto, "risk_reasons", lambda conn, family: [])
     second = produce.produce_idea(c, router, storage, content_idea_id=ideas[1]["id"])
     assert db.one(c, "select count(*) n from content_variants where project_id=%s", (first["project_id"],))["n"] == 0
     assert db.one(c, "select status from content_projects where id=%s", (first["project_id"],))["status"] == "ready_for_review"
