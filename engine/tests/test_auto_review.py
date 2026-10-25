@@ -17,6 +17,12 @@ from .test_end_to_end import _produce_week, silent_tts  # noqa: F401  (fixture)
 OWNER = str(uuid.uuid4())
 
 
+@pytest.fixture(autouse=True)
+def low_risk(monkeypatch):
+    """These tests cover the review flow itself; Smart Mode's risk rules have their own tests (test_smart_mode.py)."""
+    monkeypatch.setattr(auto, "risk_reasons", lambda conn, family: [])
+
+
 def set_mode(conn, on: bool):
     return db.one(conn, "select public.set_auto_review_post(%s, 'owner') r", (on,))["r"]
 

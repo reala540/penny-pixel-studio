@@ -12,7 +12,12 @@ again from the start, up to `max_attempts` times (Settings → Automation, defau
   * stale facts: re-checked against the sources                             (a recheck_project job)
   * a stock photo without a licence: the preview is rebuilt                 (a rerender_preview job)
 A disabled or wrong account, nothing to post, or any policy flag is never retried: rewording until a reviewer
-stops objecting would defeat the check. Anything not fixed in time, or any error, waits for the owner and goes to
+stops objecting would defeat the check.
+
+Smart Mode (always on inside Auto Review & Post): only low-risk packages may be approved automatically. A person
+always approves a channel's first packages (its trust period), money videos about investing, tax, credit, loans,
+insurance or retirement accounts, time-sensitive news, anything flagged sensitive, and anything with claims that are
+only partly supported. Anything not fixed in time, or any error, waits for the owner and goes to
 Telegram. The mode is re-read before every fix and right before approving, so switching it OFF stops at once.
 """
 
@@ -33,13 +38,59 @@ DEFAULT_MAX_ATTEMPTS = 3
 DISCLAIMER_MARKERS = ("not personal", "not financial advice", "general education", "general financial education")
 FALLBACK_DISCLAIMER = "This is general financial education, not personal financial advice."
 
+SMART = config.services().get("smart_mode") or {}
+TRUST_PERIOD = SMART.get("trust_period", {"ai": 5, "money": 10})  # owner-approved packages before any auto-approval
+MONEY_SENSITIVE = re.compile(SMART.get("money_sensitive_pattern", (
+    r"(?<!\w)(invest\w*|stocks?|etfs?|index funds?|crypto\w*|bitcoin|dividends?|brokerage|options trading|forex|"
+    r"retirement accounts?|401\(?k\)?|iras?|roth|pensions?|superannuation|rrsp|tfsa|isas?|annuit\w*|"
+    r"tax(es)?|irs|hmrc|credit cards?|loans?|mortgages?|refinanc\w*|insurance|debt consolidation|bankruptcy)(?!\w)")),
+    re.IGNORECASE)
+
+
+def risk_reasons(conn, family: list[dict]) -> list[str]:
+    """Why a person must approve this package (Smart Mode). Empty means it's low-risk."""
+    if not family:
+        return ["nothing to review"]
+    head = family[0]
+    ch = head["channel_slug"]
+    out = []
+    owned = db.one(conn, """select count(distinct a.target_id) n from approvals a join content_projects p on p.id = a.target_id
+                            where a.target_type='project' and a.decision='approved' and a.source='owner'
+                              and p.channel_slug=%s and p.parent_project_id is null""", (ch,))["n"]
+    need = int(TRUST_PERIOD.get(ch, 5))
+    if owned < need:
+        out.append(f"Trust period: you approve this channel's first {need} packages yourself ({owned} so far)")
+    idea = db.one(conn, "select * from content_ideas where id=%s", (head["idea_id"],)) if head.get("idea_id") else None
+    sb = (idea or {}).get("score_breakdown") or {}
+    if idea is not None and not sb.get("evergreen"):
+        out.append("Time-sensitive (news): a person checks it before it goes out")
+    if sb.get("from_generated_idea"):
+        g = db.one(conn, "select sensitivity, sensitivity_note from generated_ideas where id=%s", (sb["from_generated_idea"],))
+        if g and g["sensitivity"] != "none":
+            out.append(f"Flagged {g['sensitivity'].replace('_', ' ')}: {g['sensitivity_note'] or 'needs a person'}")
+    if ch == "money":
+        text = " ".join([head["title"]] + [((db.one(conn, "select body from script_versions where id=%s",
+                                                     (p["current_script_version_id"],)) or {}).get("body") or {})
+                                           .get("title", "") for p in family])
+        sv = db.one(conn, "select body from script_versions where id=%s", (head["current_script_version_id"],)) or {}
+        text += " " + " ".join(sc.get("narration", "") for sc in (sv.get("body") or {}).get("scenes", []))
+        hits = sorted({m.group(0).lower() for m in MONEY_SENSITIVE.finditer(text)})
+        if hits:
+            out.append(f"Money topic that always needs a person: {', '.join(hits[:5])}")
+    partial = db.one(conn, """select count(*) n from research_claims c join content_projects p on p.current_script_version_id = c.script_version_id
+                              where p.id = any(%s) and c.status = 'partially_supported'""", ([p["id"] for p in family],))["n"]
+    if partial:
+        out.append(f"{partial} claim(s) are only partly supported by their sources")
+    return out
+
+
 # What each failed check needs. None: a person has to decide.
 FIX_FOR = {
     "quality_gates": "rewrite", "open_issues": "rewrite", "claims": "rewrite",
     "ai_publishable": "rewrite", "ai_confidence": "rewrite", "ai_issues": "rewrite",
     "fresh": "recheck", "licences": "rerender",
     "variants_ready": "sync_posts", "banned": "clean_posts", "disclaimer": "add_disclaimer",
-    "posts": None, "destination": None, "policy": None,
+    "posts": None, "destination": None, "policy": None, "smart_mode": None,
 }
 INLINE = ("sync_posts", "clean_posts", "add_disclaimer")
 JOB_FOR = {"rewrite": "regenerate_script", "rerender": "rerender_preview", "recheck": "recheck_project"}
@@ -130,6 +181,8 @@ def deterministic_checks(conn, family: list[dict], variants: list[dict], now: da
     if family and family[0]["channel_slug"] == "money":
         lacking = [v["account_label"] for v in variants if _missing_disclaimer(v)]
         check("disclaimer", "Money disclaimer in every long-video description", not lacking, ", ".join(lacking))
+    risky = risk_reasons(conn, family)
+    check("smart_mode", "Low-risk package (Smart Mode)", not risky, "; ".join(risky))
     unlicensed = [p["title"] for p in family for sc in ((p["recipe"] or {}).get("render") or {}).get("scenes", [])
                   if sc.get("photo_key") and not sc.get("license_record_id")]
     check("licences", "Every stock photo has a licence record", not unlicensed, ", ".join(sorted(set(unlicensed))))

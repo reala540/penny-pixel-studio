@@ -53,6 +53,10 @@ render:
   max_long_minutes: 14
   max_short_seconds: 58
 
+# Auto Review & Post only ever approves low-risk packages ("Smart Mode"). See engine/studio/review/auto.py.
+smart_mode:
+  trust_period: { ai: 5, money: 10 }   # packages you approve yourself before the studio may approve any for you
+
 publishing:
   ai_disclosure:
     description_line: "Narrated with an AI voice. Researched with AI tools and reviewed by a human before publishing."
