@@ -25,7 +25,13 @@ jobs:
       STUDIO_TEST_ADMIN_URL: postgresql://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v5
-      - uses: ./.github/actions/setup-engine
+      - id: setup                # a stuck download gives up after 6 minutes and is tried once more
+        uses: ./.github/actions/setup-engine
+        timeout-minutes: 6
+        continue-on-error: true
+      - if: steps.setup.outcome != 'success'
+        uses: ./.github/actions/setup-engine
+        timeout-minutes: 8
       - run: pip install -q pytest
       - run: cd engine && pytest -q
 
