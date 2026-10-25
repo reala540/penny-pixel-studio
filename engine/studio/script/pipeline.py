@@ -20,6 +20,9 @@ from .models import (WORDS_PER_SECOND, CriticReport, FactSheet, Outline, Outline
 
 MAX_REWRITES = 2
 CRITIC_MIN = 7
+MIN_LONG_FACTS = 10   # checkable facts an 8-14 minute video needs; fewer means padding or invention
+FACTS_WANTED = "12-25"
+SHORT_SECTION = 0.6  # a section under this share of its words gets one follow-up to finish it
 
 
 @dataclass
@@ -55,11 +58,15 @@ def voice_brief(channel: str) -> str:
 
 
 def build_fact_sheet(router: Router, idea: dict, sources: list[dict]) -> tuple[FactSheet, list[str], dict]:
-    prompt = (f"Video idea: {idea['title']}\nAngle: {idea.get('angle', '')}\n\nSources:\n{source_block(sources)}\n\n"
-              "Extract 6-15 short factual statements that are directly stated in the sources, each citing its "
-              "source label (S1...). Keep numbers exactly as written and note the period the data covers. "
+    # each source's full article text is shown, within a budget the free models can read in one go
+    per_source = max(1500, min(6000, 30000 // max(len(sources), 1)))
+    prompt = (f"Video idea: {idea['title']}\nAngle: {idea.get('angle', '')}\n\nSources:\n"
+              f"{source_block(sources, body_chars=per_source)}\n\n"
+              f"Extract {FACTS_WANTED} short factual statements that are directly stated in the sources, each citing its "
+              "source label (S1...). Prefer specific, useful facts: numbers, dates, names, how something works, "
+              "what changed and who it affects. Keep numbers exactly as written and note the period the data covers. "
               "Do not add anything the sources do not say.")
-    res = router.complete("research_summarizer", prompt, schema=FactSheet, temperature=0.1)
+    res = router.complete("research_summarizer", prompt, schema=FactSheet, temperature=0.1, max_tokens=4000)
     grounded, dropped = verify.ground_facts(res.data, sources)
     return grounded, dropped, res.trail()
 
@@ -145,14 +152,28 @@ def draft(router: Router, channel: str, idea: dict, facts: FactSheet) -> tuple[S
             + VISUALS + " List every factual statement in claims (keys C1, C2...) with fact_refs; scenes list the "
             "claim keys they use; mark opinions kind=opinion. " + CALCULATIONS),
             schema=SectionDraft, temperature=0.8, max_tokens=5000, prefer=wrote)
-        wrote |= res.companies()
-        tokens_in, tokens_out = tokens_in + res.input_tokens, tokens_out + res.output_tokens
-        rename = {}
-        for c in res.data.claims:
-            rename[c.key] = f"C{len(claims) + 1}"
-            claims.append(c.model_copy(update={"key": rename[c.key]}))
-        for sc in res.data.scenes:
-            scenes.append(sc.model_copy(update={"claim_keys": [rename[x] for x in sc.claim_keys if x in rename]}))
+        replies = [res]
+        got = sum(len(sc.narration.split()) for sc in res.data.scenes)
+        if sec.kind != "wrap" and got < words * SHORT_SECTION:  # free models often stop at half the length asked
+            so_far = " ".join(sc.narration for sc in res.data.scenes)
+            more = router.complete("scriptwriter", (
+                f"{brief}\n\nVideo: '{outline.title}'. Outline:\n{plan_text}\n\nSection {i} ('{sec.name}', {sec.kind}) "
+                f"so far:\n{so_far[-2500:]}\n\nIt has {got} words and needs about {words - got} more. Continue this "
+                f"section with {max(1, round((words - got) / 80))} more scene(s): go deeper with a worked example, "
+                "a concrete step, a comparison or a number from the fact sheet. Don't repeat what it already says, "
+                "no filler, don't close the video. " + VISUALS + " List every factual statement in claims (keys C1, "
+                "C2...) with fact_refs; mark opinions kind=opinion. " + CALCULATIONS),
+                schema=SectionDraft, temperature=0.8, max_tokens=5000, prefer=wrote)
+            replies.append(more)
+        for r in replies:
+            wrote |= r.companies()
+            tokens_in, tokens_out = tokens_in + r.input_tokens, tokens_out + r.output_tokens
+            rename = {}
+            for c in r.data.claims:
+                rename[c.key] = f"C{len(claims) + 1}"
+                claims.append(c.model_copy(update={"key": rename[c.key]}))
+            for sc in r.data.scenes:
+                scenes.append(sc.model_copy(update={"claim_keys": [rename[x] for x in sc.claim_keys if x in rename]}))
     script = Script(title=outline.title, hook=outline.hook, promise=outline.promise,
                     hook_candidates=outline.hook_candidates, scenes=scenes, claims=claims, cta=outline.cta)
     return script, {"provider": plan.provider, "model": plan.model, "companies": sorted(wrote),
@@ -245,8 +266,11 @@ def write_long(router: Router, channel: str, idea: dict, sources: list[dict]) ->
     trail: list[dict] = []
     facts, dropped, t = build_fact_sheet(router, idea, sources)
     trail.append({"step": "fact_sheet", **t})
-    if len(facts.facts) < 3:
-        raise NeedsReview(f"Not enough verifiable facts for '{idea['title']}' ({len(facts.facts)}). Dropped: {dropped}")
+    if len(facts.facts) < MIN_LONG_FACTS:
+        # an honest 8-14 minute video needs real material: stop before writing rather than pad or invent
+        raise NeedsReview(f"Not enough source material for an honest 8-14 minute video on '{idea['title']}': "
+                          f"{len(facts.facts)} checkable facts from {len(sources)} source(s), at least {MIN_LONG_FACTS} "
+                          f"needed. Choose an idea with more coverage. Dropped: {dropped}"[:900])
     script, t = draft(router, channel, idea, facts)
     # STRICT independence: every company that writes or edits any text joins `writers`, and no check (claims,
     # critic, hook choice, final review) may use a model from any of them.

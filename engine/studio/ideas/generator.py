@@ -235,6 +235,7 @@ class Assessment(BaseModel):
     rationale: str = Field(max_length=500)
     sensitivity: Literal["none", "sensitive", "controversial", "poorly_supported"] = "none"
     sensitivity_note: str = ""
+    evergreen: bool = Field(False, description="True only if the video stays accurate and useful for 6+ months")
 
 
 class AssessmentList(BaseModel):
@@ -276,7 +277,10 @@ def assess(router: Router, cfg: dict, items: list[dict], exclude: set[str]):
         "markets?), feasibility (can a small faceless studio make it with charts, screen demos and narration?), "
         "engagement (would the audience click and watch to the end?). Be critical; 5 is average. Flag sensitivity: "
         "'sensitive' (health, money advice, personal risk), 'controversial' (politics, religion, culture-war), "
-        "'poorly_supported' (claims that would need evidence we don't have), else 'none'. Give a one-sentence rationale.\n\n"
+        "'poorly_supported' (claims that would need evidence we don't have), else 'none'. Say evergreen=true only if the "
+        "video would still be accurate and useful in 6 months (a how-to, an explainer, a comparison of lasting "
+        "options); news, launches, this week's events and prices that change are evergreen=false. Give a "
+        "one-sentence rationale.\n\n"
         f"{listing}\n\nReturn one assessment per id."
     )
     return router.complete("critic", prompt, schema=AssessmentList, temperature=0.2, exclude=exclude)
@@ -504,7 +508,8 @@ def run(conn, router: Router, *, trigger: str = "manual", job_id=None, overrides
                 (run_id, rank, it["title"], it["summary"], it["audience"], it["markets"][:8], it["channel"],
                  it["category"], db.j([_signal(e) for e in ev]), it["verified"],
                  max(((e.get("published_at") or e["retrieved_at"]) for e in ev), default=None),
-                 db.j({**it["parts"], "trend_parts": it["tparts"]}), it["total"], it["explanation"],
+                 db.j({**it["parts"], "trend_parts": it["tparts"],
+                       "evergreen": bool(it["assessment"].get("evergreen"))}), it["total"], it["explanation"],
                  db.j({**it["assessment"], "trend_angle": it["trend_angle"]}), it["confidence"], it["sensitivity"],
                  it["sensitivity_note"] or None, it["suggested_format"], it["execution"], it["generated_by"],
                  assessed_by, it["fingerprint"], db.j([{"at": now, "status": "new", "by": trigger}])))

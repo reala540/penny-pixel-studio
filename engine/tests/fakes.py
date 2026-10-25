@@ -127,6 +127,10 @@ def respond(role: str, prompt: str):
                                {"name": "Wrap-up", "kind": "wrap", "purpose": "Recap", "fact_keys": []}],
                 "cta": "Subscribe for one useful idea every week." + (" This is general education, not personal advice."
                                                                        if "Penny" in prompt else "")}
+    if role == "scriptwriter" and "Continue this section" in prompt:
+        n = int(re.search(r"Section (\d+) \(", prompt).group(1))
+        return {"scenes": [{"narration": scene_text(n * 7 + 6, 1), "visual": {"type": "title_card", "headline": "More"},
+                            "claim_keys": []}], "claims": []}
     if role == "scriptwriter" and "Write ONLY section" in prompt:
         n = int(re.search(r"Write ONLY section (\d+)", prompt).group(1))
         use = re.search(r"Facts to use here: ([^.\n]*)", prompt).group(1)

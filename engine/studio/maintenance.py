@@ -32,12 +32,22 @@ def _finish(conn, job, status: str, output: dict | None = None, error: str | Non
 def process_owner_jobs(conn, router: Router, storage, limit: int = 10, rounds: int = 4) -> list[dict]:
     """Run queued owner jobs. Fixes queued by Auto Review & Post during a round run in the next one (bounded)."""
     produce.apply_brand_overrides(conn)
+    jobs.check_stop(conn)  # notes when this run started, so a later Stop & clear stops it
     done: list[dict] = []
     for _ in range(max(rounds, 1)):
         batch = _process_round(conn, router, storage, limit)
         done += batch
         if not batch:
             break
+    from .review import replace
+
+    try:  # held packages: reminders, and safer replacements when the owner hasn't decided in time
+        out = replace.tick(conn, router, storage)
+        if out.get("reminded") or out.get("replaced"):
+            done.append({"type": "auto_replace", "status": "completed", **out})
+    except Exception as exc:
+        notify.send(conn, "job_failed", "Automatic replacement couldn't run", str(exc)[:300],
+                    link=f"{config.runtime().dashboard_url}/content", dedupe_key=f"replacefail:{datetime.now(timezone.utc):%Y%m%d%H}")
     return done
 
 

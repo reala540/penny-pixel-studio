@@ -35,8 +35,37 @@ def job_context(job_id):
         active_job_id.reset(token)
 
 
+class Stopped(BaseException):
+    """The owner pressed Stop & clear. A BaseException so no `except Exception` handler turns it into a retry."""
+
+
+_process_started: datetime | None = None
+
+
+def check_stop(conn) -> None:
+    """Raise Stopped if the owner asked to stop after this process started (database clock on both sides).
+    The first call only notes the start time."""
+    global _process_started
+    try:
+        row = db.one(conn, "select now() as now, (select value #>> '{}' from settings where key='stop_requested_at') as stop")
+    except Exception:  # the check is best effort: a database hiccup never stops the work
+        return
+    if _process_started is None:
+        _process_started = row["now"]
+        return
+    if row["stop"]:
+        try:
+            stop = datetime.fromisoformat(str(row["stop"]).replace("Z", "+00:00"))
+        except ValueError:
+            return
+        if stop > _process_started:
+            raise Stopped("Stopped by the owner (Stop & clear)")
+
+
 def progress(conn, label: str, step: int | None = None, total: int | None = None) -> None:
-    """Show what the current job is doing on the Activity page. Best effort; a failure never stops the work."""
+    """Show what the current job is doing on the Activity page. Best effort; a failure never stops the work,
+    but a Stop & clear does."""
+    check_stop(conn)
     job_id = active_job_id.get()
     if job_id is None:
         return
@@ -104,6 +133,7 @@ class StageResult:
 def run_stage(conn, job_type: str, key: str, fn: Callable[[dict], dict], *, project_id=None,
               parent_job_id=None, input: dict | None = None, requested_by: str = "system",
               max_attempts: int = 3) -> StageResult:
+    check_stop(conn)
     job = ensure_job(conn, job_type, key, project_id=project_id, parent_job_id=parent_job_id,
                      input=input, requested_by=requested_by, max_attempts=max_attempts)
     if job["status"] == "completed":

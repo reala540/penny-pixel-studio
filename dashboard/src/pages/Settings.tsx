@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { Link, NavLink, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import AutoPostToggle, { AutoFixAttempts, AutoReviewLog } from "../components/AutoPostToggle";
+import AutoPostToggle, { AutoFixAttempts, AutoReplaceSettings, AutoReviewLog } from "../components/AutoPostToggle";
 import ClearButton from "../components/ClearButton";
 import PostingSchedule from "../components/PostingSchedule";
 import ThemeControl from "../components/ThemeControl";
@@ -201,6 +201,7 @@ function Automation() {
           every check and a confident independent AI review are approved automatically and post at their scheduled times to your
           configured accounts. Anything else waits for you and is sent to Telegram. Also in Telegram: /autopost.</p>
         <AutoFixAttempts />
+        <AutoReplaceSettings />
         <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-sm font-semibold text-ink">Recent automatic reviews</h3>
           <ClearButton title="Clear the review log?" done="Review log cleared" className="btn-quiet px-2.5 py-1 text-xs"

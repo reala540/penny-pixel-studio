@@ -1,11 +1,11 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { ArrowRight, BookOpenCheck, CircleAlert, CircleCheck, Info, LoaderCircle, Search, Sparkles } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowRight, BookOpenCheck, CircleAlert, CircleCheck, Info, LoaderCircle, OctagonX, Search, Sparkles } from "lucide-react";
 import { lazy, Suspense, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import ClearButton from "../components/ClearButton";
 import { Confirm, Empty, ErrorNote, Loading, PageHeader, useToast } from "../components/ui";
 import { buildTimeline, Category, inFilter, Item, jobTitle, useRunningJobs, type AuditRow, type JobRow, type NoteRow } from "../lib/activity";
-import { must, runWorkflow, useSetting, useTimezone } from "../lib/api";
+import { must, runWorkflow, stopAndClear, useSetting, useTimezone } from "../lib/api";
 import { useCleared, visibleAfterClear } from "../lib/clear";
 import { fixFor } from "../lib/labels";
 import { supabase } from "../lib/supabase";
@@ -66,7 +66,10 @@ export default function Activity() {
       <HowItWorks />
 
       <section aria-labelledby="now-title" className="mb-8">
-        <h2 id="now-title" className="section-title mb-3">Running now</h2>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <h2 id="now-title" className="section-title">Running now</h2>
+          <StopAndClear running={(running.data ?? []).length} />
+        </div>
         <ErrorNote error={running.error} />
         {running.isLoading ? <Loading /> : (running.data ?? []).length === 0 ? (
           <p className="rounded-xl border border-dashed border-line px-4 py-3 text-sm text-muted">Nothing is running. The studio is idle until the next scheduled run or until you start something.</p>
@@ -112,6 +115,38 @@ export default function Activity() {
         )}
       </section>
       <TechnicalDetails />
+    </>
+  );
+}
+
+/** One button: stop everything that is making content and erase what it made, from its ideas up to now. */
+function StopAndClear({ running }: { running: number }) {
+  const [ask, setAsk] = useState(false);
+  const toast = useToast();
+  const qc = useQueryClient();
+  const stop = useMutation({
+    mutationFn: stopAndClear,
+    onSuccess: (r) => {
+      qc.invalidateQueries();
+      if (!r.stopped) return toast("Nothing was running, so nothing was cleared.");
+      const parts = [[r.packages, "package"], [r.ideas, "idea"], [r.sources, "source"], [r.files_removed, "file"]]
+        .filter(([n]) => Number(n) > 0).map(([n, w]) => `${n} ${w}${n === 1 ? "" : "s"}`);
+      toast(`Stopped${parts.length ? ` and cleared ${parts.join(", ")}` : ""}. The studio is idle.`, "good");
+    },
+    onError: (e) => toast((e as Error).message, "bad"),
+  });
+  return (
+    <>
+      <button type="button" className="btn-danger inline-flex items-center gap-1.5" disabled={!running || stop.isPending}
+        title={running ? "Stop everything running now and erase what it made" : "Nothing is running"} onClick={() => setAsk(true)}>
+        {stop.isPending ? <LoaderCircle size={14} className="animate-spin" aria-hidden /> : <OctagonX size={14} aria-hidden />}
+        {stop.isPending ? "Stopping…" : "Stop & clear"}
+      </button>
+      <Confirm open={ask} danger title="Stop and erase this run?" confirmLabel="Stop & clear"
+        body={<>Everything running now stops, and everything it made is erased: the ideas it started from, the research,
+          scripts, videos, thumbnails and planned posts. Packages you already approved or scheduled and anything published
+          are kept. The audit log keeps a record that you did this. This can't be undone.</>}
+        onCancel={() => setAsk(false)} onConfirm={() => { setAsk(false); stop.mutate(); }} />
     </>
   );
 }

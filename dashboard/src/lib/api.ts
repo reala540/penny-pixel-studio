@@ -68,3 +68,11 @@ export async function queueJob(jobType: string, opts: { projectId?: string; inpu
 export async function runWorkflow(workflow: "research" | "produce" | "publish" | "queue"): Promise<void> {
   await callWorker("/api/dispatch", { workflow });
 }
+
+export type StopResult = { stopped: boolean; reason?: string; runs_cancelled: number; jobs_stopped?: number;
+  packages?: number; ideas?: number; sources?: number; notifications?: number; files_removed: number };
+
+/** Stop & clear: stops everything that is making content and erases what it made (never anything published). */
+export async function stopAndClear(): Promise<StopResult> {
+  return callWorker<StopResult>("/api/stop-clear", {});
+}

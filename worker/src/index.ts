@@ -11,6 +11,7 @@ import { addCredential, addProvider, deleteCredential, InputError, replaceCreden
 import { handleCallback, startUrl } from "./oauth";
 import { ensureWebhookSecret, removeValue, saveValue, SetupError, setupStatus, testValue, withSavedSecrets, isManaged } from "./setup";
 import { Env, Supabase } from "./supabase";
+import { stopAndClear } from "./stop";
 
 const WORKFLOWS: Record<string, string> = {
   queue: "queue.yml",
@@ -328,6 +329,17 @@ export async function handleFetch(req: Request, rawEnv: Env): Promise<Response> 
     return json(env, { ok }, ok ? 200 : 502);
   }
 
+  if (url.pathname === "/api/stop-clear" && req.method === "POST") {
+    const owner = await ownerOrNull(env, req);
+    if (!owner) return json(env, { error: "not authorised" }, 401);
+    try {
+      return json(env, await stopAndClear(env));
+    } catch (e) {
+      console.error("stop-clear", (e as Error).message);
+      return json(env, { error: "Stopping didn't finish. Nothing published was touched. Try again in a minute." }, 502);
+    }
+  }
+
   if (url.pathname === "/api/oauth/start" && req.method === "POST") {
     const owner = await ownerOrNull(env, req);
     if (!owner) return json(env, { error: "not authorised" }, 401);
@@ -399,7 +411,11 @@ export async function handleCron(env: Env): Promise<Record<string, boolean>> {
   if (await scheduleIdeas(db)) out.ideas = true;
   const queued = await db.select("generation_jobs", "select=id&status=eq.queued&requested_by=eq.owner&limit=1");
   const lastQ = (await db.setting<string>("last_queue_dispatch")) ?? "1970-01-01T00:00:00Z";
-  if (queued.length && (out.ideas || Date.now() - Date.parse(lastQ) > 12 * 60_000)) {
+  // a package waiting for the owner is due a reminder or a safer replacement (the engine decides which)
+  const replaceAt = await db.setting<string>("auto_replace_next_at");
+  const replaceDue = Boolean(replaceAt) && Date.parse(replaceAt as string) <= Date.now();
+  const sinceQ = Date.now() - Date.parse(lastQ);
+  if ((queued.length && (out.ideas || sinceQ > 12 * 60_000)) || (replaceDue && sinceQ > 60 * 60_000)) {
     out.queue = await dispatch(env, "queue");
     if (out.queue) await db.putSetting("last_queue_dispatch", new Date().toISOString());
   }

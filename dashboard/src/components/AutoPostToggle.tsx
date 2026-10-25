@@ -118,6 +118,56 @@ export function AutoFixAttempts() {
   );
 }
 
+type AutoReplace = { enabled: boolean; remind_after_hours: number; replace_after_hours: number; max_per_week: number };
+const REPLACE_DEFAULTS: AutoReplace = { enabled: true, remind_after_hours: 12, replace_after_hours: 24, max_per_week: 2 };
+
+/** What happens when a sensitive package waits for you and you don't decide. */
+export function AutoReplaceSettings() {
+  const cfg = useSetting<Partial<AutoReplace>>("auto_replace", REPLACE_DEFAULTS);
+  const save = useSaveSetting();
+  const toast = useToast();
+  const v: AutoReplace = { ...REPLACE_DEFAULTS, ...(cfg.data ?? {}) };
+  const put = (patch: Partial<AutoReplace>) => {
+    const next = { ...v, ...patch };
+    if (next.replace_after_hours < next.remind_after_hours) next.replace_after_hours = next.remind_after_hours;
+    save.mutate({ key: "auto_replace", value: next }, { onSuccess: () => toast("Saved"), onError: (er) => toast((er as Error).message, "bad") });
+  };
+  const hours = [1, 2, 4, 6, 8, 12, 18, 24, 36, 48, 72];
+  return (
+    <fieldset className="mt-4 max-w-xl text-sm" disabled={cfg.isLoading}>
+      <legend className="font-semibold text-ink">When a sensitive package waits for you</legend>
+      <label className="mt-2 flex items-center gap-2">
+        <input type="checkbox" checked={v.enabled} onChange={(e) => put({ enabled: e.target.checked })} />
+        Remind me, then replace it with a safer video if I don't decide
+      </label>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <span>Remind me after</span>
+        <select aria-label="Remind me after" className="field w-auto" value={v.remind_after_hours} disabled={!v.enabled}
+          onChange={(e) => put({ remind_after_hours: Number(e.target.value) })}>
+          {hours.map((h) => <option key={h} value={h}>{h} hours</option>)}
+        </select>
+        <span>and replace it after</span>
+        <select aria-label="Replace it after" className="field w-auto" value={v.replace_after_hours} disabled={!v.enabled}
+          onChange={(e) => put({ replace_after_hours: Number(e.target.value) })}>
+          {hours.filter((h) => h >= v.remind_after_hours).map((h) => <option key={h} value={h}>{h} hours</option>)}
+        </select>
+      </div>
+      <label className="mt-2 flex flex-wrap items-center gap-2">
+        <span>At most</span>
+        <select aria-label="Replacements per week" className="field w-auto" value={v.max_per_week} disabled={!v.enabled}
+          onChange={(e) => put({ max_per_week: Number(e.target.value) })}>
+          {[0, 1, 2, 3, 4, 5, 7].map((n) => <option key={n} value={n}>{n}</option>)}
+        </select>
+        <span>replacements per channel per week</span>
+      </label>
+      <p className="mt-2 text-xs leading-5 text-muted">Applies only to packages held because they're sensitive (news that dates,
+        sensitive money topics, partly supported facts). The reminder goes to this app and Telegram. The replacement is made from an
+        evergreen, non-sensitive idea first, and only then is the held package erased. Quality or policy problems, a channel's trust
+        period, and anything approved, scheduled or published always wait for you.</p>
+    </fieldset>
+  );
+}
+
 type AutoReview = { id: string; project_id: string; verdict: string; reasons: string[]; reviewer: string | null; attempt?: number; fix?: string | null;
   confidence: number | null; posts_scheduled: number; created_at: string; content_projects?: { title: string } | { title: string }[] | null };
 
