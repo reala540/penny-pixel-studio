@@ -99,10 +99,14 @@ def cmd_produce(a):
 
     with _conn() as conn:
         week = week_start(date.fromisoformat(a.week) if a.week else None)
+        router, storage = _router(conn), default_storage()
         with jobs.tracked_run(conn, "weekly_production", _run_key("weekly_production"), {"week": str(week)}) as run:
-            out = produce.produce_batch(conn, _router(conn), default_storage(), week)
+            out = produce.produce_batch(conn, router, storage, week)
             run["output"] = {"summary": out.get("summary"), "skipped": out.get("skipped")}
         _print(out)
+        from .review import replace  # reminders for packages now waiting for you (after the production lock is free)
+
+        _print(replace.tick(conn, router, storage))
 
 
 def cmd_publish(a):
@@ -427,6 +431,9 @@ def main(argv: list[str] | None = None) -> int:
     started = time.monotonic()
     try:
         a.fn(a)
+    except jobs.Stopped as e:  # the owner pressed Stop & clear: a clean, expected end
+        print(f"stopped: {e}", flush=True)
+        return 0
     except (SystemExit, Exception) as e:
         if not (isinstance(e, SystemExit) and e.code in (None, 0)):
             _annotate(e)

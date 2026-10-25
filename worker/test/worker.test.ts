@@ -539,3 +539,57 @@ describe("Auto Review & Post switch", () => {
     expect(JSON.parse(String(rpc()[0].init!.body))).toEqual({ p_on: false, p_actor: "owner" });
   });
 });
+
+describe("Stop & clear", () => {
+  const asOwner = () => {
+    routes.push((u) => (u.includes("/auth/v1/user") ? ok({ id: "owner" }) : undefined));
+    routes.push((u) => (u.includes("/rest/v1/app_owner") ? ok([{ user_id: "owner" }]) : undefined));
+  };
+  const press = () => handleFetch(new Request("https://w.test/api/stop-clear", { method: "POST", headers: { Authorization: "Bearer t" } }), env());
+
+  it("needs the owner", async () => {
+    routes.push((u) => (u.includes("/auth/v1/user") ? ok({ message: "bad" }, 401) : undefined));
+    const res = await press();
+    expect(res.status).toBe(401);
+    expect(calls.some((c) => c.url.includes("api.github.com") || c.url.includes("rpc/stop_and_clear"))).toBe(false);
+  });
+
+  it("cancels content runs (never publishing), clears the database and removes the files", async () => {
+    asOwner();
+    routes.push((u) => (u.includes("/actions/runs?status=in_progress") ? ok({ workflow_runs: [
+      { id: 1, path: ".github/workflows/queue.yml", status: "in_progress" },
+      { id: 2, path: ".github/workflows/publish.yml", status: "in_progress" }] }) : undefined));
+    routes.push((u, i) => (u.includes("/actions/runs/1/cancel") && i?.method === "POST" ? new Response(null, { status: 202 }) : undefined));
+    routes.push((u) => (u.includes("rpc/stop_and_clear") ? ok({ stopped: true, jobs_stopped: 3, packages: 1, ideas: 6,
+      sources: 9, notifications: 2, storage_paths: ["projects/p1/preview.mp4", "projects/p1/thumb.png"] }) : undefined));
+    const res = await press();
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).toMatchObject({ stopped: true, runs_cancelled: 1, jobs_stopped: 3, packages: 1, ideas: 6, files_removed: 2 });
+    expect(body.storage_paths).toBeUndefined();
+    expect(calls.some((c) => c.url.includes("/actions/runs/2/cancel"))).toBe(false); // an upload is never cut off
+    const del = calls.find((c) => c.url.endsWith("/storage/v1/object/studio"))!;
+    expect(del.init?.method).toBe("DELETE");
+    expect(JSON.parse(String(del.init?.body))).toEqual({ prefixes: ["projects/p1/preview.mp4", "projects/p1/thumb.png"] });
+    expect(calls.some((c) => c.url.includes("/rest/v1/audit_logs"))).toBe(true);
+  });
+
+  it("says so when nothing is running", async () => {
+    asOwner();
+    routes.push((u) => (u.includes("rpc/stop_and_clear") ? ok({ stopped: false, reason: "nothing is running" }) : undefined));
+    const body = (await (await press()).json()) as Record<string, unknown>;
+    expect(body).toMatchObject({ stopped: false, reason: "nothing is running", files_removed: 0 });
+    expect(calls.some((c) => c.url.includes("/storage/v1/object"))).toBe(false);
+  });
+});
+
+describe("held packages", () => {
+  it("wakes the engine when a reminder or replacement is due, at most hourly", async () => {
+    const past = new Date(Date.now() - 60_000).toISOString();
+    routes.push((u) => (u.includes("key=eq.auto_replace_next_at") ? ok([{ value: past }]) : undefined));
+    routes.push((u) => (u.includes("api.github.com") ? new Response(null, { status: 204 }) : undefined));
+    expect((await handleCron(env())).queue).toBe(true);
+    routes.unshift((u) => (u.includes("key=eq.last_queue_dispatch") ? ok([{ value: new Date().toISOString() }]) : undefined));
+    expect((await handleCron(env())).queue).toBeUndefined();
+  });
+});
