@@ -330,7 +330,8 @@ Accounts** → **Connect**.
 2. *APIs & Services → Library* → enable **YouTube Data API v3** and **YouTube Analytics API**.
 3. *OAuth consent screen* → External → fill in the app name and your email, and paste your privacy
    (`https://YOUR-DASHBOARD/privacy`) and terms (`https://YOUR-DASHBOARD/terms`) links. Add scopes `youtube.upload`,
-   `youtube.readonly` and `yt-analytics.readonly` (views, watch time and retention for the weekly report).
+   `youtube.readonly`, `yt-analytics.readonly` and `yt-analytics-monetary.readonly` (views, watch time, retention and
+   revenue per video for the weekly report; all read-only).
 4. ⚠️ **Important:** press **Publish app** to move it from *Testing* to **In production**. In testing mode Google
    logins expire every 7 days. (You'll see an "unverified app" warning when you sign in; that's OK because it's your
    own app. Click *Advanced → Go to app*.)
