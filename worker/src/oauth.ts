@@ -15,7 +15,8 @@ interface State {
 }
 
 const SCOPES: Record<Platform, string> = {
-  youtube: "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly",
+  // yt-analytics.readonly: views, watch time, retention and click-through per video, for the weekly report
+  youtube: "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly",
   facebook: "pages_show_list,pages_read_engagement,pages_manage_posts,business_management",
   tiktok: "user.info.basic,video.upload,video.publish",
   x: "tweet.read tweet.write users.read offline.access",

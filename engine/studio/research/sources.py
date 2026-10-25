@@ -97,29 +97,39 @@ class Fetcher:
 
 def google_news(f: Fetcher, cfg: dict) -> list[SourceItem]:
     out = []
+    editions = cfg.get("editions") or [cfg.get("gl", "US")]
+    per = 8 if len(editions) == 1 else 5
     for topic, queries in (cfg.get("queries") or {}).items():
         for q in queries:
-            url = (f"https://news.google.com/rss/search?q={quote_plus(q)}+when:7d"
-                   f"&hl={cfg.get('hl', 'en-US')}&gl={cfg.get('gl', 'US')}&ceid={cfg.get('gl', 'US')}:en")
-            for i in parse_feed(f.get(url).text)[:8]:
-                out.append(SourceItem("google_news_rss", i["title"], i["link"], publisher=i["source"],
-                                      published_at=parse_date(i["published"]), summary=i["summary"],
-                                      topic=topic, credibility="reputable_media" if i["source"] else "unrated",
-                                      metrics={"query": q}))
+            for gl in editions:
+                url = (f"https://news.google.com/rss/search?q={quote_plus(q)}+when:7d"
+                       f"&hl=en-{gl}&gl={gl}&ceid={gl}:en")
+                for i in parse_feed(f.get(url).text)[:per]:
+                    out.append(SourceItem("google_news_rss", i["title"], i["link"], publisher=i["source"],
+                                          published_at=parse_date(i["published"]), summary=i["summary"],
+                                          topic=topic, credibility="reputable_media" if i["source"] else "unrated",
+                                          metrics={"query": q, "geo": gl}))
     return out
 
 
 def google_trends(f: Fetcher, cfg: dict) -> list[SourceItem]:
+    """Daily trending searches. Most are sport, weather or celebrities, which don't fit either channel and earn
+    little, so a trend only counts when it's about AI/tech or money (set keep_off_topic to keep everything)."""
+    from .engine import classify_topic
+
     out = []
     for geo in cfg.get("geo", ["US"]):
         root = ET.fromstring(f.get(f"https://trends.google.com/trending/rss?geo={geo}").text)
         for it in root.iter("item"):
             traffic = it.findtext("{https://trends.google.com/trending/rss}approx_traffic") or ""
             title = clean_text(it.findtext("title"), 200)
+            topic = classify_topic(title, default="")
+            if not topic and not cfg.get("keep_off_topic"):
+                continue
             out.append(SourceItem("google_trends_rss", f"Trending search: {title}",
                                   f"https://trends.google.com/trends/explore?geo={geo}&q={quote_plus(title)}",
                                   publisher="Google Trends", published_at=parse_date(it.findtext("pubDate")),
-                                  summary=f"Approx. traffic {traffic} in {geo}", topic="both",
+                                  summary=f"Approx. traffic {traffic} in {geo}", topic=topic or "both",
                                   credibility="primary_data",
                                   metrics={"traffic": traffic, "geo": geo, "term": title}))
     return out

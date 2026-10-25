@@ -145,6 +145,10 @@ create trigger audit_scheduled_posts after update of status, scheduled_at on pub
   execute function public.audit_status_change();
 
 -- ---------------------------------------------------------------------------------------------------------------
+-- Launch dates: nothing from a channel is posted, on any account, before its launch day.
+alter table public.channel_profiles add column launch_date date;
+
+-- ---------------------------------------------------------------------------------------------------------------
 -- 2. A publish attempt is written down BEFORE anything is sent to a platform.
 -- An attempt that never finished, or finished unclear, stops that post from being sent again until the owner says
 -- it isn't on the platform. Attempts can't be removed, and an outcome can be recorded only once.

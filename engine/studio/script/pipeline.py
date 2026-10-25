@@ -40,7 +40,12 @@ def voice_brief(channel: str) -> str:
     ch = config.brand()["channels"][channel]
     vp = ch["voice_profile"]
     banned = ", ".join(config.brand().get("banned_phrases", []))
-    lines = [f"Host: {ch['host_persona'].strip()}", f"Tone: {', '.join(vp['tone'])}", "Style rules:"]
+    aud = ch.get("audience_profile") or {}
+    lines = [f"Host: {ch['host_persona'].strip()}", f"Tone: {', '.join(vp['tone'])}"]
+    if aud.get("who"):
+        lines.append(f"Audience: {aud['who']} ({aud.get('knowledge', 'beginner')} level), mainly in "
+                     f"{', '.join(aud.get('markets') or ['US'])}. {' '.join((aud.get('writing') or '').split())}")
+    lines.append("Style rules:")
     lines += [f"- {r}" for r in vp["style_rules"]]
     lines.append(f"Signature phrases (use at most one, naturally): {', '.join(vp.get('signature_phrases', []))}")
     lines.append(f"Never use these phrases: {banned}")

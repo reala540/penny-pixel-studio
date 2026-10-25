@@ -150,9 +150,9 @@ function IdeaGeneration() {
         <label className="text-sm"><span className="text-muted">Minimum score to keep (0–100)</span>
           <input className="field mt-1" type="number" min={0} max={100} defaultValue={cfg.min_score}
             onBlur={(e) => { const n = Math.min(100, Math.max(0, Number(e.target.value) || 0)); if (n !== cfg.min_score) update({ min_score: n }); }} /></label>
-        <label className="text-sm sm:col-span-2"><span className="text-muted">Regions (country codes like US, KE, GB; empty = global)</span>
+        <label className="text-sm sm:col-span-2"><span className="text-muted">Regions (country codes like US, GB; empty = each channel's target countries)</span>
           <input className="field mt-1" value={regions ?? (cfg.region === "global" ? "" : cfg.region.join(", "))} onChange={(e) => setRegions(e.target.value)}
-            onBlur={() => regions !== null && update({ region: cleanRegions(regions) })} placeholder="Global" /></label>
+            onBlur={() => regions !== null && update({ region: cleanRegions(regions) })} placeholder="Each channel's target countries" /></label>
         <label className="text-sm sm:col-span-2"><span className="text-muted">Categories and industries (comma separated)</span>
           <input className="field mt-1" value={categories ?? cfg.categories.join(", ")} onChange={(e) => setCategories(e.target.value)}
             onBlur={() => categories !== null && update({ categories: cleanCategories(categories) })} placeholder="e.g. AI tools, personal finance, careers" /></label>

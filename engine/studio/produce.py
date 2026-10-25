@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 from . import budget, capacity, config, db, jobs, notify, schedule
@@ -30,12 +31,15 @@ def sync_config(conn) -> dict:
     for slug, ch in b["channels"].items():
         row = db.one(conn, """
             insert into channel_profiles (brand_id, slug, display_name, host_persona, topic_focus, voice_profile,
-                                          audience_profile, design, disclaimer)
-            values (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            on conflict (slug) do update set display_name=channel_profiles.display_name
+                                          audience_profile, design, disclaimer, launch_date)
+            values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            on conflict (slug) do update set display_name=channel_profiles.display_name,
+                   audience_profile=excluded.audience_profile,
+                   launch_date=coalesce(channel_profiles.launch_date, excluded.launch_date)
             returning id""",
             (brand["id"], slug, ch["display_name"], ch["host_persona"].strip(), ch["topic_focus"],
-             db.j(ch["voice_profile"]), db.j(ch["audience_profile"]), db.j(ch["design"]), ch.get("disclaimer")))
+             db.j(ch["voice_profile"]), db.j(ch["audience_profile"]), db.j(ch["design"]), ch.get("disclaimer"),
+             ch.get("launch_date")))
         channel_ids[slug] = row["id"]
     acc = config.accounts()
     for a in acc["accounts"]:
@@ -493,9 +497,24 @@ def variant_text(project: dict, acc: dict, kind: str) -> tuple[str | None, str, 
     return None, pkg.get("facebook_post", ""), [], []
 
 
+def launch_at(conn, channel: str | None) -> datetime | None:
+    """Midnight (studio time) of the channel's launch day, or None when it has launched or has no date."""
+    row = db.one(conn, "select launch_date from channel_profiles where slug=%s", (channel,)) if channel else None
+    if not row or not row["launch_date"]:
+        return None
+    tz = ZoneInfo(db.get_setting(conn, "timezone", "Africa/Nairobi"))
+    return datetime.combine(row["launch_date"], datetime.min.time(), tzinfo=tz).astimezone(timezone.utc)
+
+
 def _assign(conn, acc: dict, projects: list[dict], kind: str, slots: list[datetime]) -> int:
     n = 0
-    for project, when in zip(projects, slots):
+    free = sorted(slots)
+    for project in projects:
+        start = launch_at(conn, project["channel_slug"])  # never before the channel's launch day
+        when = next((s for s in free if start is None or s >= start), None)
+        if when is None:
+            continue
+        free.remove(when)
         exists = db.one(conn, """select id from content_variants where project_id=%s and social_account_id=%s and kind=%s""",
                         (project["id"], acc["id"], kind))
         if exists:
@@ -635,6 +654,8 @@ def plan_project_distribution(conn, project_id, now: datetime | None = None) -> 
     accounts = db.all_(conn, """select a.*, c.slug channel from social_accounts a
                                 left join channel_profiles c on c.id = a.channel_profile_id where a.enabled order by a.platform""")
     first_week = (head["batch_week"] or research.week_start()) + timedelta(days=7)
+    launch = launch_at(conn, head["channel_slug"])
+    earliest = max(now, launch) if launch else now
     taken: dict = {}
 
     def free_slots(acc: dict, prefix: str, n: int) -> list[datetime]:
@@ -647,7 +668,7 @@ def plan_project_distribution(conn, project_id, now: datetime | None = None) -> 
         days, times = t.get(f"{prefix}_days") or [], t.get(f"{prefix}_times") or []
         out: list[datetime] = []
         for w in range(8):
-            for slot in schedule.slots(days, times, first_week + timedelta(days=7 * w), tz, not_before=now):
+            for slot in schedule.slots(days, times, first_week + timedelta(days=7 * w), tz, not_before=earliest):
                 if all(abs((slot - x).total_seconds()) >= 1800 for x in held):
                     out.append(slot)
                     held.append(slot)

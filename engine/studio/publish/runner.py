@@ -164,6 +164,12 @@ def publish_post(conn, storage, post: dict, adapters: dict | None = None, now: d
     if db.one(conn, "select 1 from published_posts where scheduled_post_id=%s", (post["id"],)):
         db.run(conn, "update scheduled_posts set status='published', locked_until=null where id=%s", (post["id"],))
         return "already_published"
+    if ctx and (launch := db.one(conn, """select launch_date from channel_profiles where slug=%s and launch_date is not null
+                                         and launch_date > (%s at time zone %s)::date""",
+                                 (ctx["channel_slug"], now, db.get_setting(conn, "timezone", "Africa/Nairobi")))):
+        db.run(conn, "update scheduled_posts set status='scheduled', attempts=greatest(attempts-1,0), locked_until=null "
+                     "where id=%s", (post["id"],))
+        return "not_launched"  # this channel launches on launch['launch_date']: nothing goes out before
     problems = safety_problems(conn, post, ctx, now)
     if problems:
         if problems == ["paused"]:

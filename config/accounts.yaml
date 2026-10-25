@@ -4,42 +4,45 @@
 timezone: "Africa/Nairobi"
 
 accounts:
+  # Times are studio time (Nairobi). 17:00-20:00 Nairobi = late morning to early afternoon US Eastern, the window
+  # to test first for US viewers; adjust once YouTube Studio shows when your viewers are online.
+  # Start small (2 long + 3 Shorts a week for Pixel) and raise it only once viewers keep watching.
   - platform: youtube
     label: "YouTube AI"
     channel: ai
     topic_mix: { ai: 1.0, money: 0.0 }
-    weekly_targets: { long_video: 3, short_video: 6 }
-    posting_days: ["mon", "wed", "fri"]
+    weekly_targets: { long_video: 2, short_video: 3 }
+    posting_days: ["mon", "thu"]
     posting_times: ["18:00"]
-    shorts_days: ["mon", "tue", "wed", "thu", "fri", "sat"]
-    shorts_times: ["12:00"]
+    shorts_days: ["tue", "fri", "sat"]
+    shorts_times: ["20:00"]
   - platform: youtube
     label: "YouTube Money"
     channel: money
     topic_mix: { ai: 0.0, money: 1.0 }
-    weekly_targets: { long_video: 3, short_video: 6 }
-    posting_days: ["tue", "thu", "sat"]
+    weekly_targets: { long_video: 1, short_video: 2 }
+    posting_days: ["tue"]
     posting_times: ["18:00"]
-    shorts_days: ["mon", "tue", "wed", "thu", "fri", "sat"]
-    shorts_times: ["15:00"]
+    shorts_days: ["wed", "sat"]
+    shorts_times: ["20:00"]
   - platform: facebook
     label: "Facebook Page"
     channel: null
     topic_mix: { ai: 0.5, money: 0.5 }
     weekly_targets: { reel: 3, text_post: 2 }
     posting_days: ["mon", "wed", "fri", "sat", "sun"]
-    posting_times: ["12:30"]
+    posting_times: ["19:00"]
   - platform: tiktok
     label: "TikTok"
     channel: null
     topic_mix: { ai: 0.5, money: 0.5 }
     weekly_targets: { short_video: 3 }
     posting_days: ["tue", "thu", "sun"]
-    posting_times: ["19:30"]
+    posting_times: ["20:30"]
   - platform: x
     label: "X"
     channel: null
     topic_mix: { ai: 0.5, money: 0.5 }
     weekly_targets: { text_post: 3 }
     posting_days: ["mon", "wed", "fri"]
-    posting_times: ["08:30"]
+    posting_times: ["17:30"]

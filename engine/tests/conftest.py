@@ -60,4 +60,5 @@ def synced(conn):
     from studio import produce
 
     produce.sync_config(conn)
+    db.run(conn, "update channel_profiles set launch_date = null")  # tests set launch dates themselves
     return conn
