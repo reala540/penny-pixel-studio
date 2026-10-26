@@ -11,7 +11,7 @@ import { Confirm, ErrorNote, HostTag, Loading, NotConfirmed, PageHeader, StatusB
 import { must, useAccounts, useSaveSetting, useSetting, useTimezone } from "../lib/api";
 import { useCleared, visibleAfterClear } from "../lib/clear";
 import { fixFor } from "../lib/labels";
-import { jobStateText, jobTitle, stillFailing, useRunningJobs } from "../lib/activity";
+import { jobStateText, jobTitle, plainError, stillFailing, useRunningJobs } from "../lib/activity";
 import { fmtDateTime, localDay, statusText, weekDays } from "../lib/format";
 import { useKeyCheck, useReadiness } from "../lib/readiness";
 import { projectPath } from "../lib/routes";
@@ -117,7 +117,7 @@ function NeedsYou({ readiness }: { readiness: ReturnType<typeof useReadiness> })
       const since = new Date(Date.now() - 3 * 86_400_000).toISOString();
       const types = ["produce_idea", "run_mission", "run_production", "run_research", "generate_ideas", "regenerate_script", "rerender_preview", "weekly_production", "weekly_research"];
       const [failed, done, posts, review, accounts] = await Promise.all([
-        must(supabase.from("generation_jobs").select("id, job_type, error_message, input, project_id, updated_at, content_projects(title)").eq("status", "failed")
+        must(supabase.from("generation_jobs").select("id, job_type, error_message, input, project_id, updated_at, content_projects(title, status)").eq("status", "failed")
           .in("job_type", types).gte("updated_at", since).order("updated_at", { ascending: false }).limit(20)),
         must(supabase.from("generation_jobs").select("job_type, input, project_id, updated_at").eq("status", "completed")
           .in("job_type", types).gte("updated_at", since).limit(200)),
@@ -144,7 +144,7 @@ function NeedsYou({ readiness }: { readiness: ReturnType<typeof useReadiness> })
   }
   for (const j of data.data?.jobs ?? []) {
     const fix = fixFor(j.error_message);
-    needs.push({ key: j.id, tone: "bad", text: `${jobTitle(j)} didn't work: ${String(j.error_message ?? "").slice(0, 140)}`,
+    needs.push({ key: j.id, tone: "bad", text: `${jobTitle(j)} didn't work: ${plainError(j.error_message)}`,
       action: j.project_id ? <Link className="btn-quiet" to={projectPath(j.project_id)}>Open</Link>
         : j.job_type === "produce_idea" && (j.input?.generated_idea_id || j.input?.content_idea_id)
           ? <Link className="btn-quiet" to={`/create?${new URLSearchParams({ step: "progress", kind: j.input.generated_idea_id ? "generated" : "research", id: j.input.generated_idea_id ?? j.input.content_idea_id, ...(j.input.channel ? { channel: j.input.channel } : {}) })}`}>Fix problem</Link>
@@ -341,7 +341,7 @@ function Health() {
     queryFn: async () => {
       const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
       const [failedRaw, done, providers, budget, reservations] = await Promise.all([
-        must(supabase.from("generation_jobs").select("id, job_type, error_message, status, input, project_id, updated_at").in("status", ["failed", "blocked"]).gte("created_at", since).order("updated_at", { ascending: false }).limit(40)),
+        must(supabase.from("generation_jobs").select("id, job_type, error_message, status, input, project_id, updated_at, content_projects(title, status)").in("status", ["failed", "blocked"]).gte("created_at", since).order("updated_at", { ascending: false }).limit(40)),
         must(supabase.from("generation_jobs").select("job_type, input, project_id, updated_at").eq("status", "completed").gte("created_at", since).limit(500)),
         must(supabase.from("ai_providers").select("name, enabled, last_error, last_success_at, circuit_open_until")),
         must(supabase.from("budgets").select("monthly_cap_usd").eq("service", "x_api")),
@@ -377,7 +377,7 @@ function Health() {
             <>
               <ul className="space-y-1.5">{problems.map((f) => {
                 const fix = fixFor(f.error_message);
-                return <li key={f.id}><span className="font-medium">{f.job_type.replace(/_/g, " ")}</span>: {String(f.error_message ?? "").slice(0, 90)}
+                return <li key={f.id}><span className="font-medium">{f.job_type.replace(/_/g, " ")}</span>: {plainError(f.error_message)}
                   {fix && <Link to={fix.to} className="ml-1 text-xs font-medium text-pixel hover:underline">{fix.label}</Link>}</li>;
               })}</ul>
               <div className="mt-2"><ClearButton title="Clear this week's problems?" done="Problems cleared" className="btn-quiet px-2.5 py-1 text-xs"

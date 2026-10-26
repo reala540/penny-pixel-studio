@@ -58,9 +58,31 @@ export const isTopJob = (j: Pick<JobRow, "job_type">) => j.job_type in JOB_LABEL
 type JobLike = { job_type: string; project_id?: string | null; input?: any; updated_at: string };
 const sameWork = (j: JobLike) => [j.job_type, j.project_id ?? "", j.input?.content_idea_id ?? j.input?.generated_idea_id ?? ""].join("|");
 
-/** Failures a later run of the same job (same package or idea) has since fixed don't need anyone any more. */
-export function stillFailing<T extends JobLike>(failed: T[], finished: JobLike[]): T[] {
-  return failed.filter((f) => !finished.some((d) => sameWork(d) === sameWork(f) && d.updated_at > f.updated_at));
+const DECIDED = ["approved", "scheduled", "published", "rejected", "archived"];
+
+/**
+ * Failures that still need the owner: not fixed by a later run of the same work, not about a package the owner has
+ * already decided (approved, discarded…), and only the latest failure for each piece of work.
+ */
+export function stillFailing<T extends JobLike & { content_projects?: { status?: string | null } | null }>(failed: T[], finished: JobLike[]): T[] {
+  const latest = new Map<string, string>();
+  for (const f of failed) if ((latest.get(sameWork(f)) ?? "") < f.updated_at) latest.set(sameWork(f), f.updated_at);
+  return failed.filter((f) => latest.get(sameWork(f)) === f.updated_at
+    && !(f.content_projects?.status && DECIDED.includes(f.content_projects.status))
+    && !finished.some((d) => sameWork(d) === sameWork(f) && d.updated_at > f.updated_at));
+}
+
+const ROLE_NAME: Record<string, string> = {
+  research_summarizer: "Evidence scout", scriptwriter: "Scriptwriter", voice_editor: "Voice editor", critic: "Critic",
+  claim_checker: "Claim checker", repurposer: "Distribution editor", angle_selector: "Angle selector",
+};
+
+/** An engine error in plain words: "no AI service could do the Voice editor step" instead of a list of provider errors. */
+export function plainError(message: string | null | undefined): string {
+  const m = message ?? "";
+  const role = m.match(/providers (?:failed )?for '([a-z_]+)'/)?.[1];
+  if (role) return `No AI service could do the ${ROLE_NAME[role] ?? role.replace(/_/g, " ")} step (they were busy, out of free requests or failing). Check AI services, then try again.`;
+  return m.replace(/\s*:\s*\[\{.*$/s, "").slice(0, 200);
 }
 
 export function jobTitle(j: JobRow): string {

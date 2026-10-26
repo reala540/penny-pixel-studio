@@ -77,3 +77,21 @@ describe("job states in plain words", () => {
     expect(jobStateText(j("completed"))).toBe("Done");
   });
 });
+
+import { plainError } from "./activity";
+
+describe("Needs you shows only problems that still need the owner", () => {
+  const f = (id: string, at: string, status: string | null, idea = "i1") =>
+    ({ id, job_type: "produce_idea", project_id: "p1", input: { generated_idea_id: idea }, updated_at: at, content_projects: status ? { status } : null });
+  it("drops failures of packages already discarded or approved", () => {
+    expect(stillFailing([f("a", "2026-10-26T01:00:00Z", "rejected"), f("b", "2026-10-26T02:00:00Z", "approved", "i2")], [])).toEqual([]);
+  });
+  it("keeps only the latest failure of the same work", () => {
+    const out = stillFailing([f("old", "2026-10-25T01:00:00Z", "failed"), f("new", "2026-10-26T01:00:00Z", "failed")], []);
+    expect(out.map((x) => x.id)).toEqual(["new"]);
+  });
+  it("words provider failures plainly", () => {
+    expect(plainError("All providers failed for 'voice_editor': [{'provider': 'gemini', 'error': 'x'}]")).toContain("Voice editor step");
+    expect(plainError("Not enough source material for an honest video")).toBe("Not enough source material for an honest video");
+  });
+});
