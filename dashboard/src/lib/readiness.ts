@@ -23,10 +23,15 @@ export interface Readiness {
   okProviders: string[];
   /** Jobs with no enabled model from a provider that passed the last key check. A pass doesn't prove every model works. */
   uncoveredRoles: string[];
+  /** The key check or the model list failed to load (not the same as "never checked"). */
+  checkError: boolean;
+  aiError: boolean;
   loading: boolean;
 }
 
 export function readiness(input: { worker: boolean; core?: Core | null; coreError?: boolean; check?: Check | null;
+    /** The last key check or the model list couldn't be loaded: say so, never "not checked" or "nothing covers this". */
+    checkError?: boolean; aiError?: boolean;
   models?: { provider: string; roles: string[]; enabled: boolean }[]; providers?: { name: string; enabled: boolean }[]; now?: number }): Omit<Readiness, "loading"> {
   const blockers: Readiness["blockers"] = [];
   const warnings: Readiness["warnings"] = [];
@@ -39,17 +44,20 @@ export function readiness(input: { worker: boolean; core?: Core | null; coreErro
   const checkedAt = input.check?.checked_at ?? null;
   const age = checkedAt ? ((input.now ?? Date.now()) - Date.parse(checkedAt)) / 3_600_000 : Infinity;
   const stale = age > STALE_HOURS;
-  if (!checkedAt) warnings.push({ text: "The AI keys haven't been checked yet.", to: "/settings/ai" });
+  if (input.checkError) warnings.push({ text: "Couldn't load the last AI key check.", to: "/settings/ai" });
+  else if (!checkedAt) warnings.push({ text: "The AI keys haven't been checked yet.", to: "/settings/ai" });
   else if (okProviders.length === 0) blockers.push({ text: "No AI service passed the last key check.", to: "/settings/ai" });
   if (checkedAt && stale) warnings.push({ text: `The last key check is ${Math.round(age)} hours old: results may have changed.`, to: "/settings/ai" });
   const enabled = new Set((input.providers ?? []).filter((p) => p.enabled).map((p) => p.name));
   const passing = new Set(okProviders.filter((p) => enabled.has(p)));
-  const uncoveredRoles = PACKAGE_ROLES.filter(([role]) => !(input.models ?? []).some((m) => m.enabled && passing.has(m.provider) && m.roles.includes(role)))
+  const uncoveredRoles = input.aiError ? [] : PACKAGE_ROLES.filter(([role]) => !(input.models ?? []).some((m) => m.enabled && passing.has(m.provider) && m.roles.includes(role)))
     .map(([, label]) => label);
-  if (checkedAt && okProviders.length && uncoveredRoles.length) {
+  if (input.aiError) warnings.push({ text: "Couldn't load the AI services and models.", to: "/settings/ai" });
+  else if (checkedAt && okProviders.length && uncoveredRoles.length) {
     warnings.push({ text: `No service that passed the key check does these jobs: ${uncoveredRoles.join(", ")}. A package may stop at that step.`, to: "/settings/ai" });
   }
-  return { canCreate: blockers.length === 0, blockers, warnings, checkedAt, stale, okProviders, uncoveredRoles };
+  return { canCreate: blockers.length === 0, blockers, warnings, checkedAt, stale, okProviders, uncoveredRoles,
+    checkError: Boolean(input.checkError), aiError: Boolean(input.aiError) };
 }
 
 export function useReadiness(): Readiness {
@@ -68,7 +76,8 @@ export function useReadiness(): Readiness {
       return { models: models as { provider: string; roles: string[]; enabled: boolean }[], providers: providers as { name: string; enabled: boolean }[] };
     },
   });
-  const r = readiness({ worker: Boolean(workerUrl), core: core.data, coreError: core.isError, check: check.data, models: ai.data?.models, providers: ai.data?.providers });
+  const r = readiness({ worker: Boolean(workerUrl), core: core.data, coreError: core.isError, check: check.data,
+    checkError: check.isError, aiError: ai.isError, models: ai.data?.models, providers: ai.data?.providers });
   return { ...r, loading: check.isLoading || ai.isLoading };
 }
 

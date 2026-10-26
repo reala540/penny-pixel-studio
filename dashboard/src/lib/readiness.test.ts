@@ -55,3 +55,17 @@ describe("progress shows only real stages", () => {
     expect(rows.slice(1).every((r) => r.state === "waiting")).toBe(true);
   });
 });
+
+describe("readiness never reads a failed load as an answer", () => {
+  it("a failed key-check load is not 'never checked' and not 'no service passed'", () => {
+    const r = readiness({ worker: true, check: null, checkError: true });
+    expect(r.warnings.map((w) => w.text)).toEqual(["Couldn't load the last AI key check."]);
+    expect(r.blockers).toEqual([]);
+    expect(r.checkError).toBe(true);
+  });
+  it("a failed model list doesn't claim every job is uncovered", () => {
+    const r = readiness({ worker: true, check: { checked_at: new Date().toISOString(), results: [{ provider: "groq", status: "ok" }] }, aiError: true });
+    expect(r.uncoveredRoles).toEqual([]);
+    expect(r.warnings.map((w) => w.text)).toEqual(["Couldn't load the AI services and models."]);
+  });
+});

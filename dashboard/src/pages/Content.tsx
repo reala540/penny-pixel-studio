@@ -3,7 +3,7 @@ import { ChevronRight, Lightbulb, PlusCircle } from "lucide-react";
 import { useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import ClearButton from "../components/ClearButton";
-import { Confirm, Empty, ErrorNote, HostTag, Loading, PageHeader, StatusBadge, useToast } from "../components/ui";
+import { Confirm, Empty, ErrorNote, HostTag, Loading, NotConfirmed, PageHeader, StatusBadge, useToast } from "../components/ui";
 import { must } from "../lib/api";
 import { isCleared, useCleared } from "../lib/clear";
 import { CONTENT_TABS, tabStatuses } from "../lib/content";
@@ -101,8 +101,7 @@ export default function Content() {
         <div className="mb-3"><ClearButton label="Clear drafts" title="Clear rejected and failed items?" done="Rejected and failed items cleared"
           body="Rejected and failed packages made so far are hidden from this list. Nothing is deleted. You can undo this." onClear={() => cleared.clear("library")} /></div>
       )}
-      <ErrorNote error={data.error} />
-      {data.isLoading ? <Loading /> : rows.length === 0 ? (
+      {data.isLoading ? <Loading /> : data.isError ? <NotConfirmed q={data} what="your content" /> : rows.length === 0 ? (
         tab === "needs-you"
           ? <Empty title="You're all caught up">New packages arrive after Sunday's production, or <Link to="/create" className="text-pixel underline">create content</Link>.</Empty>
           : <Empty title="Nothing here">Try another tab, search or filter.</Empty>

@@ -1,10 +1,11 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { lazy, StrictMode, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import AuthGate from "./components/AuthGate";
 import Layout from "./components/Layout";
-import { Loading, ToastProvider } from "./components/ui";
+import { Loading, reportError, ToastProvider } from "./components/ui";
+import { announceChange } from "./lib/state";
 import "./index.css";
 import { legacyRedirect } from "./lib/routes";
 import { Privacy, Terms } from "./pages/Legal";
@@ -21,7 +22,14 @@ const Home = lazy(() => import("./pages/Home"));
 const Ideas = lazy(() => import("./pages/Ideas"));
 const SettingsPage = lazy(() => import("./pages/Settings"));
 
-const queryClient = new QueryClient({ defaultOptions: { queries: { staleTime: 20_000, refetchOnWindowFocus: true, retry: 1 } } });
+// Every action that fails says so, even where a page didn't add its own message; every change tells the other tabs.
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { staleTime: 20_000, refetchOnWindowFocus: true, refetchOnReconnect: true, retry: 1 } },
+  mutationCache: new MutationCache({
+    onError: (error, _v, _c, mutation) => { if (!mutation.options.onError) reportError(error); },
+    onSuccess: () => announceChange(),
+  }),
+});
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

@@ -19,8 +19,9 @@ export default function Tour() {
   const [open, setOpen] = useState(false);
   const [i, setI] = useState(0);
   useEffect(() => {
-    if (!done.isLoading && done.data !== true) setOpen(true);
-  }, [done.isLoading, done.data]);
+    // only when the database confirmed the tour hasn't been seen: a failed check must not pop it up
+    if (done.isSuccess && done.data !== true) setOpen(true);
+  }, [done.isSuccess, done.data]);
   useEffect(() => {
     const replay = () => { setI(0); setOpen(true); };
     window.addEventListener("studio-tour", replay);

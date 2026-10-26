@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DragEvent, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import ClearButton from "../components/ClearButton";
-import { ErrorNote, HostMark, Loading, PageHeader, StatusBadge, useToast } from "../components/ui";
+import { ErrorNote, HostMark, Loading, NotConfirmed, PageHeader, StatusBadge, useToast } from "../components/ui";
 import { must, queueJob, useAccounts, useTimezone } from "../lib/api";
 import { dayLabel, fmtDateTime, fmtTime, KIND_NAME, localDay, moveToDay, weekDays } from "../lib/format";
 import { supabase } from "../lib/supabase";
@@ -64,8 +64,7 @@ export default function Calendar() {
           </select>
         </label>
       </div>
-      <ErrorNote error={posts.error} />
-      {posts.isLoading ? <Loading /> : (
+      {posts.isLoading ? <Loading /> : posts.isError && !posts.data ? <NotConfirmed q={posts} what="this week's posts" /> : (
         <div className="grid grid-cols-1 gap-6 2xl:grid-cols-[1fr_320px]">
           <div className="grid min-w-0 grid-cols-1 gap-2 md:grid-cols-7">
             {days.map((d) => {
@@ -153,14 +152,15 @@ function PostPanel({ post, tz, onMove }: { post: Post; tz: string; onMove: (when
         </form>
       )}
       {expired && (
-        <button className="btn-primary w-full" onClick={() => queueJob("recheck_project", { projectId: post.content_variants?.project_id }).then(() => toast("Fact re-check requested"))}>
+        <button className="btn-primary w-full" onClick={() => queueJob("recheck_project", { projectId: post.content_variants?.project_id })
+          .then((r) => toast(r.startsSoon ? "Fact re-check requested: it starts in a minute or two" : "Fact re-check saved: it starts within about 15 minutes"), (e) => toast((e as Error).message, "bad"))}>
           Re-check the facts
         </button>
       )}
       {["failed", "needs_review"].includes(post.status) && (
         <div className="space-y-2 text-sm">
           {post.status === "needs_review" && <p className="text-muted">Check the platform first: if the post is already there, don't retry. Use "Post it yourself" in Home to record it.</p>}
-          <button className="btn-quiet w-full" onClick={() => retry.mutate()}>Try again</button>
+          <button className="btn-quiet w-full" onClick={() => retry.mutate()} disabled={retry.isPending}>Try again</button>
         </div>
       )}
       {movable && (

@@ -76,7 +76,7 @@ export default function IdeaGeneratorPanel() {
         </ul>
       ) : null}
 
-      <ErrorNote error={runs.error || ideas.error} />
+      <ErrorNote error={runs.error || ideas.error} onRetry={() => { runs.refetch(); ideas.refetch(); }} retrying={runs.isFetching || ideas.isFetching} />
       {ideas.isLoading && latest ? <Loading label="Loading ideas" /> : visible.length > 0 && (
         <div className="mt-4 space-y-3">
           {visible.map((i) => <IdeaCard key={i.id} idea={i} />)}

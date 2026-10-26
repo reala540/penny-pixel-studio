@@ -3,7 +3,7 @@ import { ArrowRight, BookOpenCheck, CircleAlert, CircleCheck, Info, LoaderCircle
 import { lazy, Suspense, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import ClearButton from "../components/ClearButton";
-import { Confirm, Empty, ErrorNote, Loading, PageHeader, useToast } from "../components/ui";
+import { Confirm, Empty, ErrorNote, Loading, NotConfirmed, PageHeader, useToast } from "../components/ui";
 import { buildTimeline, Category, inFilter, Item, jobTitle, useRunningJobs, type AuditRow, type JobRow, type NoteRow } from "../lib/activity";
 import { must, runWorkflow, stopAndClear, useSetting, useTimezone } from "../lib/api";
 import { useCleared, visibleAfterClear } from "../lib/clear";
@@ -70,8 +70,7 @@ export default function Activity() {
           <h2 id="now-title" className="section-title">Running now</h2>
           <StopAndClear running={(running.data ?? []).length} />
         </div>
-        <ErrorNote error={running.error} />
-        {running.isLoading ? <Loading /> : (running.data ?? []).length === 0 ? (
+        {running.isLoading ? <Loading /> : running.isError ? <NotConfirmed q={running} what="what's running" /> : (running.data ?? []).length === 0 ? (
           <p className="rounded-xl border border-dashed border-line px-4 py-3 text-sm text-muted">Nothing is running. The studio is idle until the next scheduled run or until you start something.</p>
         ) : (
           <ul className="space-y-2">
@@ -103,8 +102,7 @@ export default function Activity() {
             ))}
           </div>
         </div>
-        <ErrorNote error={feed.error} />
-        {feed.isLoading ? <Loading /> : shown.length === 0 ? (
+        {feed.isLoading ? <Loading /> : feed.isError ? <NotConfirmed q={feed} what="the timeline" /> : shown.length === 0 ? (
           <Empty title={filter === "errors" ? "No problems" : "Nothing here yet"}>
             {filter === "errors" ? "Everything that ran recently worked." : "Events appear here as the studio works: ideas, research, videos, reviews and posts."}
           </Empty>
