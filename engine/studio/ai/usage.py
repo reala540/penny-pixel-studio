@@ -112,6 +112,10 @@ class MemoryUsageStore:
     def custom_providers(self):
         return {}
 
+    def pause_model(self, provider, model, why, detail):
+        self.provider_overrides.setdefault(provider, {"models": {}}).setdefault("models", {})[model] = {"pause_reason": why}
+        return [provider]
+
     def extra_models(self):
         return {}
 
@@ -172,6 +176,35 @@ class DbUsageStore:
                              where name=%s""", (provider,))
 
     @_locked
+    def pause_model(self, provider, model, why, detail):
+        """Pause a model that is retired ('retired') or not free on this plan ('payment') on this provider and its other
+        accounts (same address). It's re-tested on a schedule (studio.ai.health) and comes back by itself when it works.
+        Returns the providers it was paused on."""
+        from . import health
+
+        rows = db.all_(self.conn, """update ai_model_configs
+                                        set pause_reason = %s, paused_at = now(), checks = 0, pause_detail = %s,
+                                            next_check_at = now() + make_interval(secs => %s)
+                                      where model = %s and pause_reason is null and provider in (
+                                        select name from ai_providers
+                                         where base_url = (select base_url from ai_providers where name = %s))
+                                     returning provider""",
+                       (why, detail[:300], health.SCHEDULE[why][0], model, provider))
+        names = sorted({r["provider"] for r in rows}) or [provider]
+        if rows:
+            db.run(self.conn, "insert into audit_logs (actor, action, target_type, target_id, details) values "
+                              "('engine','ai_model_paused','ai_model',%s,%s)",
+                   (model, db.j({"providers": names, "reason": why, "detail": detail[:300]})))
+            if why == "retired":  # a lasting change the owner should know about now; a paid model only after a week
+                from .. import config, notify
+
+                notify.send(self.conn, "ai_model_retired", f"AI model switched off: {model}",
+                            f"{', '.join(names)} says this model is no longer available ({detail[:160]}). The studio stopped "
+                            "using it and re-tests it once a week for 4 weeks. Other models take over its jobs.",
+                            link=f"{config.runtime().dashboard_url}/settings/ai", dedupe_key=f"retired:{provider}:{model}")
+        return names
+
+    @_locked
     def error_rate(self, provider, model):
         row = db.one(self.conn, """select avg(case when success then 0 else 1 end)::float r from (
                                      select success from provider_usage where service='llm' and provider=%s
@@ -182,7 +215,8 @@ class DbUsageStore:
     @_locked
     def overrides(self):
         rows = db.all_(self.conn, "select name, enabled from ai_providers")
-        models = db.all_(self.conn, "select provider, model, enabled, daily_request_limit, priority from ai_model_configs")
+        models = db.all_(self.conn, """select provider, model, enabled, daily_request_limit, priority, pause_reason
+                                          from ai_model_configs""")
         out: dict[str, dict] = {r["name"]: {"enabled": r["enabled"], "models": {}} for r in rows}
         for m in models:
             out.setdefault(m["provider"], {"models": {}})["models"][m["model"]] = m
@@ -265,6 +299,14 @@ class DbUsageStore:
                                   last_success_at=now() where id=%s""", (cred.id,))
             self._clear_group(cred)
             return
+        if health == "invalid":
+            from .. import config, notify
+
+            notify.send(self.conn, "ai_key_rejected", f"AI key rejected: {cred.label} ({cred.provider})",
+                        "The provider refused this key. Press Replace on it in Settings → AI keys and paste a new one. "
+                        "Until then the studio uses its other keys and services.",
+                        link=f"{config.runtime().dashboard_url}/settings/ai",
+                        dedupe_key=f"keyrejected:{cred.id}:{datetime.now(timezone.utc):%Y%m%d}")
         db.run(self.conn, """update ai_credentials set health=%s, consecutive_failures=consecutive_failures+1,
                               circuit_open_until=case when %s::int is null then circuit_open_until
                                                       else now() + make_interval(secs => %s::int) end,
@@ -311,3 +353,23 @@ class DbUsageStore:
                                           "daily_requests": m["daily_request_limit"], "priority": m["priority"] or 100}
                                          for m in models]}
         return out
+
+
+class ProbeStore(DbUsageStore):
+    """For tests of a model (key check, scheduled re-tests): each model is judged on its own. One failing model doesn't
+    rest its provider or key for the others, a resting provider or key is still tried, and pausing is left to the caller."""
+
+    def open_circuit(self, *a, **k):
+        return None
+
+    def group_rest(self, *a, **k):
+        return None
+
+    def circuit_open(self, *a, **k):
+        return False
+
+    def credential_resting(self, *a, **k):
+        return False
+
+    def pause_model(self, *a, **k):
+        return []

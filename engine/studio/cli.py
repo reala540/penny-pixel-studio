@@ -123,6 +123,7 @@ def cmd_queue(a):
 
     with _conn() as conn:
         jobs.reset_stale_running(conn)
+        _recheck_paused(conn)
         _print(maintenance.process_owner_jobs(conn, _router(conn), default_storage()))
 
 
@@ -131,6 +132,7 @@ def cmd_maintain(a):
     from .storage import default_storage
 
     with _conn() as conn:
+        _recheck_paused(conn)
         out = {"cleanup": maintenance.cleanup(conn, default_storage()), "expired": maintenance.expire_stale(conn)}
         if config.runtime().token_key:
             out["tokens"] = oauth.check_health(conn)
@@ -254,6 +256,18 @@ def cmd_providers(a):
     _print(results)
 
 
+def _recheck_paused(conn) -> None:
+    """Paused AI models whose re-test is due are tried again; ones that work rejoin the team (best effort)."""
+    from .ai import health
+
+    try:
+        out = health.recheck(conn)
+        if any(out.values()):
+            _print({"paused_models": out})
+    except Exception as exc:
+        print(f"re-test of paused models skipped: {str(exc)[:200]}", flush=True)
+
+
 def run_provider_check(conn, only: str | None = None) -> list[dict]:
     """The key check, also run as the owner job "check_providers" (the dashboard's Test again).
 
@@ -331,27 +345,16 @@ def _check_all_models(conn, only: str | None = None) -> list[dict]:
 
     from .ai import catalog
     from .ai.router import Candidate, Router
-    from .ai.usage import DbUsageStore
+    from .ai.usage import DbUsageStore, ProbeStore
 
     cfg = config.providers()
     found = catalog.refresh(cfg)
     db.set_setting(conn, "model_catalog", {"checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                                            "providers": found})
-    class CheckStore(DbUsageStore):
-        """Each model is judged on its own: one failing model doesn't rest its provider or key for the others,
-        and a provider that is resting is still tested (the result says why it rests)."""
+    class CheckStore(ProbeStore):
+        """Each model is judged on its own; a model the provider retired or charges for is paused, as in normal work."""
 
-        def open_circuit(self, *a, **k):
-            return None
-
-        def group_rest(self, *a, **k):
-            return None
-
-        def circuit_open(self, *a, **k):
-            return False
-
-        def credential_resting(self, *a, **k):
-            return False
+        pause_model = DbUsageStore.pause_model
 
     store = CheckStore(conn)
     router = Router(store)

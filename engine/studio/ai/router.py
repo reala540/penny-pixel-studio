@@ -26,6 +26,11 @@ from ..errors import AuthError, PermanentError, QuotaError, TransientError, Vali
 from .credentials import Credential, CredentialPool, ProviderSettings, backoff_seconds
 from .usage import MemoryUsageStore, UsageStore
 
+# A provider saying the model itself is gone (not a key, quota or request problem)
+RETIRED = re.compile(r"end of life|no longer (?:available|supported|offered|served)|has been (?:retired|deprecated|decommissioned|"
+                     r"removed|discontinued)|(?:is|was) (?:archived|retired|decommissioned)|model_archived|deprecated and",
+                     re.IGNORECASE)
+
 T = TypeVar("T", bound=BaseModel)
 
 SYSTEM_GUARD = (
@@ -140,6 +145,7 @@ class Router:
         self.pool = CredentialPool(self.usage)
         self.sleep = sleep
         self._last_retry_after: dict[str, int] = {}
+        self._retired: set[tuple[str, str]] = set()
 
     def _settings(self, provider: str) -> ProviderSettings:
         getter = getattr(self.usage, "provider_settings", None)
@@ -178,9 +184,11 @@ class Router:
                 if role not in roles or m.get("kind", "chat") != kind:
                     continue
                 mov = (ov.get("models") or {}).get(m["id"], {})
-                if mov and mov.get("enabled") is False:
+                if mov and (mov.get("enabled") is False or mov.get("pause_reason")):
                     continue
                 model_id = m["id"]
+                if (name, model_id) in self._retired:
+                    continue
                 missing = ov.get("missing") or {}
                 if model_id in missing:  # retired by the provider: use the substitute found by the catalog
                     if not missing[model_id]:
@@ -243,6 +251,12 @@ class Router:
                         continue
                     if kind == "permanent":
                         raise PermanentError(result[1])
+                    if kind == "retired":  # the model is gone for every key: pause it, don't try the others
+                        self.pause(cand, "retired", result[1])
+                        raise PermanentError(f"{cand.provider}/{cand.model}: retired by the provider ({result[1][:160]})")
+                    if kind == "payment":
+                        self.pause(cand, "payment", result[1])
+                        raise QuotaError(f"{cand.provider}/{cand.model}: requires payment on this plan; paused and re-tested daily")
                     if kind in ("rate_limited", "payment"):
                         spent_groups.add(cred.quota_group)
                     break
@@ -257,6 +271,17 @@ class Router:
         if "transient" in outcomes and not self.credentials_for(cand.provider):
             self.usage.open_circuit(cand.provider, 120, "network or server errors")
         raise TransientError(f"{cand.provider}: failed after {len(outcomes)} attempt(s): {', '.join(outcomes)}")
+
+    def pause(self, cand: Candidate, why: str, detail: str) -> None:
+        """Stop using a model that is retired or not free: now, and (with the database) until a re-test passes."""
+        self._retired.add((cand.provider, cand.model))
+        pause = getattr(self.usage, "pause_model", None)
+        if pause:
+            try:
+                for provider in pause(cand.provider, cand.model, why, detail) or []:
+                    self._retired.add((provider, cand.model))
+            except Exception:  # never let the bookkeeping break the request flow
+                pass
 
     def _rest_for(self, provider: str, outcomes: list[str]) -> int:
         return 24 * 3600 if "payment" in outcomes and "rate_limited" not in outcomes else self._last_retry_after.get(provider, 900)
@@ -284,14 +309,16 @@ class Router:
             self._record(cand, role, False, 0, 0, started, f"{code} auth", cred)
             self.pool.report(cred, "auth", error=f"key rejected ({code})")
             return ("auth", None)
-        if code == 402:
+        if code == 402:  # this model isn't free on this plan: the key itself is fine for the provider's other models
             self._record(cand, role, False, 0, 0, started, "402 payment required", cred)
-            self.pool.report(cred, "payment", error="provider asked for payment")
-            return ("payment", None)
+            return ("payment", f"402: {resp.text[:300]}")
         if code >= 500 or code == 408:
             self._record(cand, role, False, 0, 0, started, f"{code} server error", cred)
             self.pool.report(cred, "transient", error=f"server error {code}")
             return ("transient", None)
+        if code == 410 or (code in (400, 404) and RETIRED.search(resp.text or "")):
+            self._record(cand, role, False, 0, 0, started, f"{code}: {resp.text[:200]}", cred)
+            return ("retired", f"{code}: {resp.text[:300]}")
         if code >= 400:
             self._record(cand, role, False, 0, 0, started, f"{code}: {resp.text[:200]}", cred)
             return ("permanent", f"{cand.provider}/{cand.model}: {code} {resp.text[:200]}")
