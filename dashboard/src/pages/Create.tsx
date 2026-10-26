@@ -1,14 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, CircleAlert, CircleCheck, CircleDashed, ExternalLink, LoaderCircle, Search, Sparkles } from "lucide-react";
-import { useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { ApprovalModeNotice } from "../components/AutoPostToggle";
+import DraftList from "../components/Drafts";
 import IdeaCard from "../components/IdeaCard";
 import ResearchIdeaCard from "../components/ResearchIdeaCard";
 import { Empty, ErrorNote, Loading, NotConfirmed, PageHeader, useToast } from "../components/ui";
 import { must, queueJob } from "../lib/api";
 import { stageRows, useStageJobs } from "../lib/content";
 import { safeUrl } from "../lib/format";
+import { getDraft, newDraftId, saveDraft, useOwnerId, type CreateDraft } from "../lib/drafts";
+import { draftUrl } from "../lib/draftStatus";
 import { buildObjective } from "../lib/ideas";
 import { useActiveIdeaJob, useIdeaActions } from "../lib/ideasApi";
 import { useReadiness } from "../lib/readiness";
@@ -24,35 +27,123 @@ const STEPS: [Step | "review" | "schedule", string][] = [
 ];
 const CHANNEL_NAME: Record<Channel, string> = { ai: "Pixel · AI", money: "Penny · Money", both: "Both channels" };
 
+type SaveState = "idle" | "saving" | "saved" | "failed";
+// One id per visit (history entry) for a new draft: remounting the page never starts a second draft.
+const visitDraftIds = new Map<string, string>();
+const visitDraftId = (key: string) => { if (!visitDraftIds.has(key)) visitDraftIds.set(key, newDraftId()); return visitDraftIds.get(key)!; };
+
 export default function Create() {
   const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
+  const owner = useOwnerId();
   const step = (params.get("step") as Step) || "channel";
   const channel = params.get("channel") as Channel | null;
   const kind = params.get("kind") as Kind | null;
   const id = params.get("id");
+  const draftId = params.get("draft");
   const go = (next: Partial<Record<"step" | "channel" | "kind" | "id", string | null>>) => {
     const p = new URLSearchParams(params);
     for (const [k, v] of Object.entries(next)) v ? p.set(k, v) : p.delete(k);
     setParams(p);
   };
+
+  // ---- the draft: every choice and the typed idea are kept on this device (never keys), so nothing is lost
+  const saved = getDraft(owner, draftId);
+  const [own, setOwn] = useState(() => saved?.own ?? "");
+  const [depth, setDepth] = useState(() => saved?.depth ?? 3);
+  const [ideaTitle, setIdeaTitle] = useState<string | null>(() => saved?.ideaTitle ?? null);
+  const baseRev = useRef<number | null>(saved?.rev ?? null);
+  const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [conflict, setConflict] = useState<CreateDraft | null>(null);
+  const loadedFor = useRef(draftId);
+  const visit = useLocation().key;
+  useEffect(() => {  // opened another draft (or Start new) without leaving the page
+    if (loadedFor.current === draftId) return;
+    loadedFor.current = draftId;
+    const d = getDraft(owner, draftId);
+    setOwn(d?.own ?? ""); setDepth(d?.depth ?? 3); setIdeaTitle(d?.ideaTitle ?? null);
+    baseRev.current = d?.rev ?? null; setConflict(null); setSaveState("idle");
+  }, [draftId, owner]);
+
+  const persist = (force = false) => {
+    if (!owner) return;
+    const body = { step, channel, kind, ideaId: id, ideaTitle: id ? ideaTitle : null, own, depth };
+    if (!channel && !id && !own.trim()) return;  // nothing chosen yet
+    const current = getDraft(owner, draftId);
+    if (current && !force && JSON.stringify([current.step, current.channel, current.kind, current.ideaId, current.ideaTitle ?? null, current.own ?? "", current.depth])
+      === JSON.stringify([step, channel, kind, id, id ? ideaTitle : null, own.trim() ? own : "", depth])) { baseRev.current = current.rev; setSaveState("saved"); return; }
+    const draft = draftId ?? visitDraftId(visit);
+    setSaveState("saving");
+    const r = saveDraft(owner, { id: draft, ...body }, draftId ? baseRev.current : null, force);
+    if (r.ok) {
+      baseRev.current = r.draft.rev; setSaveState("saved"); setConflict(null);
+      if (!draftId) { loadedFor.current = draft; const p = new URLSearchParams(params); p.set("draft", draft); setParams(p, { replace: true }); }
+    } else if (r.reason === "conflict") { setConflict(r.newer); setSaveState("idle"); }
+    else setSaveState("failed");
+  };
+  const conflictRef = useRef(conflict);
+  conflictRef.current = conflict;
+  const latest = useRef(persist);
+  latest.current = persist;
+  const pending = useRef(false);
+  useEffect(() => {
+    if (conflict) return;  // wait for the owner to choose which version to keep
+    pending.current = true;
+    if (own) setSaveState("saving");
+    const t = setTimeout(() => { pending.current = false; latest.current(); }, own ? 500 : 0);
+    return () => clearTimeout(t);
+  }, [step, channel, kind, id, own, depth, ideaTitle, owner]); // eslint-disable-line react-hooks/exhaustive-deps
+  // leaving the page or closing the tab saves at once: the last words typed are never lost
+  useEffect(() => {
+    const flush = () => { if (pending.current && !conflictRef.current) { pending.current = false; latest.current(); } };
+    window.addEventListener("pagehide", flush);
+    return () => { window.removeEventListener("pagehide", flush); flush(); };
+  }, []);
+  const useOther = (d: CreateDraft) => {
+    setOwn(d.own ?? ""); setDepth(d.depth ?? 3); setIdeaTitle(d.ideaTitle ?? null);
+    baseRev.current = d.rev; setConflict(null); setSaveState("saved");
+    navigate(draftUrl(d), { replace: true });
+  };
+
   const index = STEPS.findIndex(([k]) => k === step);
+  const fresh = !draftId && !params.get("step");
   return (
     <>
-      <PageHeader title="Create content" intro="Step by step from an idea to a package ready for review. You can go back at any time." />
-      <ol aria-label="Steps" className="mb-6 flex flex-wrap gap-1.5 text-xs">
-        {STEPS.map(([k, label], i) => (
-          <li key={k} aria-current={i === index ? "step" : undefined}
-            className={`rounded-full px-2.5 py-1 ${i === index ? "bg-ink text-surface" : i < index ? "bg-penny-soft text-penny" : "bg-sunken text-muted"}`}>
-            {i + 1} {label}
-          </li>
-        ))}
-      </ol>
+      <PageHeader title="Create content" intro="Step by step from an idea to a package ready for review. You can go back at any time, and leave: your place is kept." />
+      {fresh && <DraftList />}
+      {conflict && (
+        <div role="alert" className="mb-4 max-w-4xl rounded-lg bg-gold/15 px-3 py-2 text-sm text-ink">
+          This draft was changed in another tab ({new Date(conflict.updatedAt).toLocaleTimeString()}). Which version do you want to keep?
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button className="btn-quiet" onClick={() => useOther(conflict)}>Use the other tab's version</button>
+            <button className="btn-quiet" onClick={() => persist(true)}>Keep this one</button>
+          </div>
+        </div>
+      )}
+      <div className="mb-6 flex flex-wrap items-center gap-x-4 gap-y-2">
+        <ol aria-label="Steps" className="flex flex-wrap gap-1.5 text-xs">
+          {STEPS.map(([k, label], i) => (
+            <li key={k} aria-current={i === index ? "step" : undefined}
+              className={`rounded-full px-2.5 py-1 ${i === index ? "bg-ink text-surface" : i < index ? "bg-penny-soft text-penny" : "bg-sunken text-muted"}`}>
+              {i + 1} {label}
+            </li>
+          ))}
+        </ol>
+        <p role="status" className={`text-xs ${saveState === "failed" ? "text-alert" : "text-muted"}`}>
+          {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved on this device" : saveState === "failed" ? "Couldn't save on this device (private browsing or storage full): don't close this tab" : ""}
+        </p>
+        {draftId && (
+          <button type="button" className="text-xs text-muted underline-offset-2 hover:text-ink hover:underline"
+            onClick={() => navigate("/create")}>Start new (this one stays in your drafts)</button>
+        )}
+      </div>
       {step !== "channel" && (
         <button className="btn-quiet mb-4" onClick={() => go({ step: STEPS[Math.max(0, index - 1)][0] as Step })}><ArrowLeft size={14} aria-hidden />Back</button>
       )}
       <div className="max-w-4xl">
         {step === "channel" && <ChannelStep onPick={(c) => go({ step: "idea", channel: c, kind: null, id: null })} />}
-        {step === "idea" && channel && <IdeaStep channel={channel} onPick={(k, i) => go({ step: "research", kind: k, id: i })} />}
+        {step === "idea" && channel && <IdeaStep channel={channel} own={own} setOwn={setOwn} depth={depth} setDepth={setDepth}
+          onPick={(k, i, title) => { setIdeaTitle(title); go({ step: "research", kind: k, id: i }); }} />}
         {step === "research" && kind && id && <ResearchStep channel={channel} kind={kind} id={id}
           onContinue={(c) => go({ step: "package", channel: c })} onChooseAnother={() => go({ step: "idea", kind: null, id: null })} />}
         {step === "package" && kind && id && channel && channel !== "both" && <PackageStep channel={channel} kind={kind} id={id} onStarted={() => go({ step: "progress" })} />}
@@ -91,12 +182,11 @@ function ChannelStep({ onPick }: { onPick: (c: Channel) => void }) {
 
 // ------------------------------------------------------------------ 2 idea
 
-function IdeaStep({ channel, onPick }: { channel: Channel; onPick: (k: Kind, id: string) => void }) {
+function IdeaStep({ channel, onPick, own, setOwn, depth, setDepth }: { channel: Channel; onPick: (k: Kind, id: string, title: string) => void;
+  own: string; setOwn: (v: string) => void; depth: number; setDepth: (n: number) => void }) {
   const toast = useToast();
   const [q, setQ] = useState("");
   const [source, setSource] = useState<"all" | Kind>("all");
-  const [own, setOwn] = useState("");
-  const [depth, setDepth] = useState(3);
   const job = useActiveIdeaJob();
   const { generate } = useIdeaActions();
   const generated = useQuery({
@@ -126,7 +216,7 @@ function IdeaStep({ channel, onPick }: { channel: Channel; onPick: (k: Kind, id:
   const gen = (generated.data ?? []).filter((i) => match(`${i.title} ${i.summary}`));
   const res = (research.data ?? []).filter((i) => match(`${i.title} ${i.angle ?? ""}`));
   const ideasOnly = channel === "both";
-  const pick = (k: Kind, i: string) => onPick(k, i);
+  const pick = (k: Kind, i: string, title: string) => onPick(k, i, title);
   return (
     <section aria-labelledby="idea-title">
       <h2 id="idea-title" className="section-title mb-1">Step 2 · Choose or generate an idea <span className="font-normal text-muted">· {CHANNEL_NAME[channel]}</span></h2>
@@ -149,8 +239,8 @@ function IdeaStep({ channel, onPick }: { channel: Channel; onPick: (k: Kind, id:
           <Empty title={`No ideas for ${CHANNEL_NAME[channel]} yet`}>Press <strong>Generate new ideas</strong>, or write your own below.</Empty>
         ) : (
           <div className="space-y-3">
-            {source !== "research" && gen.map((i) => <IdeaCard key={i.id} idea={i} onUse={ideasOnly ? undefined : (x) => pick("generated", x.id)} />)}
-            {source !== "generated" && res.map((i) => <ResearchIdeaCard key={i.id} idea={i} showSources={false} onUse={ideasOnly ? undefined : (x) => pick("research", x.id)} />)}
+            {source !== "research" && gen.map((i) => <IdeaCard key={i.id} idea={i} onUse={ideasOnly ? undefined : (x) => pick("generated", x.id, x.title)} />)}
+            {source !== "generated" && res.map((i) => <ResearchIdeaCard key={i.id} idea={i} showSources={false} onUse={ideasOnly ? undefined : (x) => pick("research", x.id, x.title)} />)}
           </div>
         )
       )}
@@ -276,8 +366,14 @@ function PackageStep({ channel, kind, id, onStarted }: { channel: "ai" | "money"
   const job = useIdeaJob(kind, id);
   const busy = job.data && ["queued", "running"].includes(job.data.status);
   const start = useMutation({
-    mutationFn: () => queueJob("produce_idea", { input: { [kind === "generated" ? "generated_idea_id" : "content_idea_id"]: id, channel } }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["produce-idea-job", kind, id] }); onStarted(); },
+    mutationFn: async () => {
+      // check again right before queuing: another tab (or Telegram) may have started it a moment ago
+      const latest = (await job.refetch()).data;
+      if (latest && ["queued", "running"].includes(latest.status)) return { already: true };
+      await queueJob("produce_idea", { input: { [kind === "generated" ? "generated_idea_id" : "content_idea_id"]: id, channel } });
+      return { already: false };
+    },
+    onSuccess: (r) => { if (r.already) toast("This package was already being made, so nothing new was started."); qc.invalidateQueries({ queryKey: ["produce-idea-job", kind, id] }); onStarted(); },
     onError: (e) => toast((e as Error).message, "bad"),
   });
   if (sel.isLoading) return <Loading />;
@@ -318,8 +414,12 @@ function ProgressStep({ kind, id, channel }: { kind: Kind; id: string; channel: 
   });
   const rows = useMemo(() => stageRows(stages.data ?? []), [stages.data]);
   const retry = useMutation({
-    mutationFn: () => queueJob("produce_idea", { input: { [kind === "generated" ? "generated_idea_id" : "content_idea_id"]: id,
-      ...(channel === "ai" || channel === "money" ? { channel } : {}) } }),
+    mutationFn: async () => {
+      const latest = (await job.refetch()).data;
+      if (latest && ["queued", "running"].includes(latest.status)) return;  // already trying again
+      await queueJob("produce_idea", { input: { [kind === "generated" ? "generated_idea_id" : "content_idea_id"]: id,
+        ...(channel === "ai" || channel === "money" ? { channel } : {}) } });
+    },
     onSuccess: () => { toast("Trying again from the step that didn't work."); qc.invalidateQueries({ queryKey: ["produce-idea-job", kind, id] }); },
     onError: (e) => toast((e as Error).message, "bad"),
   });

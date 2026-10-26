@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, Pause, Play, PlusCircle } from "lucide-react
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import ClearButton from "../components/ClearButton";
+import DraftList from "../components/Drafts";
 import { AutoPostBadge } from "../components/AutoPostToggle";
 import Rundown from "../components/Rundown";
 import { Confirm, ErrorNote, HostTag, Loading, NotConfirmed, PageHeader, StatusBadge, useToast } from "../components/ui";
@@ -47,6 +48,7 @@ export default function Home() {
         actions={<CreateButton canCreate={ready.canCreate} reason={ready.blockers[0]?.text} />} />
       <div className="-mt-3 mb-6 max-w-md"><AutoPostBadge /></div>
       <NeedsYou readiness={ready} />
+      <div className="mt-8"><DraftList title="Unfinished" compact /></div>
       <div className="mt-8 grid grid-cols-1 gap-8 lg:grid-cols-2">
         <BeingMade />
         <NextPosts tz={tz} />
@@ -142,7 +144,10 @@ function NeedsYou({ readiness }: { readiness: ReturnType<typeof useReadiness> })
   for (const j of visibleAfterClear(data.data?.jobs ?? [], cleared.map, "rundown_problems", (x) => x.updated_at)) {
     const fix = fixFor(j.error_message);
     needs.push({ key: j.id, tone: "bad", text: `${jobTitle(j)} didn't work: ${String(j.error_message ?? "").slice(0, 140)}`,
-      action: j.project_id ? <Link className="btn-quiet" to={projectPath(j.project_id)}>Open</Link> : fix ? <Link className="btn-quiet" to={fix.to}>{fix.label}</Link> : null });
+      action: j.project_id ? <Link className="btn-quiet" to={projectPath(j.project_id)}>Open</Link>
+        : j.job_type === "produce_idea" && (j.input?.generated_idea_id || j.input?.content_idea_id)
+          ? <Link className="btn-quiet" to={`/create?${new URLSearchParams({ step: "progress", kind: j.input.generated_idea_id ? "generated" : "research", id: j.input.generated_idea_id ?? j.input.content_idea_id, ...(j.input.channel ? { channel: j.input.channel } : {}) })}`}>Fix problem</Link>
+        : fix ? <Link className="btn-quiet" to={fix.to}>{fix.label}</Link> : null });
   }
   for (const p of data.data?.posts ?? []) {
     needs.push({ key: p.id, tone: "bad", text: `${p.social_accounts?.label ?? "A post"}: ${statusText(p.status)}${p.last_error ? `: ${String(p.last_error).slice(0, 100)}` : ""}`, action: <Link className="btn-quiet" to={`/calendar?post=${p.id}`}>Open in Calendar</Link> });
