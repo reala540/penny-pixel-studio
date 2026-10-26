@@ -254,15 +254,20 @@ def cmd_providers(a):
     _print(results)
 
 
-def run_provider_check(conn) -> list[dict]:
+def run_provider_check(conn, only: str | None = None) -> list[dict]:
     """The key check, also run as the owner job "check_providers" (the dashboard's Test again).
 
     With the database it checks exactly what the studio uses: every enabled provider (built-in and added in the
     AI API Manager), every model switched on for it, with the keys the router would use. Without a database
     (a first run on a new machine) it checks the GitHub-secret keys of providers.yaml."""
     if conn is not None:
-        results = _check_all_models(conn)
-        _report_providers(results, conn)
+        results = _check_all_models(conn, only)
+        if only:  # one provider re-tested: the others keep their last result
+            last = db.get_setting(conn, "provider_check", {}) or {}
+            kept = [r for r in (last.get("results") or []) if r.get("provider") != only]
+            _report_providers(sorted(kept + results, key=lambda r: r["provider"]), conn)
+        else:
+            _report_providers(results, conn)
         return results
     from .ai import catalog
     from .ai.credentials import ENV_LABEL, Credential
@@ -321,7 +326,7 @@ def run_provider_check(conn) -> list[dict]:
     return results
 
 
-def _check_all_models(conn) -> list[dict]:
+def _check_all_models(conn, only: str | None = None) -> list[dict]:
     from concurrent.futures import ThreadPoolExecutor
 
     from .ai import catalog
@@ -387,7 +392,8 @@ def _check_all_models(conn) -> list[dict]:
         return out
 
     with ThreadPoolExecutor(max_workers=6, thread_name_prefix="key-check") as pool:
-        results = list(pool.map(check, sorted((router.cfg.get("providers") or {}).items())))
+        items = sorted((router.cfg.get("providers") or {}).items())
+        results = list(pool.map(check, [i for i in items if only is None or i[0] == only]))
     return [r for r in results if r["status"] != "off"]
 
 

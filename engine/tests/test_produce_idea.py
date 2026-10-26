@@ -217,13 +217,18 @@ def test_test_again_reruns_the_key_check(synced, monkeypatch):
     c = synced
     seen = {}
 
-    def fake_check(conn):
-        seen["conn"] = conn
+    def fake_check(conn, only=None):
+        seen["conn"], seen["only"] = conn, only
         return [{"provider": "groq", "status": "ok"}, {"provider": "gemini", "status": "failed"}]
 
     monkeypatch.setattr("studio.cli.run_provider_check", fake_check)
     db.run(c, """insert into generation_jobs (job_type, idempotency_key, status, requested_by)
                  values ('check_providers', 'owner:check:1', 'queued', 'owner')""")
     done = maintenance.process_owner_jobs(c, router=None, storage=None)
-    assert done[0]["status"] == "completed" and seen["conn"] is c
+    assert done[0]["status"] == "completed" and seen["conn"] is c and seen["only"] is None
+    # Test on one service checks only that service
+    db.run(c, """insert into generation_jobs (job_type, idempotency_key, status, requested_by, input)
+                 values ('check_providers', 'owner:check:2', 'queued', 'owner', '{"provider": "ollama"}')""")
+    maintenance.process_owner_jobs(c, router=None, storage=None)
+    assert seen["only"] == "ollama"
     assert db.one(c, "select output from generation_jobs where idempotency_key='owner:check:1'")["output"] == {"ok": 1, "checked": 2}

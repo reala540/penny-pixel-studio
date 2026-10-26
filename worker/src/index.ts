@@ -7,7 +7,7 @@
 //   cron (15 min)      dispatches GitHub only when a post is due or a job is queued
 
 import { randomToken, timingSafeEqual } from "./crypto";
-import { addCredential, addProvider, deleteCredential, InputError, replaceCredential, testCredential } from "./credentials";
+import { addCredential, addProvider, deleteCredential, InputError, replaceCredential, replaceEnvKey, testCredential } from "./credentials";
 import { handleCallback, startUrl } from "./oauth";
 import { ensureWebhookSecret, removeValue, saveValue, SetupError, setupStatus, testValue, withSavedSecrets, isManaged } from "./setup";
 import { Env, Supabase } from "./supabase";
@@ -370,6 +370,7 @@ export async function handleFetch(req: Request, rawEnv: Env): Promise<Response> 
   const manager: Record<string, (env: Env, body: Record<string, unknown>) => Promise<Record<string, unknown>>> = {
     "/api/credentials/add": addCredential,
     "/api/credentials/replace": replaceCredential,
+    "/api/credentials/replace-env": replaceEnvKey,
     "/api/credentials/delete": deleteCredential,
     "/api/credentials/test": testCredential,
     "/api/providers/add": addProvider,

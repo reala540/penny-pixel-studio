@@ -59,3 +59,22 @@ _REAL_CLIENT = httpx.Client
 
 def _mock_client(handler):
     return _REAL_CLIENT(transport=httpx.MockTransport(handler))
+
+
+def test_one_service_can_be_tested_on_its_own(synced, monkeypatch):
+    c = synced
+    _add_provider(c, "xkiro", [("qwen/qwen3.8-max:free", ["critic"])])
+    _add_provider(c, "bluesminds", [("moonshotai/kimi-k3", ["scriptwriter"])])
+    db.set_setting(c, "provider_check", {"results": [{"provider": "bluesminds", "status": "ok", "note": "earlier"}]})
+    asked = []
+
+    def answer(req: httpx.Request):
+        if req.url.path.endswith("/models"):
+            return httpx.Response(404)
+        asked.append(req.url.host)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ready"}}], "usage": {}})
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: _mock_client(answer))
+    out = cli.run_provider_check(c, only="xkiro")
+    assert [r["provider"] for r in out] == ["xkiro"] and set(asked) == {"xkiro.test"}  # nothing else was called
+    saved = {r["provider"]: r for r in db.get_setting(c, "provider_check")["results"]}
+    assert saved["bluesminds"]["note"] == "earlier" and saved["xkiro"]["status"] == "ok"  # others keep their result

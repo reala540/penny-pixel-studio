@@ -108,6 +108,22 @@ export async function replaceCredential(env: Env, body: Json): Promise<Json> {
   return (await db.select("ai_credentials", `id=eq.${id}&select=${PUBLIC_COLUMNS}`))[0] as Json;
 }
 
+/** Replaces a provider's GitHub-secret key with a key saved here: the studio stops using the GitHub secret for it.
+ *  The GitHub secret itself is left alone (the Worker has no permission to change GitHub secrets, on purpose). */
+export async function replaceEnvKey(env: Env, body: Json): Promise<Json> {
+  const db = new Supabase(env);
+  const p = await provider(db, text(body.provider, "Provider", 2, 32));
+  const rows = await db.select<{ key_env: string | null }>("ai_providers", `name=eq.${encodeURIComponent(p.name)}&select=key_env`);
+  if (!rows.length || !rows[0].key_env) throw new InputError("This service has no GitHub secret to replace");
+  const cred = await addCredential(env, {
+    provider: p.name, key: body.key, label: `Replaces ${rows[0].key_env}`, owner_name: "Owner",
+    authorized_use: "Writing and checking scripts for the studio", priority: 10, authorized: true, separate_account: false,
+  });
+  await db.update("ai_providers", `name=eq.${encodeURIComponent(p.name)}`, { use_env_key: false, circuit_open_until: null, last_error: null });
+  await db.audit("github_key_replaced_here", { provider: p.name, secret: rows[0].key_env }, "owner");
+  return cred;
+}
+
 export async function deleteCredential(env: Env, body: Json): Promise<Json> {
   const db = new Supabase(env);
   const id = text(body.id, "Credential", 36, 36);

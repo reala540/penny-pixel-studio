@@ -3,7 +3,7 @@ import { ChevronDown, FlaskConical, KeyRound, Plus, RefreshCw, Trash2 } from "lu
 import { FormEvent, useMemo, useState } from "react";
 import ClearButton from "../components/ClearButton";
 import { Confirm, ErrorNote, Loading, PageHeader, useToast } from "../components/ui";
-import { must, useSetting } from "../lib/api";
+import { must, queueJob, useSetting } from "../lib/api";
 import { isCleared, useCleared } from "../lib/clear";
 import { useKeyCheck } from "../lib/readiness";
 import { callWorker, supabase, workerUrl } from "../lib/supabase";
@@ -249,7 +249,9 @@ function ProviderCard({ p, creds, models, usage, envCheck, onChange, toast, erro
                 <td className="px-2 py-3"><StatsCell s={envStats} /></td>
                 <td className="px-2 py-3 text-xs text-muted">{envCheck?.note ?? envCheck?.error ?? "Not checked yet"}
                   {envCheck?.status === "ok" && envCheck.error && <span className="block text-alert">Not working: {envCheck.error.slice(0, 160)}</span>}</td>
-                <td className="px-4 py-3 text-right text-xs text-muted"><EnvKeyTest /><span className="mt-1 block">Change it in GitHub secrets</span></td>
+                <td className="px-4 py-3 text-right text-xs text-muted">
+                  {p.use_env_key ? <div className="flex flex-wrap justify-end gap-1"><EnvKeyTest provider={p.name} /><EnvKeyReplace provider={p.name} secret={p.key_env} onChange={onChange} /></div>
+                    : <span>Not in use: a key saved here replaced it</span>}</td>
               </tr>
             )}
             {creds.map((c) => <CredRow key={c.id} c={errorsSince && c.last_error_at && Date.parse(c.last_error_at) <= Date.parse(errorsSince) ? { ...c, last_error: null } : c}
@@ -270,15 +272,47 @@ function ProviderCard({ p, creds, models, usage, envCheck, onChange, toast, erro
   );
 }
 
-/** A GitHub-secret key can only be tested by the engine on GitHub, so this runs the studio's key check. */
-function EnvKeyTest() {
+/** A GitHub-secret key can only be tested by the engine on GitHub: this tests this one service there. */
+function EnvKeyTest({ provider }: { provider: string }) {
   const toast = useToast();
   const keyCheck = useKeyCheck();
+  const run = useMutation({
+    mutationFn: () => queueJob("check_providers", { input: { provider } }),
+    onSuccess: () => { keyCheck.refresh(); toast(`Testing ${provider}'s models. The result appears here in a few minutes.`); },
+    onError: (e) => toast((e as Error).message, "bad"),
+  });
   return (
-    <button className="btn-quiet px-2 py-1 text-xs" disabled={keyCheck.running || keyCheck.run.isPending}
-      onClick={() => keyCheck.run.mutate(undefined, { onSuccess: () => toast("Testing every AI key and model. Results appear here in a few minutes."), onError: (e) => toast((e as Error).message, "bad") })}>
-      <FlaskConical size={12} aria-hidden />{keyCheck.running ? "Testing…" : "Test"}
+    <button className="btn-quiet px-2 py-1 text-xs" disabled={keyCheck.running || run.isPending}
+      title={keyCheck.running ? "A key test is already running" : `Test ${provider} only`} onClick={() => run.mutate()}>
+      <FlaskConical size={12} aria-hidden />{keyCheck.running || run.isPending ? "Testing…" : "Test"}
     </button>
+  );
+}
+
+/** Use a new key saved here instead of the GitHub secret: it takes effect on the next run. */
+function EnvKeyReplace({ provider, secret, onChange }: { provider: string; secret: string; onChange: () => void }) {
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const [key, setKey] = useState("");
+  const replace = useMutation({
+    mutationFn: async () => {
+      const cred = await callWorker<{ id: string }>("/api/credentials/replace-env", { provider, key });
+      return callWorker<{ ok: boolean; message: string }>("/api/credentials/test", { id: cred.id });
+    },
+    onSuccess: (r) => { toast(`New key saved and in use. ${r.message}`, r.ok ? undefined : "bad"); setKey(""); setOpen(false); onChange(); },
+    onError: (e) => toast((e as Error).message, "bad"),
+  });
+  if (!open) return <button className="btn-quiet px-2 py-1 text-xs" onClick={() => setOpen(true)} disabled={!workerUrl}><RefreshCw size={12} aria-hidden />Replace</button>;
+  return (
+    <form className="mt-2 flex flex-col items-end gap-1" onSubmit={(e) => { e.preventDefault(); replace.mutate(); }} autoComplete="off">
+      <input className="field w-56 font-mono" type="password" minLength={8} maxLength={512} value={key} onChange={(e) => setKey(e.target.value)}
+        placeholder="Paste the new key" aria-label={`New ${provider} key`} autoComplete="new-password" />
+      <span className="max-w-56 text-left text-[11px] leading-4 text-muted">Saved encrypted here and used instead of the GitHub secret {secret}. You can delete that secret in GitHub later.</span>
+      <span className="flex gap-1">
+        <button type="button" className="btn-quiet px-2 py-1 text-xs" onClick={() => { setOpen(false); setKey(""); }}>Cancel</button>
+        <button className="btn-primary px-2 py-1 text-xs" disabled={replace.isPending || key.length < 8}>{replace.isPending ? "Saving…" : "Save and use"}</button>
+      </span>
+    </form>
   );
 }
 
