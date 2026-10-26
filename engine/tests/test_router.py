@@ -165,3 +165,31 @@ def test_extra_accounts_of_one_company_are_not_independent():
     }})
     res = r.complete("critic", "check this", exclude={"cloudflare"})  # the writer was the main Cloudflare account
     assert res.provider == "other" and seen == ["other.test"]
+
+
+def test_a_retired_model_is_switched_off_not_retried():
+    calls = []
+
+    def handler(req):
+        model = json.loads(req.content)["model"]
+        calls.append(model)
+        if model == "f1":
+            return httpx.Response(410, json={"error": {"message": "The model 'f1' has reached its end of life on 2026-10-15"}})
+        return reply("fine")
+
+    store = MemoryUsageStore()
+    r = Router(store, client=httpx.Client(transport=httpx.MockTransport(handler)), provider_config=cfg())
+    assert r.complete("critic", "x").provider == "second"   # the next model takes over at once
+    assert calls == ["f1", "s1"]                              # tried once, not on every key and retry
+    assert [c.model for c in r.candidates("critic")] == ["s1"]
+    assert store.overrides()["first"]["models"]["f1"]["enabled"] is False
+    r.complete("critic", "y")
+    assert calls == ["f1", "s1", "s1"]                        # and never again
+
+
+def test_an_archived_model_message_counts_as_retired_but_a_plain_404_does_not():
+    from studio.ai.router import RETIRED
+
+    assert RETIRED.search("Model zai-glm-4.7 is archived and unavailable for the organization.")
+    assert RETIRED.search("This model has been deprecated and is no longer available")
+    assert not RETIRED.search("Function 'abc': Not found for account 'x'")

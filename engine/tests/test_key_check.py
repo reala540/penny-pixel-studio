@@ -78,3 +78,22 @@ def test_one_service_can_be_tested_on_its_own(synced, monkeypatch):
     assert [r["provider"] for r in out] == ["xkiro"] and set(asked) == {"xkiro.test"}  # nothing else was called
     saved = {r["provider"]: r for r in db.get_setting(c, "provider_check")["results"]}
     assert saved["bluesminds"]["note"] == "earlier" and saved["xkiro"]["status"] == "ok"  # others keep their result
+def test_a_retired_model_is_switched_off_on_every_account_of_that_service(synced, monkeypatch):
+    c = synced
+    _add_provider(c, "bluesminds", [("moonshotai/kimi-k3", ["scriptwriter"]), ("nvidia/nemotron-3-ultra-550b-a55b", ["scriptwriter"])])
+    _add_provider(c, "bluesminds2", [("moonshotai/kimi-k3", ["scriptwriter"])], key="sk-two")
+    db.run(c, "update ai_providers set base_url = 'https://bluesminds.test/v1' where name like 'bluesminds%'")
+    sent = []
+    monkeypatch.setattr("studio.notify.send", lambda conn, kind, title, body="", **kw: sent.append((kind, title)) or True)
+
+    def answer(req: httpx.Request):
+        body = json.loads(req.content)
+        if body["model"] == "moonshotai/kimi-k3":
+            return httpx.Response(410, json={"error": {"message": "The model 'moonshotai/kimi-k3' has reached its end of life"}})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}], "usage": {}})
+    router = Router(DbUsageStore(c), client=_mock_client(answer))
+    assert router.complete("scriptwriter", "write").model == "nvidia/nemotron-3-ultra-550b-a55b"
+    off = db.all_(c, "select provider from ai_model_configs where model='moonshotai/kimi-k3' and not enabled order by provider")
+    assert [r["provider"] for r in off] == ["bluesminds", "bluesminds2"]   # both accounts, in one go
+    assert sent == [("ai_model_retired", "AI model switched off: moonshotai/kimi-k3")]
+    assert db.one(c, "select details from audit_logs where action='ai_model_retired'")["details"]["providers"] == ["bluesminds", "bluesminds2"]

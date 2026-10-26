@@ -26,6 +26,11 @@ from ..errors import AuthError, PermanentError, QuotaError, TransientError, Vali
 from .credentials import Credential, CredentialPool, ProviderSettings, backoff_seconds
 from .usage import MemoryUsageStore, UsageStore
 
+# A provider saying the model itself is gone (not a key, quota or request problem)
+RETIRED = re.compile(r"end of life|no longer (?:available|supported|offered|served)|has been (?:retired|deprecated|decommissioned|"
+                     r"removed|discontinued)|(?:is|was) (?:archived|retired|decommissioned)|model_archived|deprecated and",
+                     re.IGNORECASE)
+
 T = TypeVar("T", bound=BaseModel)
 
 SYSTEM_GUARD = (
@@ -140,6 +145,7 @@ class Router:
         self.pool = CredentialPool(self.usage)
         self.sleep = sleep
         self._last_retry_after: dict[str, int] = {}
+        self._retired: set[tuple[str, str]] = set()
 
     def _settings(self, provider: str) -> ProviderSettings:
         getter = getattr(self.usage, "provider_settings", None)
@@ -181,6 +187,8 @@ class Router:
                 if mov and mov.get("enabled") is False:
                     continue
                 model_id = m["id"]
+                if (name, model_id) in self._retired:
+                    continue
                 missing = ov.get("missing") or {}
                 if model_id in missing:  # retired by the provider: use the substitute found by the catalog
                     if not missing[model_id]:
@@ -243,6 +251,9 @@ class Router:
                         continue
                     if kind == "permanent":
                         raise PermanentError(result[1])
+                    if kind == "retired":  # the model is gone for every key: switch it off, don't try the others
+                        self.retire(cand, result[1])
+                        raise PermanentError(f"{cand.provider}/{cand.model}: retired by the provider ({result[1][:160]})")
                     if kind in ("rate_limited", "payment"):
                         spent_groups.add(cred.quota_group)
                     break
@@ -257,6 +268,17 @@ class Router:
         if "transient" in outcomes and not self.credentials_for(cand.provider):
             self.usage.open_circuit(cand.provider, 120, "network or server errors")
         raise TransientError(f"{cand.provider}: failed after {len(outcomes)} attempt(s): {', '.join(outcomes)}")
+
+    def retire(self, cand: Candidate, reason: str) -> None:
+        """Stop using a model the provider has retired: now, and (with the database) for good, with a notice."""
+        self._retired.add((cand.provider, cand.model))
+        retire = getattr(self.usage, "retire_model", None)
+        if retire:
+            try:
+                for provider in retire(cand.provider, cand.model, reason) or []:
+                    self._retired.add((provider, cand.model))
+            except Exception:  # never let the bookkeeping break the request flow
+                pass
 
     def _rest_for(self, provider: str, outcomes: list[str]) -> int:
         return 24 * 3600 if "payment" in outcomes and "rate_limited" not in outcomes else self._last_retry_after.get(provider, 900)
@@ -292,6 +314,9 @@ class Router:
             self._record(cand, role, False, 0, 0, started, f"{code} server error", cred)
             self.pool.report(cred, "transient", error=f"server error {code}")
             return ("transient", None)
+        if code == 410 or (code in (400, 404) and RETIRED.search(resp.text or "")):
+            self._record(cand, role, False, 0, 0, started, f"{code}: {resp.text[:200]}", cred)
+            return ("retired", f"{code}: {resp.text[:300]}")
         if code >= 400:
             self._record(cand, role, False, 0, 0, started, f"{code}: {resp.text[:200]}", cred)
             return ("permanent", f"{cand.provider}/{cand.model}: {code} {resp.text[:200]}")

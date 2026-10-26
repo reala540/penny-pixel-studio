@@ -112,6 +112,10 @@ class MemoryUsageStore:
     def custom_providers(self):
         return {}
 
+    def retire_model(self, provider, model, reason):
+        self.provider_overrides.setdefault(provider, {"models": {}}).setdefault("models", {})[model] = {"enabled": False}
+        return [provider]
+
     def extra_models(self):
         return {}
 
@@ -170,6 +174,28 @@ class DbUsageStore:
     def mark_success(self, provider):
         db.run(self.conn, """update ai_providers set circuit_open_until=null, last_success_at=now()
                              where name=%s""", (provider,))
+
+    @_locked
+    def retire_model(self, provider, model, reason):
+        """Switch a retired model off on this provider and its other accounts (same address), audit it, tell the owner.
+        Returns the providers it was switched off on."""
+        rows = db.all_(self.conn, """update ai_model_configs set enabled = false
+                                      where model = %s and enabled and provider in (
+                                        select name from ai_providers
+                                         where base_url = (select base_url from ai_providers where name = %s))
+                                     returning provider""", (model, provider))
+        names = sorted({r["provider"] for r in rows}) or [provider]
+        if rows:
+            from .. import config, notify
+
+            db.run(self.conn, "insert into audit_logs (actor, action, target_type, target_id, details) values "
+                              "('engine','ai_model_retired','ai_model',%s,%s)",
+                   (model, db.j({"providers": names, "reason": reason[:300]})))
+            notify.send(self.conn, "ai_model_retired", f"AI model switched off: {model}",
+                        f"{', '.join(names)} says this model is no longer available ({reason[:160]}). It was switched off, "
+                        "so the studio stops trying it. Other models take over its jobs.",
+                        link=f"{config.runtime().dashboard_url}/settings/ai", dedupe_key=f"retired:{provider}:{model}")
+        return names
 
     @_locked
     def error_rate(self, provider, model):
