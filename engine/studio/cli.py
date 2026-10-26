@@ -149,6 +149,13 @@ def cmd_maintain(a):
                     notify.send(conn, "token", f"Reconnect {t['account']}", t["error"],
                                 link=links.settings("accounts"),
                                 dedupe_key=f"token:{t['account']}:{date.today()}")
+        from .publish import heads_up
+
+        try:  # read-only; a problem here must never stop maintenance
+            msg = heads_up.send(conn)
+            out["heads_up"] = msg and msg["counts"]
+        except Exception as exc:  # noqa: BLE001
+            out["heads_up"] = f"skipped: {type(exc).__name__}"
         _print(out)
 
 
