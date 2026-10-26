@@ -1,7 +1,8 @@
 // What the dashboard knows about a piece of data. A failed or unfinished request is never read as an answer:
 // "OFF", "not paused", "no problems" or "not linked" are shown only when the database confirmed them.
 import type { UseQueryResult } from "@tanstack/react-query";
-import { useEffect, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
+import { useSearchParams } from "react-router-dom";
 
 export type Known<T> =
   | { state: "loading" }
@@ -109,4 +110,22 @@ export function takeDestination(): string | null {
 export function safePath(path: string | null | undefined): string | null {
   if (!path || !path.startsWith("/") || path.startsWith("//") || path.includes("\\")) return null;
   return path;
+}
+
+// ------------------------------------------------------------------ filters that survive leaving and coming back
+
+/**
+ * A list filter kept in the page address, so Back, a refresh or a shared link shows the same list and page.
+ * Setting a filter other than the page itself returns to the first page.
+ */
+export function useUrlState<T extends string>(key: string, fallback: T): [T, (value: T) => void] {
+  const [params, setParams] = useSearchParams();
+  const value = (params.get(key) ?? fallback) as T;
+  const set = useCallback((next: T) => setParams((prev) => {
+    const p = new URLSearchParams(prev);
+    if (next === fallback || next === "") p.delete(key); else p.set(key, next);
+    if (key !== "page") p.delete("page");
+    return p;
+  }, { replace: true }), [key, fallback, setParams]);
+  return [value, set];
 }

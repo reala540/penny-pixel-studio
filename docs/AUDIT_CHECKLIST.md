@@ -17,12 +17,12 @@ The status is updated phase by phase. Findings that are improvements rather than
 |---|---|---|---|
 | 1 | Trustworthy state, authentication, errors | `audit/phase-1-state` | merged; reliability follow-up documented below |
 | 2 | Durable drafts and unfinished-project recovery | `audit/phase-2-drafts` | merged; reliability follow-up documented below |
-| 3 | Direct navigation and discoverable work | `audit/phase-3-navigation` | open |
-| 4 | Settings reliability | `audit/phase-4-settings` | open |
-| 5 | Job lifecycle, recovery and cancellation | `audit/phase-5-jobs` | open |
-| 6 | Review, scheduling, publishing and Undo | `audit/phase-6-publishing` | open |
-| 7 | Reliable Telegram delivery | `audit/phase-7-telegram` | open |
-| 8 | Full acceptance review | `audit/phase-8-acceptance` | open |
+| 3 | Direct navigation and discoverable work | `audit/fixes-phases-3-8` (with fce9fe2) | done (PR open, not merged); see "Audit 26 Oct" |
+| 4 | Settings reliability | `audit/fixes-phases-3-8` (with fce9fe2) | done (PR open, not merged); see "Audit 26 Oct" |
+| 5 | Job lifecycle, recovery and cancellation | `audit/fixes-phases-3-8` (with fce9fe2) | done (PR open, not merged); see "Audit 26 Oct" |
+| 6 | Review, scheduling, publishing and Undo | `audit/fixes-phases-3-8` (with fce9fe2) | done (PR open, not merged); see "Audit 26 Oct" |
+| 7 | Reliable Telegram delivery | `audit/fixes-phases-3-8` (with fce9fe2) | done (PR open, not merged); see "Audit 26 Oct" |
+| 8 | Full acceptance review | `audit/fixes-phases-3-8` (with fce9fe2) | done (PR open, not merged); see "Audit 26 Oct" |
 
 ## Pages
 
@@ -73,42 +73,42 @@ The status is updated phase by phase. Findings that are improvements rather than
 
 | Job | Runs in | Phase 5 | Notes |
 |---|---|---|---|
-| `produce_idea` | queue | open | |
-| `script`, `package`, `render_preview`, `thumbnails`, `project` (stages) | inside production | open | |
-| `regenerate_script`, `rerender_preview`, `regenerate_thumbnails`, `recheck_project` | queue | open | |
-| `run_research`, `run_production`, `run_mission` | queue | open | |
-| `generate_ideas`, `refine_idea` | queue | open | |
-| `auto_review` | queue | open | |
-| `check_providers` | queue | open | |
-| `weekly_research`, `weekly_production` (tracked runs) | scheduled | open | |
+| `produce_idea` | queue | fixed | Resumes finished steps; one job per idea across tabs/devices; an automatic retry keeps remaining attempts (`fresh_attempts=False`), Try again gives fresh ones. Tests: test_produce_idea, test_audit_fixes. |
+| `script`, `package`, `render_preview`, `thumbnails`, `project` (stages) | inside production | fixed | "Retry scheduled" steps had no runner (`due_jobs` was never called): `resume_due_retries` now runs them on each queue run, bounded by `max_attempts`, never for decided packages or while the owner has a request on it; the owner is told once when retries end. |
+| `regenerate_script`, `rerender_preview`, `regenerate_thumbnails`, `recheck_project` | queue | verified | Queued only by owner clicks (now also "Rebuild the preview" when its file was removed). A new script version withdraws an approval (migration 14). |
+| `run_research`, `run_production`, `run_mission` | queue | fixed | Research results link to exactly what that request found (`?since=`). |
+| `generate_ideas`, `refine_idea` | queue | fixed | Results link to that run's ideas (`?run=`). |
+| `auto_review` | queue | fixed | Won't approve a script that changed during the review (version checked under lock). |
+| `check_providers` | queue | verified | Tracked by job id (`/settings/ai?job=`); deduplicated; alert links to the exact test. |
+| `weekly_research`, `weekly_production` (tracked runs) | scheduled | verified | Engine tests; never reset as abandoned. Live runs not triggered (cost). |
 
 ## Background workflows
 
 | Workflow | Trigger | Status | Notes |
 |---|---|---|---|
-| `queue.yml` (Owner requests) | Worker dispatch / 15-minute cron | open | |
-| `weekly-research.yml` | Saturday | open | |
-| `weekly-produce.yml` | Sunday | open | |
-| `publish.yml` | Worker cron when posts are due | open | |
-| `maintenance.yml` | nightly | open | |
-| `setup.yml` (First-time setup) | manual | open | |
-| `deploy-worker.yml`, `ci.yml`, `benchmark.yml` | push / manual | open | |
-| Worker cron (`handleCron`) | every 15 minutes | open | |
+| `queue.yml` (Owner requests) | Worker dispatch / 15-minute cron | fixed | Also runs due step retries. |
+| `weekly-research.yml` | Saturday | unaffected | Not run live (would spend AI tokens). |
+| `weekly-produce.yml` | Sunday | unaffected | Not run live (would spend AI tokens). |
+| `publish.yml` | Worker cron when posts are due | fixed | Publisher refuses a package that isn't approved or whose script changed after approval. Not run live (would publish). |
+| `maintenance.yml` | nightly | verified | Delivery retries skip safely before migration 13 (column check). |
+| `setup.yml` (First-time setup) | manual | unaffected | Applies migrations 13 and 14 when the owner runs it. |
+| `deploy-worker.yml`, `ci.yml`, `benchmark.yml` | push / manual | verified | CI green on fce9fe2; Worker deploy succeeded for fce9fe2. |
+| Worker cron (`handleCron`) | every 15 minutes | fixed | Wakes the queue when a step retry is due (Worker test). |
 
 ## Notification events
 
 | Event | Source | Phase 7 | Notes |
 |---|---|---|---|
-| `ideas_ready` | engine (ideas) | open | |
-| `package_ready`, `week_ready` | engine (production) | open | |
-| `auto_approved`, `auto_fixing`, `auto_review_needs_you` | engine (auto review) | open | |
-| `held_reminder`, `auto_replace` | engine (replacement) | open | |
-| `published`, `publish_blocked`, `publish_ambiguous`, `manual_task` | engine (publishing) | open | |
-| `job_failed` | engine (queue) | open | |
-| `expired`, `token` | engine (maintenance) | open | |
-| `ai_model_retired`, `ai_model_back`, `ai_model_given_up`, `ai_key_rejected` | engine (AI health) | open | |
-| Auto Review & Post on/off, pause/resume | Worker (dashboard + Telegram) | open | |
-| Telegram commands (`/status`, `/week`, `/review`, `/failed`, `/budget`, `/pause`, `/resume`, `/autopost`) | Worker | open | |
+| `ideas_ready` | engine (ideas) | fixed | Links to that run's ideas. Routine. |
+| `package_ready`, `week_ready` | engine (production) | fixed | Link to the package / Needs you (no old `/review` links). Body says when something needs a look. Always sent. |
+| `auto_approved`, `auto_fixing`, `auto_review_needs_you` | engine (auto review) | verified | needs-you always sent; approved/fixing are routine. |
+| `held_reminder`, `auto_replace` | engine (replacement) | verified | Reminder always sent; replacement outcomes routine. |
+| `published`, `publish_blocked`, `publish_ambiguous`, `manual_task` | engine (publishing) | fixed | Blocked/ambiguous/manual now link to the exact post; a failed post says "Post failed" with the next action. `published` links to the live post (routine). |
+| `job_failed` | engine (queue) | fixed | Exact request link; identical repeats within 30 minutes are sent once (all kept in the app); "Stopped retrying" when automatic retries end. |
+| `expired`, `token` | engine (maintenance) | fixed | Link to the package / Settings → Accounts. |
+| `ai_model_retired`, `ai_model_back`, `ai_model_given_up`, `ai_key_rejected` | engine (AI health) | verified | Grouped already (one notice per check); key rejected grouped as a repeat. |
+| Auto Review & Post on/off, pause/resume | Worker (dashboard + Telegram) | verified | Worker tests (Telegram acknowledgement checked); dashboard pause alert needs migration 13. |
+| Telegram commands (`/status`, `/week`, `/review`, `/failed`, `/budget`, `/pause`, `/resume`, `/autopost`) | Worker | verified | Worker tests (55); no message sent to the owner's Telegram. |
 
 ## Phase 1 evidence
 
@@ -167,3 +167,29 @@ not a certification of the production installation.
 The earlier "open" phases are superseded for the implemented items by this evidence. Live deployment,
 production migration, real provider access, OAuth, social publication, and real Telegram delivery are not
 certified by local tests. No production data was changed during this implementation.
+
+## Audit 26 Oct (live check, fixes, Phases 3–8)
+
+Live state checked read-only on 26 Oct: Vercel production and the Worker run `fce9fe2`; the database is on
+migration 12 (migration 13 not applied). Everything below is on branch `audit/fixes-phases-3-8`; nothing was merged,
+deployed or applied to the live database.
+
+| Area | Status | What and evidence |
+|---|---|---|
+| Stop & clear permission | **fixed (critical)** | Any signed-in account could run it (guard used `current_user`, always the function owner). Migration 14: only the Worker's service role and the engine; signed-in users can't call it. Proven live in a rolled-back transaction; test_audit_fixes. |
+| Version-exact approval | **fixed (high)** | `approve_project` approved whatever was current. Now requires the reviewed version; dashboard sends it (falls back to a browser-side version check before migration 14); auto-review checks it under lock; nothing recorded for ineligible packages. Tests: test_audit_fixes, e2e/audit.mjs. |
+| Approval after a script change | **fixed (high)** | Editing an approved package's script now withdraws the approval (posts back to waiting), audited; published script/text can't be changed; the publisher refuses a package that isn't approved or changed after approval. |
+| Scheduling rules on every path | **fixed (high)** | Past times and 30-minute clashes are refused for owner changes made directly on the table too (trigger), and in the browser before migration 13. |
+| Table privileges | fixed (low) | TRUNCATE/TRIGGER/REFERENCES removed from `anon`/`authenticated`. |
+| Cloud drafts before migration 13 | fixed (medium) | No misleading page-wide banner or 15-second polling of a missing table; drafts say they're on this device only. |
+| Account switch / sign-out | fixed (medium) | Cached data cleared; the owner answer is tied to the account it was checked for. |
+| Phase 3 links | fixed | Shared engine link builder (`studio/links.py`, mirrors `jobDestination`); exact post/test/run/request links; Ideas and Content filters and page kept in the address; today's counts link to their lists; deleted destinations explained (verified). No nested controls on any page (sweep). |
+| Phase 4 settings | fixed | Keys are tested straight after saving ("Saved, but the connection test failed: …"); removal explains the fallback; schedule moves preview how many posts move and explain timezone effects; failed counts never show 0. Voice and idea settings verified consumed by the engine and kept by config sync. |
+| Phase 5 jobs | fixed | Plain states (waiting, interrupted, stopping, retry scheduled, waiting for quota, cancelled); retry runner (above); Cancel work and Clear draft on the progress page; Stop & clear text states its scope and what can't be recalled. |
+| Phase 6 media | fixed | A removed file is told apart from a failed request; "Rebuild the preview" only on click. Caption edits of approved posts stay allowed (owner decision); published post text is locked. |
+| Phase 7 Telegram | fixed | Keys/tokens/passwords scrubbed before storing or sending; "Only what needs me" preference (routine updates stay in the app); identical repeats grouped; undelivered alerts listed with the reason; unconfigured ≠ failed. Simulated Telegram only (test_alerts). Exactly-once delivery is not claimed. |
+| Phase 8 acceptance | verified (simulated) | Unit, database, Worker and browser suites (desktop and phone) with seeded data and simulated services; Help and tour updated. Live sign-in, OAuth, publishing and real Telegram delivery were not exercised (would act on live data). |
+
+Not verifiable from here: Supabase Auth settings (sign-ups, Site URL, redirect list, email confirmation), live
+end-to-end flows, real Telegram delivery. Branch deletion on GitHub is blocked for this session (all branches are
+already in main).

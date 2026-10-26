@@ -5,7 +5,8 @@ import { lazy, Suspense, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import ClearButton from "../components/ClearButton";
 import { Confirm, Empty, ErrorNote, Loading, NotConfirmed, PageHeader, useToast } from "../components/ui";
-import { buildTimeline, JOB_LABEL, Category, inFilter, Item, jobTitle, useRunningJobs, type AuditRow, type JobRow, type NoteRow } from "../lib/activity";
+import { useUrlState } from "../lib/state";
+import { buildTimeline, JOB_LABEL, Category, inFilter, Item, jobStateText, jobTitle, useRunningJobs, type AuditRow, type JobRow, type NoteRow } from "../lib/activity";
 import { missingFunction, must, runWorkflow, stopAndClear, useSetting, useTimezone } from "../lib/api";
 import { useCleared, visibleAfterClear } from "../lib/clear";
 import { fixFor } from "../lib/labels";
@@ -33,7 +34,7 @@ function startOfToday(tz: string): string {
 
 export default function Activity() {
   const tz = useTimezone();
-  const [filter, setFilter] = useState<Category | "all" | "errors">("all");
+  const [filter, setFilter] = useUrlState<Category | "all" | "errors">("filter", "all");  // kept in the address
   const [page,setPage]=useState(0);
   const cleared = useCleared();
   const running = useRunningJobs();
@@ -92,15 +93,19 @@ export default function Activity() {
 
       <section aria-labelledby="today-title" className="mb-8">
         <h2 id="today-title" className="section-title mb-3">Today so far</h2>
-        <dl className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-          {([["Ideas found", today.data?.ideas], ["Videos made", today.data?.videos], ["Approved", today.data?.approved],
-            ["Posted", today.data?.posted], ["Problems", today.data?.problems]] as const).map(([label, n]) => (
-            <div key={label} className="rounded-xl border border-line bg-surface px-4 py-3">
-              <dt className="text-xs text-muted">{label}</dt>
-              <dd className={`font-display text-2xl font-bold tabular ${label === "Problems" && n ? "text-alert" : ""}`}>{n ?? "–"}</dd>
-            </div>
+        <NotConfirmed q={today} what="today's numbers" compact />
+        <ul className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+          {([["Ideas found", today.data?.ideas, "/content/ideas?source=generator"], ["Videos made", today.data?.videos, "/content?tab=all"],
+            ["Approved", today.data?.approved, "/content?tab=scheduled"], ["Posted", today.data?.posted, "/content?tab=published"],
+            ["Problems", today.data?.problems, "/activity?filter=errors#timeline-title"]] as const).map(([label, n, to]) => (
+            <li key={label}>
+              <Link to={to} className="block rounded-xl border border-line bg-surface px-4 py-3 hover:bg-sunken">
+                <span className="block text-xs text-muted">{label}</span>
+                <span className={`block font-display text-2xl font-bold tabular ${label === "Problems" && n ? "text-alert" : ""}`}>{today.isSuccess ? n : "–"}</span>
+              </Link>
+            </li>
           ))}
-        </dl>
+        </ul>
       </section>
 
       <section aria-labelledby="timeline-title">
@@ -155,7 +160,9 @@ function StopAndClear({ running }: { running: number }) {
       <Confirm open={ask} danger title="Stop and erase this run?" confirmLabel="Stop & clear"
         body={<>Everything running now stops, and everything it made is erased: the ideas it started from, the research,
           scripts, videos, thumbnails and planned posts. Packages you already approved or scheduled and anything published
-          are kept. The audit log keeps a record that you did this. This can't be undone.</>}
+          are kept. The audit log keeps a record that you did this. This can't be undone. A request already sent to an AI
+          service can't be recalled, so it may finish first (its tokens aren't refunded). To stop just one request, use
+          Cancel work on it instead.</>}
         onCancel={() => setAsk(false)} onConfirm={() => { setAsk(false); stop.mutate(); }} />
     </>
   );
@@ -221,12 +228,12 @@ function RunningRow({ job, tz }: { job: JobRow; tz: string }) {
       <div className="flex items-center gap-2">
         <LoaderCircle size={16} className={job.status === "running" ? "animate-spin text-pixel" : "text-muted"} aria-hidden />
         <span className="text-sm font-medium">{jobTitle(job)}</span>
-        <span className="ml-auto text-xs text-muted">{job.status === "queued" ? `Waiting to start · asked ${when(job.created_at, tz)}` : `Started ${when(job.started_at ?? job.updated_at, tz)}`}</span>
+        <span className="ml-auto text-xs text-muted">{job.status === "queued" ? `${jobStateText(job)} · asked ${when(job.created_at, tz)}` : `Started ${when(job.started_at ?? job.updated_at, tz)}`}</span>
       </div>
       <JobActions job={job} />
       {job.status === "running" && (
         <>
-          <p className="mt-1 text-sm text-muted">{p?.label ?? "Working…"}</p>
+          <p className="mt-1 text-sm text-muted">{jobStateText(job)}</p>
           {pct !== null && (
             <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-sunken" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-label="Progress">
               <span className="block h-full bg-pixel" style={{ width: `${pct}%` }} />
@@ -305,7 +312,11 @@ function HowItWorks() {
     queryKey: ["flow-counts"],
     refetchInterval: 30_000,
     queryFn: async () => {
-      const c = async (q: PromiseLike<{ count: number | null; error: { message: string } | null }>) => (await q).count ?? 0;
+      const c = async (q: PromiseLike<{ count: number | null; error: { message: string } | null }>) => {
+        const { count: n, error } = await q;
+        if (error) throw new Error(error.message);  // a failed count is shown as unknown, never as 0
+        return n ?? 0;
+      };
       const [ideas, research, writing, checking, review, post] = await Promise.all([
         c(supabase.from("generated_ideas").select("id", { count: "exact", head: true }).in("status", ["new", "saved"])),
         c(supabase.from("content_ideas").select("id", { count: "exact", head: true }).in("status", ["shortlisted", "selected"])),
@@ -327,7 +338,7 @@ function HowItWorks() {
             <Link to={s.to} className="block h-full rounded-lg border border-line px-3 py-2 hover:bg-sunken">
               <span className="flex items-baseline justify-between gap-2">
                 <span className="text-sm font-medium">{i + 1}. {s.label}</span>
-                <span className="font-display text-lg font-bold tabular">{counts.data?.[i] ?? "–"}</span>
+                <span className="font-display text-lg font-bold tabular" title={counts.isError ? "Couldn't load this number" : undefined}>{counts.isSuccess ? counts.data[i] : "–"}</span>
               </span>
               <span className="block text-xs text-muted">{s.explain}</span>
             </Link>
@@ -344,16 +355,20 @@ function JobDetail() {
   const id = params.get("job");
   const q = useQuery({
     queryKey: ["job-detail", id], enabled: Boolean(id), refetchInterval: 5000,
-    queryFn: async () => await must(supabase.from("generation_jobs").select("id,project_id,job_type,status,progress,input,error_message,requested_by,created_at,started_at,finished_at,updated_at,content_projects(title)").eq("id", id!).maybeSingle()) as unknown as JobRow | null,
+    queryFn: async () => await must(supabase.from("generation_jobs").select("id,project_id,job_type,status,progress,input,output,error_message,requested_by,created_at,started_at,finished_at,updated_at,content_projects(title)").eq("id", id!).maybeSingle()) as unknown as JobRow | null,
   });
   if (!id) return null;
   if (!q.isSuccess) return <NotConfirmed q={q} what="this task" />;
   if (!q.data) return <p role="status" className="mb-4">This task no longer exists. Its saved project may still be in <Link className="underline" to="/content">Content</Link>.</p>;
   const job = q.data;
-  const result = job.job_type.includes("research") ? "/content/ideas?source=research" : job.job_type.includes("idea") ? "/content/ideas" : "/content";
+  // this request's own results: its idea run, or the research found since it started
+  const out = (job as JobRow & { output?: { run_id?: string } | null }).output;
+  const result = job.job_type === "generate_ideas" && out?.run_id ? `/content/ideas?source=generator&run=${encodeURIComponent(out.run_id)}`
+    : job.job_type.includes("research") ? `/content/ideas?${new URLSearchParams({ source: "research", since: job.started_at ?? job.created_at })}`
+    : job.job_type.includes("idea") ? "/content/ideas" : "/content";
   return <section id="job-detail" className="mb-6 rounded-xl border border-line p-4" aria-label="Selected task">
     <h2 className="section-title">{jobTitle(job)}</h2>
-    <p className="mt-2 text-sm">Status: {job.status} {job.progress?.label ? `· ${job.progress.label}` : ""}</p>
+    <p className="mt-2 text-sm">Status: {jobStateText(job)}</p>
     {job.error_message && <p className="mt-2 text-sm text-alert">{job.error_message.slice(0,300)}</p>}
     {job.status === "completed" ? <Link className="mt-2 inline-block text-pixel underline" to={job.project_id ? `/content/${job.project_id}` : result}>Open results</Link> : <JobActions job={job} />}
   </section>;

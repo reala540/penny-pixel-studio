@@ -23,12 +23,26 @@ try {
         const text = await page.locator("body").innerText();
         const crashed = /something went wrong|unexpected application error/i.test(text);
         const claims = text.split("\n").filter((l) => EMPTY.test(l)).map((l) => l.trim()).slice(0, 6);
+        // keyboard and screen-reader safety: no control inside another control
+        const nested = await page.evaluate(() => document.querySelectorAll("a a, a button, button a, button button, a input, button input").length);
+        if (nested) claims.push(`${nested} control(s) nested inside another control`);
         const bad = errors.length || crashed || claims.length;
         if (bad) failures++;
         if (tag === "desktop" || bad)
           console.log(`${bad ? "FAIL" : "ok  "} ${path} [${tag}]${errors.length ? ` errors: ${errors.join("; ")}` : ""}${claims.length ? `\n      claims: ${claims.join(" | ")}` : ""}`);
         await context.close();
       }
+    }
+    // the same pages with normal sample data: no errors and no nested controls once everything renders
+    for (const path of PAGES) {
+      const { page, context, errors } = await openStudio(browser, path, {});
+      await page.waitForTimeout(2000);
+      const nested = await page.evaluate(() => Array.from(document.querySelectorAll("a a, a button, button a, button button, a input, button input"))
+        .map((el) => el.outerHTML.slice(0, 80)));
+      const bad = errors.length || nested.length;
+      if (bad) failures++;
+      console.log(`${bad ? "FAIL" : "ok  "} ${path} [normal data]${errors.length ? ` errors: ${errors.join("; ")}` : ""}${nested.length ? ` nested: ${nested.join(" | ")}` : ""}`);
+      await context.close();
     }
   });
 } finally {

@@ -6,7 +6,8 @@ import { must } from "../lib/api";
 import { supabase } from "../lib/supabase";
 import { Confirm, useToast } from "./ui";
 
-export default function JobActions({ job }: { job: JobRow }) {
+/** View/continue the request and (while it runs) cancel only this request. `here`: already on its progress page. */
+export default function JobActions({ job, here = false }: { job: JobRow; here?: boolean }) {
   const [ask, setAsk] = useState(false);
   const [stopping, setStopping] = useState(false);
   const toast = useToast();
@@ -18,7 +19,7 @@ export default function JobActions({ job }: { job: JobRow }) {
   });
   const active = ["queued", "running", "retrying"].includes(job.status);
   return <div className="mt-2 flex flex-wrap items-center gap-3 text-sm">
-    <Link className="text-pixel underline" to={jobDestination(job)}>{active ? "View progress" : job.status === "cancelled" ? "Continue" : ["failed","blocked","needs_review"].includes(job.status) ? "Fix problem" : "View results"}</Link>
+    {!here && <Link className="text-pixel underline" to={jobDestination(job)}>{active ? "View progress" : job.status === "cancelled" ? "Continue" : ["failed","blocked","needs_review"].includes(job.status) ? "Fix problem" : "View results"}</Link>}
     {active && job.requested_by === "owner" && <button className="btn-quiet" disabled={cancel.isPending || (Boolean(job.cancel_requested_at) || stopping)} onClick={() => setAsk(true)}>{job.cancel_requested_at || stopping ? "Stopping…" : "Cancel work"}</button>}
     <Confirm open={ask} title="Cancel this job?" body="Only this request will stop at its next checkpoint. Completed work is kept. Other projects, scheduled posts, and publishing are not cancelled. An external request already in progress may finish first." confirmLabel="Cancel work" onCancel={() => setAsk(false)} onConfirm={() => {setAsk(false); cancel.mutate();}} />
   </div>;

@@ -157,8 +157,17 @@ function AddKey({ providers, onDone }: { providers: Provider[]; onDone: () => vo
   const [open, setOpen] = useState(false);
   const [f, setF] = useState({ provider: "gemini", label: "", owner_name: "", authorized_use: "Writing and checking scripts for Penny & Pixel Studio", key: "", priority: "100", daily_request_cap: "", authorized: false, separate_account: false });
   const add = useMutation({
-    mutationFn: () => callWorker("/api/credentials/add", { ...f, priority: Number(f.priority) || 100, daily_request_cap: f.daily_request_cap === "" ? null : Number(f.daily_request_cap) }),
-    onSuccess: () => { toast("Key saved (encrypted). Test it below."); setF({ ...f, key: "", label: "" }); setOpen(false); onDone(); },
+    mutationFn: async () => {
+      const saved = await callWorker<{ id?: string }>("/api/credentials/add", { ...f, priority: Number(f.priority) || 100, daily_request_cap: f.daily_request_cap === "" ? null : Number(f.daily_request_cap) });
+      if (!saved?.id) return null;  // saved; the Worker didn't say which key, so it's tested from its row
+      try { return await callWorker<{ ok: boolean; message: string }>("/api/credentials/test", { id: saved.id }); }
+      catch (e) { return { ok: false, message: (e as Error).message }; }
+    },
+    onSuccess: (r) => {
+      toast(r === null ? "Key saved (encrypted). Press Test on its row to check it." : r.ok ? `Key saved (encrypted) and working. ${r.message}`
+        : `Key saved (encrypted), but the connection test failed: ${r.message}. It stays switched on; the studio uses the next working key until this one passes.`, r && !r.ok ? "bad" : undefined);
+      setF({ ...f, key: "", label: "" }); setOpen(false); onDone();
+    },
     onError: (e) => toast((e as Error).message, "bad"),
   });
   const set = (k: keyof typeof f) => (e: { target: { value: string; checked?: boolean; type?: string } }) =>
@@ -300,7 +309,7 @@ function EnvKeyReplace({ provider, secret, onChange }: { provider: string; secre
       const cred = await callWorker<{ id: string }>("/api/credentials/replace-env", { provider, key });
       return callWorker<{ ok: boolean; message: string }>("/api/credentials/test", { id: cred.id });
     },
-    onSuccess: (r) => { toast(`New key saved and in use. ${r.message}`, r.ok ? undefined : "bad"); setKey(""); setOpen(false); onChange(); },
+    onSuccess: (r) => { toast(r.ok ? `New key saved and working. ${r.message}` : `New key saved, but the connection test failed: ${r.message}. Until it passes, the studio uses its other keys for this service.`, r.ok ? undefined : "bad"); setKey(""); setOpen(false); onChange(); },
     onError: (e) => toast((e as Error).message, "bad"),
   });
   if (!open) return <button className="btn-quiet px-2 py-1 text-xs" onClick={() => setOpen(true)} disabled={!workerUrl}><RefreshCw size={12} aria-hidden />Replace</button>;
@@ -362,8 +371,12 @@ function CredRow({ c, strategy, usage, onChange, toast }: { c: Cred; strategy: s
     onError: (e) => toast((e as Error).message, "bad"),
   });
   const replace = useMutation({
-    mutationFn: () => callWorker("/api/credentials/replace", { id: c.id, key: newKey }),
-    onSuccess: () => { toast("Key replaced"); setNewKey(""); setReplacing(false); onChange(); },
+    mutationFn: async () => {
+      await callWorker("/api/credentials/replace", { id: c.id, key: newKey });
+      try { return await callWorker<{ ok: boolean; message: string }>("/api/credentials/test", { id: c.id }); }
+      catch (e) { return { ok: false, message: (e as Error).message }; }
+    },
+    onSuccess: (r) => { toast(r.ok ? `Key replaced and working. ${r.message}` : `Key replaced, but the connection test failed: ${r.message}`, r.ok ? undefined : "bad"); setNewKey(""); setReplacing(false); onChange(); },
     onError: (e) => toast((e as Error).message, "bad"),
   });
   const remove = useMutation({
@@ -420,7 +433,7 @@ function CredRow({ c, strategy, usage, onChange, toast }: { c: Cred; strategy: s
           )}
         </td></tr>
       )}
-      <Confirm open={confirm} title={`Remove ${c.label}?`} body="The encrypted key is deleted. Usage history stays, without the key." confirmLabel="Remove key" danger
+      <Confirm open={confirm} title={`Remove ${c.label}?`} body={`The encrypted key is deleted and can't be recovered. Usage history stays, without the key. Work that used it switches to the next working key for ${c.provider}${c.provider ? "" : ""}; if there's none, steps that need this service wait until you add one.`} confirmLabel="Remove key" danger
         onConfirm={() => { setConfirm(false); remove.mutate(); }} onCancel={() => setConfirm(false)} />
     </>
   );

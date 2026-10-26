@@ -432,8 +432,11 @@ export async function handleCron(env: Env): Promise<Record<string, boolean>> {
       deliveryDue = waiting.length > 0 && Boolean(await db.setting<string>("telegram_chat_id"));
     } catch { /* migration13 has not been applied yet: preserve the existing cron */ }
   }
+  // a step waiting to retry (a busy or rate-limited service) is due: the queue run resumes it
+  const retrying = await db.select("generation_jobs", `select=id&status=eq.retrying&next_attempt_at=lte.${new Date().toISOString()}&limit=1`);
   const sinceQ = Date.now() - Date.parse(lastQ);
-  if ((queued.length && (out.ideas || sinceQ > 12 * 60_000)) || (replaceDue && sinceQ > 60 * 60_000) || (deliveryDue && sinceQ > 12 * 60_000)) {
+  if ((queued.length && (out.ideas || sinceQ > 12 * 60_000)) || (replaceDue && sinceQ > 60 * 60_000) || (deliveryDue && sinceQ > 12 * 60_000)
+      || (retrying.length && sinceQ > 12 * 60_000)) {
     out.queue = await dispatch(env, "queue");
     if (out.queue) await db.putSetting("last_queue_dispatch", new Date().toISOString());
   }

@@ -4,10 +4,11 @@ import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import ClearButton from "../components/ClearButton";
 import { Confirm, Empty, ErrorNote, HostTag, Loading, NotConfirmed, PageHeader, StatusBadge, useToast } from "../components/ui";
-import { must } from "../lib/api";
+import { approveProject, must } from "../lib/api";
 import { isCleared, useCleared } from "../lib/clear";
 import { CONTENT_TABS, tabStatuses } from "../lib/content";
 import { fmtDuration } from "../lib/format";
+import { useUrlState } from "../lib/state";
 import { projectPath } from "../lib/routes";
 import { supabase } from "../lib/supabase";
 import type { Project } from "../lib/types";
@@ -18,11 +19,13 @@ export default function Content() {
   const qc = useQueryClient();
   const toast = useToast();
   const tab = params.get("tab") ?? "needs-you";
-  const [q, setQ] = useState("");
-  const [channel, setChannel] = useState("all");
-  const [format, setFormat] = useState("all");
-  const [page, setPage] = useState(0);
-  useEffect(() => setPage(0), [tab, q, channel, format]);
+  // filters and the page are kept in the address: coming back (or refreshing) shows the same list
+  const [q, setQ] = useUrlState<string>("q", "");
+  const [channel, setChannel] = useUrlState<string>("channel", "all");
+  const [format, setFormat] = useUrlState<string>("format", "all");
+  const [pageText, setPageText] = useUrlState<string>("page", "0");
+  const page = Math.max(0, Number(pageText) || 0);
+  const setPage = (n: number | ((p: number) => number)) => setPageText(String(typeof n === "function" ? n(page) : n));
   const [askAll, setAskAll] = useState(false);
   const cleared = useCleared();
   const statuses = tabStatuses(tab);
@@ -70,7 +73,7 @@ export default function Content() {
     mutationFn: async () => {
       const outcomes: { title: string; ok: boolean; error?: string }[] = [];
       for (const p of eligible) {
-        try { await must(supabase.rpc("approve_project", { p_project_id: p.id, p_notes: "approved in bulk" })); outcomes.push({ title: p.title, ok: true }); }
+        try { await approveProject(p.id, p.current_script_version_id, "approved in bulk"); outcomes.push({ title: p.title, ok: true }); }
         catch (e) { outcomes.push({ title: p.title, ok: false, error: (e as Error).message }); }
       }
       return outcomes;
@@ -83,7 +86,7 @@ export default function Content() {
     onSettled: () => { qc.invalidateQueries(); },
   });
   const filtersOn = q.trim() !== "" || channel !== "all" || format !== "all";
-  const setTab = (t: string) => { const p = new URLSearchParams(params); p.set("tab", t); setParams(p); };
+  const setTab = (t: string) => { const p = new URLSearchParams(params); p.set("tab", t); p.delete("page"); setParams(p); };
 
   return (
     <>

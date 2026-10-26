@@ -491,6 +491,57 @@ function Telegram() {
           The bot can't hear you yet. {problem}
         </p>
       )}
+      <AlertPreference />
+      <UndeliveredAlerts />
     </Section>
+  );
+}
+
+/** Which alerts go to Telegram. Everything always stays in the app (Activity). */
+function AlertPreference() {
+  const pref = useSetting<"all" | "important">("telegram_alerts", "all");
+  const save = useSaveSetting();
+  const toast = useToast();
+  if (!pref.isSuccess) return <div className="mt-4"><NotConfirmed q={pref} what="your alert preference" compact /></div>;
+  return (
+    <fieldset className="mt-5 max-w-2xl text-sm">
+      <legend className="font-medium">Telegram alerts</legend>
+      {([["all", "Everything", "Problems, things that need you, and routine updates (ideas ready, posted, tests finished)."],
+        ["important", "Only what needs me", "Problems, packages waiting for your review, posts to check or post yourself, connection, key and budget problems. Routine updates stay in the app only."]] as const)
+        .map(([v, label, help]) => (
+          <label key={v} className="mt-2 flex items-start gap-2">
+            <input type="radio" name="telegram_alerts" className="mt-1" checked={pref.data === v} disabled={save.isPending}
+              onChange={() => save.mutate({ key: "telegram_alerts", value: v }, { onSuccess: () => toast("Alert preference saved. It applies to new alerts.") })} />
+            <span><span className="font-medium">{label}</span><span className="block text-xs text-muted">{help}</span></span>
+          </label>
+        ))}
+    </fieldset>
+  );
+}
+
+/** Alerts from the last 7 days that didn't reach Telegram, and why (not set up, failed, unconfirmed, muted). */
+function UndeliveredAlerts() {
+  const q = useQuery({
+    queryKey: ["undelivered-alerts"],
+    refetchInterval: 60_000,
+    queryFn: async () => (await must(supabase.from("notifications").select("id, title, error, created_at, link")
+      .is("sent_at", null).not("error", "is", null).gte("created_at", new Date(Date.now() - 7 * 86_400_000).toISOString())
+      .order("created_at", { ascending: false }).limit(10))) as { id: string; title: string; error: string; created_at: string; link: string | null }[],
+  });
+  if (!q.isSuccess) return <div className="mt-4"><NotConfirmed q={q} what="alert delivery" compact /></div>;
+  if (!q.data.length) return <p className="mt-4 text-xs text-muted">Every alert in the last 7 days reached Telegram (or Telegram isn't set up yet).</p>;
+  return (
+    <div className="mt-5 max-w-3xl">
+      <h3 className="text-sm font-medium">Alerts that didn't reach Telegram (last 7 days)</h3>
+      <p className="text-xs text-muted">They're all still in Activity. "Unconfirmed" means Telegram didn't answer: the message may have arrived, and a retry can send it twice.</p>
+      <ul className="mt-2 divide-y divide-line rounded-xl border border-line bg-surface text-sm">
+        {q.data.map((n) => (
+          <li key={n.id} className="px-3 py-2">
+            <span className="font-medium">{n.title}</span>
+            <span className="block text-xs text-muted">{new Date(n.created_at).toLocaleString()} · {n.error}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

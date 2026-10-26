@@ -130,3 +130,20 @@ export function jobDestination(j: Pick<JobRow, "id" | "job_type" | "input" | "pr
   if (typeof pid === "string") return `/content/${encodeURIComponent(pid)}`;
   return `/activity?job=${encodeURIComponent(j.id)}#job-detail`;
 }
+
+/** What a request is doing, in plain words. Only what the database says: never a guess. */
+export function jobStateText(j: Pick<JobRow, "status" | "progress" | "error_message" | "cancel_requested_at"> & { next_attempt_at?: string | null; error_kind?: string | null },
+                             fmt: (iso: string) => string = (iso) => new Date(iso).toLocaleString()): string {
+  const interrupted = /Runner stopped unexpectedly/i.test(j.error_message ?? "");
+  switch (j.status) {
+    case "queued": return interrupted ? "Interrupted: it resumes from its last saved step on the next run" : "Waiting to start (within 15 minutes)";
+    case "running": return j.cancel_requested_at ? "Stopping: it stops at its next checkpoint" : j.progress?.label ?? "Working…";
+    case "retrying": return `${j.error_kind === "quota" ? "Waiting for the AI service's free quota" : "Retry scheduled"}${j.next_attempt_at ? `: tries again ${fmt(j.next_attempt_at)}` : ""}`;
+    case "pending": return "Waiting for an earlier step";
+    case "completed": return "Done";
+    case "cancelled": return "Cancelled: finished steps were kept";
+    case "failed": return "Didn't work";
+    case "blocked": case "needs_review": return "Needs you";
+    default: return j.status.replace(/_/g, " ");
+  }
+}

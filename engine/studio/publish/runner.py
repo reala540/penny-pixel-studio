@@ -23,7 +23,7 @@ from pathlib import Path
 
 import psycopg
 
-from .. import config, db, notify, oauth
+from .. import config, db, links, notify, oauth
 from ..errors import AmbiguousPublish, AuthError, BudgetExceeded, PermanentError, QuotaError, StudioError, TransientError
 from ..media import render as rendering
 from .adapters import ADAPTERS
@@ -48,7 +48,7 @@ def _context(conn, post: dict) -> dict:
     return db.one(conn, """
         select v.*, v.status variant_status, a.platform, a.label account_label, a.enabled account_enabled,
                a.external_id, p.id project_id, p.status project_status, p.fresh_until, p.recipe, p.format,
-               p.channel_slug, p.title project_title, p.current_script_version_id
+               p.channel_slug, p.title project_title, p.current_script_version_id, p.approved_script_version_id
           from content_variants v join social_accounts a on a.id=v.social_account_id
           join content_projects p on p.id=v.project_id where v.id=%s""", (post["variant_id"],))
 
@@ -70,6 +70,10 @@ def safety_problems(conn, post: dict, ctx: dict, now: datetime) -> list[str]:
                                limit 1""", (ctx["id"], ctx["project_id"]))
     if not approval:
         problems.append("no explicit approval record")
+    if ctx["project_status"] not in ("approved", "scheduled", "published"):
+        problems.append(f"package is {ctx['project_status']}, not approved")
+    elif ctx["approved_script_version_id"] != ctx["current_script_version_id"]:
+        problems.append("the script changed after approval: approve the current version again")
     if ctx["fresh_until"] and ctx["fresh_until"] < now:
         problems.append("content expired: time-sensitive facts must be rechecked")
     for sc in ((ctx["recipe"] or {}).get("render") or {}).get("scenes", []):
@@ -99,8 +103,9 @@ def _manual(conn, post, ctx, reason: str, status: str = "needs_manual", storage=
             "Done.", f"{dash}/calendar?post={post['id']}", asset_key))
     db.run(conn, "update scheduled_posts set status=%s, last_error=%s, locked_until=null where id=%s",
            (status, reason[:500], post["id"]))
-    notify.send(conn, "manual_task", f"Manual post needed ({ctx['account_label']})", reason,
-                link=f"{dash}/calendar", dedupe_key=f"manual:{post['id']}")
+    notify.send(conn, "manual_task", f"{'Post failed' if status == 'failed' else 'Manual post needed'} ({ctx['account_label']})",
+                f"{reason}. Next: open the post to download the file and post it yourself, or fix the problem and retry.",
+                link=links.post(post["id"]), dedupe_key=f"manual:{post['id']}")
 
 
 def final_media(conn, storage, ctx: dict) -> tuple[Path | None, Path | None]:
@@ -180,7 +185,7 @@ def publish_post(conn, storage, post: dict, adapters: dict | None = None, now: d
                ("; ".join(problems), post["id"]))
         db.audit(conn, "publish_blocked", "scheduled_post", post["id"], {"problems": problems})
         notify.send(conn, "publish_blocked", f"Post blocked ({ctx['account_label'] if ctx else '?'})",
-                    "; ".join(problems), link=f"{config.runtime().dashboard_url}/calendar",
+                    "; ".join(problems), link=links.post(post["id"]),
                     dedupe_key=f"blocked:{post['id']}")
         return "blocked"
     unclear = unclear_attempt(conn, post["id"])
@@ -214,7 +219,7 @@ def publish_post(conn, storage, post: dict, adapters: dict | None = None, now: d
                    (detail, post["id"]))
             db.audit(conn, "publish_duplicate_blocked", "scheduled_post", post["id"], {"sha256": digest, "twin": twin["url"]})
             notify.send(conn, "publish_blocked", f"Duplicate stopped ({ctx['account_label']})", detail,
-                        link=f"{config.runtime().dashboard_url}/calendar", dedupe_key=f"dup:{post['id']}")
+                        link=links.post(post["id"]), dedupe_key=f"dup:{post['id']}")
             return "duplicate"
         try:  # written down before anything is sent; the unique index stops a second runner starting the same post
             attempt = db.one(conn, """insert into publish_attempts (scheduled_post_id, social_account_id, content_sha256)
@@ -241,7 +246,7 @@ def publish_post(conn, storage, post: dict, adapters: dict | None = None, now: d
         db.run(conn, "update scheduled_posts set status='needs_review', last_error=%s, locked_until=null where id=%s",
                (str(exc), post["id"]))
         notify.send(conn, "publish_ambiguous", "Please check a post", str(exc),
-                    link=f"{config.runtime().dashboard_url}/calendar", dedupe_key=f"ambiguous:{post['id']}")
+                    link=links.post(post["id"]), dedupe_key=f"ambiguous:{post['id']}")
         return "needs_review"
     except AuthError as exc:
         if attempt:

@@ -630,3 +630,13 @@ describe("delivery acknowledgement",()=>{
     expect(saved).toBeDefined();expect(JSON.parse(String(saved!.init!.body)).kind).toBe("approval_mode");
   });
 });
+
+describe("scheduled retries", () => {
+  it("wakes the engine when a step's retry is due, without dispatching on every tick", async () => {
+    routes.push((u) => (u.includes("generation_jobs") && u.includes("status=eq.retrying") ? ok([{ id: "stage-1" }]) : undefined));
+    routes.push((u) => (u.includes("api.github.com") ? new Response(null, { status: 204 }) : undefined));
+    expect((await handleCron(env())).queue).toBe(true);
+    routes.unshift((u) => (u.includes("key=eq.last_queue_dispatch") ? ok([{ value: new Date().toISOString() }]) : undefined));
+    expect((await handleCron(env())).queue).toBeUndefined();
+  });
+});

@@ -98,6 +98,20 @@ export async function stopAndClear(): Promise<StopResult> {
   return callWorker<StopResult>("/api/stop-clear", {});
 }
 
+/** Approve exactly the script version the owner reviewed. A changed version is refused, never approved unseen. */
+export async function approveProject(projectId: string, reviewedVersion: string | null, notes: string | null = null): Promise<number> {
+  if (!reviewedVersion) throw new Error("This package has no script to approve yet. Reload the package.");
+  const res = await supabase.rpc("approve_project", { p_project_id: projectId, p_notes: notes, p_expected_version: reviewedVersion });
+  if (!res.error) return res.data as number;
+  if (!missingFunction(res.error)) throw new Error(friendlyError(res.error.message));
+  // Database without migration 14: check the version here first, then use the older approval function.
+  const now = (await must(supabase.from("content_projects").select("status, current_script_version_id").eq("id", projectId))) as { status: string; current_script_version_id: string | null }[];
+  if (!now[0]) throw new Error("This package no longer exists.");
+  if (!["ready_for_review", "needs_attention"].includes(now[0].status)) throw new Error(`This package is no longer waiting for approval (it is ${now[0].status}). Reload to see its current state.`);
+  if (now[0].current_script_version_id !== reviewedVersion) throw new Error("The script changed after you opened it. Reload and review the current version before approving.");
+  return (await must(supabase.rpc("approve_project", { p_project_id: projectId, p_notes: notes }))) as number;
+}
+
 /** Compatible rolling deployment: only fall back when PostgREST confirms the new function is absent. */
 export function missingFunction(error: { code?: string; message?: string } | null): boolean {
   return error?.code === "PGRST202" || error?.code === "42883";

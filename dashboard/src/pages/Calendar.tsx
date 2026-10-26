@@ -32,6 +32,12 @@ export default function Calendar() {
   });
   const move = useMutation({
     mutationFn: async ({ id, when }: { id: string; when: string }) => {
+      // the same rules the database enforces (migration 13), checked here too so they hold before it is applied
+      if (!(Date.parse(when) > Date.now() + 60_000)) throw new Error("That time has already passed. Choose a time in the future.");
+      const moving = (posts.data ?? []).find((x) => x.id === id) ?? linkedPost.data;
+      if (moving && (posts.data ?? []).some((x) => x.id !== id && x.social_account_id === moving.social_account_id && !["cancelled", "failed"].includes(x.status)
+        && Math.abs(Date.parse(x.scheduled_at) - Date.parse(when)) < 30 * 60_000))
+        throw new Error("Another post on this account is within 30 minutes. Choose a different time.");
       const result=await supabase.rpc("reschedule_post",{p_post_id:id,p_when:when});
       if(!result.error)return;
       if(!missingFunction(result.error))throw new Error(result.error.message);

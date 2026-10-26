@@ -1,5 +1,5 @@
 import { useFormDraft } from "../lib/formDraft";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, RotateCcw, TriangleAlert, X } from "lucide-react";
 import { useState } from "react";
 import { missingFunction, useAccounts, useSetting, useTimezone } from "../lib/api";
@@ -71,6 +71,17 @@ function AccountSchedule({ account }: { account: Account }) {
   const [d, setD, draft] = useFormDraft<ScheduleDraft>(`schedule:${account.id}`, initial);
   const [move, setMove] = useState(false);
   const [askMove, setAskMove] = useState(false);
+  const tz = useTimezone();
+  // preview: exactly which posts "move" would touch (future, not yet published or publishing)
+  const affected = useQuery({
+    queryKey: ["schedule-move-preview", account.id], enabled: askMove,
+    queryFn: async () => {
+      const { count, error } = await supabase.from("scheduled_posts").select("id", { count: "exact", head: true })
+        .eq("social_account_id", account.id).in("status", ["pending_approval", "scheduled"]).gt("scheduled_at", new Date().toISOString());
+      if (error) throw new Error(error.message);
+      return count ?? 0;
+    },
+  });
   const changed = JSON.stringify(d) !== JSON.stringify(initial);
   const save = useMutation({
     mutationFn: async () => {
@@ -147,7 +158,7 @@ function AccountSchedule({ account }: { account: Account }) {
           <input type="checkbox" checked={move} onChange={(e) => setMove(e.target.checked)} />Also move posts already waiting to the new times
         </label>
       </div>
-      <Confirm open={askMove} title={`Move waiting posts for ${account.label}?`} body="This saves the schedule and moves this account’s future waiting posts to the new slots. Published and currently publishing posts stay unchanged." confirmLabel="Save and move" onCancel={() => setAskMove(false)} onConfirm={() => { setAskMove(false); save.mutate(); }} />
+      <Confirm open={askMove} title={`Move waiting posts for ${account.label}?`} body={`This saves the schedule and moves ${affected.isSuccess ? `${affected.data} future post${affected.data === 1 ? "" : "s"}` : affected.isError ? "this account's future waiting posts (couldn't count them just now)" : "this account's future waiting posts (counting…)"} to the new slots. Published and currently publishing posts stay unchanged. Slot times are in ${tz}; changing the studio's timezone later (Appearance & region) changes future slots, not posts that already have a time.`} confirmLabel="Save and move" onCancel={() => setAskMove(false)} onConfirm={() => { setAskMove(false); save.mutate(); }} />
     </section>
   );
 }

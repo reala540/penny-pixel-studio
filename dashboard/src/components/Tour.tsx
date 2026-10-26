@@ -5,8 +5,8 @@ import { useSaveSetting, useSetting } from "../lib/api";
 const STEPS: [string, string][] = [
   ["Welcome to your studio", "It finds ideas, researches them, makes the videos, checks every fact, and posts on your schedule. Five places do everything: Home, Create, Content, Calendar and Activity. Replay this tour from Help."],
   ["Home", "Your starting point: what needs you, what's being made, the next posts and this week's summary. The Create content button starts something new."],
-  ["Create", "Step by step: choose a channel, choose or generate an idea, check its sources, create the package and watch it being made."],
-  ["Content", "Every package with its video, script, sources, thumbnails, Shorts and posts. Approve it here, unless Auto Review & Post is on. The menu always shows who approves."],
+  ["Create", "Step by step: choose a channel, choose or generate an idea, check its sources, create the package and watch it being made. You can leave at any time: your place is kept, and Home shows it under Unfinished."],
+  ["Content", "Every package with its video, script, sources, thumbnails, Shorts and posts. Approve it here, unless Auto Review & Post is on: approval applies to the exact version you see. The menu always shows who approves."],
   ["Calendar and Activity", "Calendar shows when posts go out. Activity shows what's running, Quick actions, and every problem with a button to the fix. Settings and Help are at the bottom of the menu."],
 ];
 
