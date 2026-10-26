@@ -248,3 +248,21 @@ def test_owner_cannot_move_a_post_into_the_past_or_onto_another_by_any_path(sync
     c.execute("select set_config('request.jwt.claim.sub', '', false), set_config('request.jwt.claims', '', false)")
     # the engine (its own session, no sign-in) plans and repairs slots itself
     db.run(c, "update scheduled_posts set scheduled_at = now() - interval '1 minute' where id=%s", (post["id"],))
+
+
+def test_trigger_functions_are_not_callable_and_triggers_still_fire(synced):
+    c = synced
+    rows = db.all_(c, """select p.proname from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+                         where n.nspname='public' and p.prorettype='trigger'::regtype
+                           and (has_function_privilege('anon', p.oid, 'execute') or has_function_privilege('authenticated', p.oid, 'execute'))""")
+    assert rows == []
+    # the triggers still run for owner changes made through the API
+    _claim_owner(c)
+    p, v1, var = _package(c)
+    as_user(c, OWNER)
+    with pytest.raises(psycopg.Error, match="future time"):
+        c.execute("update scheduled_posts set scheduled_at = now() - interval '1 hour' where variant_id=%s", (var,))
+    reset_role(c)
+    assert db.all_(c, """select p.proname from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+                         where n.nspname='public' and p.proname in ('audit_actor','audit_row_digest','forbid_change')
+                           and not exists (select 1 from unnest(coalesce(p.proconfig, '{}')) x where x like 'search_path=%')""") == []
