@@ -23,16 +23,16 @@ runs:
       shell: bash
       run: |
         debs="$HOME/.cache/studio-debs"
-        ready() { command -v ffmpeg > /dev/null && fc-list | grep -qi "inter"; }
+        ready() { command -v ffmpeg > /dev/null && fc-list : family | grep -i "inter" > /dev/null; }
         if ls "$debs"/*.deb > /dev/null 2>&1; then
           if sudo dpkg -i "$debs"/*.deb > /dev/null 2>&1 && ready; then echo "Installed from the saved copy"; exit 0; fi
           echo "The saved copy didn't install; downloading instead"
           sudo dpkg --configure -a > /dev/null 2>&1 || true
         fi
         # A slow package mirror must not hang the run, and a try that was cut off must not block the next one:
-        # each try is time-limited, waits for (or clears) the package lock, and is tried three times (about 12 minutes at most).
+        # each try is time-limited, waits for (or clears) the package lock, and is tried twice (about 8 minutes at most).
         apt="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o DPkg::Lock::Timeout=60 -o APT::Keep-Downloaded-Packages=true"
-        for try in 1 2 3; do
+        for try in 1 2; do
           if timeout 90 sudo apt-get $apt update -qq && \
              timeout 150 sudo apt-get $apt install -y -qq ffmpeg fonts-inter fonts-dejavu-core > /dev/null; then
             mkdir -p "$debs" && rm -f "$debs"/*.deb
@@ -44,6 +44,21 @@ runs:
           sudo dpkg --configure -a > /dev/null 2>&1 || true
           sleep 10
         done
+        # Last resort: the same tools from GitHub's own downloads (fast from GitHub's runners), checked before use.
+        echo "Ubuntu's package mirror is too slow; installing FFmpeg and Inter from GitHub instead"
+        tmp=$(mktemp -d) && cd "$tmp"
+        base=https://github.com/BtbN/FFmpeg-Builds/releases/download/latest
+        ff=ffmpeg-master-latest-linux64-gpl.tar.xz
+        curl -fsSL --retry 3 --max-time 300 -o "$ff" "$base/$ff"
+        curl -fsSL --retry 3 --max-time 60 -o sums "$base/checksums.sha256"
+        grep " $ff\$" sums | sha256sum -c --quiet -
+        tar -xf "$ff" && bin=$(dirname "$(find . -path "*/bin/ffmpeg" -print -quit)")
+        sudo install -m 755 "$bin/ffmpeg" "$bin/ffprobe" /usr/local/bin/
+        curl -fsSL --retry 3 --max-time 120 -o inter.zip https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip
+        echo "9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e  inter.zip" | sha256sum -c --quiet -
+        unzip -q inter.zip 'extras/otf/*' && sudo mkdir -p /usr/share/fonts/opentype/inter
+        sudo cp extras/otf/*.otf /usr/share/fonts/opentype/inter/ && sudo fc-cache -f > /dev/null
+        ready && ffprobe -version > /dev/null && echo "Installed from GitHub" && exit 0
         exit 1
     - name: Cache voice models and rendered scenes
       uses: actions/cache@v5
