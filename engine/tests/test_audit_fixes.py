@@ -266,3 +266,16 @@ def test_trigger_functions_are_not_callable_and_triggers_still_fire(synced):
     assert db.all_(c, """select p.proname from pg_proc p join pg_namespace n on n.oid=p.pronamespace
                          where n.nspname='public' and p.proname in ('audit_actor','audit_row_digest','forbid_change')
                            and not exists (select 1 from unnest(coalesce(p.proconfig, '{}')) x where x like 'search_path=%')""") == []
+
+
+def test_retries_of_decided_packages_are_closed_not_kept_waking_the_engine(synced, monkeypatch):
+    from studio import produce
+    c = synced
+    idea = db.one(c, "insert into content_ideas (channel_slug, title, status, batch_week) values ('ai','I','selected', current_date) returning id")["id"]
+    p = db.one(c, "insert into content_projects (channel_slug, format, title, status, idea_id) values ('ai','long','t','rejected',%s) returning id",
+               (idea,))["id"]
+    j = _retrying_stage(c, p)
+    monkeypatch.setattr(produce, "produce_idea", lambda *a, **k: pytest.fail("must not resume a decided package"))
+    assert produce.resume_due_retries(c, None, None) == []
+    row = db.one(c, "select status, next_attempt_at from generation_jobs where id=%s", (j,))
+    assert row["status"] == "cancelled" and row["next_attempt_at"] is None

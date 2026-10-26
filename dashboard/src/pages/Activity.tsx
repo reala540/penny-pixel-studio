@@ -157,6 +157,7 @@ function StopAndClear({ running }: { running: number }) {
         {stop.isPending ? <LoaderCircle size={14} className="animate-spin" aria-hidden /> : <OctagonX size={14} aria-hidden />}
         {stop.isPending ? "Stopping…" : "Stop & clear"}
       </button>
+      {!running && <span className="text-xs text-muted">Stop & clear works when something is running.</span>}
       <Confirm open={ask} danger title="Stop and erase this run?" confirmLabel="Stop & clear"
         body={<>Everything running now stops, and everything it made is erased: the ideas it started from, the research,
           scripts, videos, thumbnails and planned posts. Packages you already approved or scheduled and anything published

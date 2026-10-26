@@ -682,6 +682,12 @@ def resume_due_retries(conn, router: Router, storage, limit: int = 1) -> list[di
     attempts it has left: finished steps are kept and nothing is made twice. A package the owner is working on
     (a request queued or running) or has already decided is left alone. When the last attempt fails, the owner
     is told once."""
+    # a step can't usefully retry for a package that's already decided (approved, discarded…): close it
+    db.run(conn, """update generation_jobs j set status='cancelled', next_attempt_at=null,
+                           error_message=coalesce(j.error_message, '') || ' (not retried: the package was already decided)'
+                      from content_projects p join content_projects h on h.id = coalesce(p.parent_project_id, p.id)
+                     where j.project_id = p.id and j.status = 'retrying' and j.job_type = any(%s) and h.status = any(%s)""",
+           (list(STAGES), list(DECIDED)))
     due = db.all_(conn, """
         select distinct h.id, h.idea_id, h.title from generation_jobs j
           join content_projects p on p.id = j.project_id
