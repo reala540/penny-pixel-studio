@@ -26,7 +26,7 @@ import time
 from datetime import date
 from pathlib import Path
 
-from . import config, db, jobs
+from . import config, db, jobs, links
 
 
 def _conn():
@@ -118,13 +118,17 @@ def cmd_publish(a):
 
 
 def cmd_queue(a):
-    from . import jobs, maintenance
+    from . import jobs, maintenance, produce
     from .storage import default_storage
 
     with _conn() as conn:
         jobs.reset_stale_running(conn)
         _recheck_paused(conn)
-        _print(maintenance.process_owner_jobs(conn, _router(conn), default_storage()))
+        router, storage = _router(conn), default_storage()
+        out = maintenance.process_owner_jobs(conn, router, storage)
+        # steps waiting to retry run again when due (with the attempts they have left)
+        retried = produce.resume_due_retries(conn, router, storage)
+        _print({**out, "retried": retried} if isinstance(out, dict) else {"owner_jobs": out, "retried": retried})
 
 
 def cmd_maintain(a):
@@ -143,7 +147,7 @@ def cmd_maintain(a):
                     from . import notify
 
                     notify.send(conn, "token", f"Reconnect {t['account']}", t["error"],
-                                link=f"{config.runtime().dashboard_url}/settings",
+                                link=links.settings("accounts"),
                                 dedupe_key=f"token:{t['account']}:{date.today()}")
         _print(out)
 

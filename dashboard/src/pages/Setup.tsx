@@ -229,8 +229,8 @@ function Basics({ status, done }: { status?: Status; done: boolean }) {
         ))}
       </ul>
       <details className="text-sm">
-        <summary className="cursor-pointer text-muted">Must stay in GitHub ({status?.core_names.length ?? 0})</summary>
-        <p className="mt-2 text-xs text-muted">Never delete these: {status?.core_names.join(", ")}.</p>
+        <summary className="cursor-pointer text-muted">Must stay in GitHub ({status?.core_names?.length ?? 0})</summary>
+        <p className="mt-2 text-xs text-muted">Never delete these: {status?.core_names?.join(", ")}.</p>
       </details>
     </Step>
   );
@@ -247,11 +247,11 @@ function TelegramStep({ status, done }: { status?: Status; done: boolean }) {
     onSuccess: (d) => { setCode(d.code); setProblem(d.telegram && !d.telegram.ok ? d.telegram.problem ?? "The bot isn't connected." : null); },
     onError: (e) => toast((e as Error).message, "bad"),
   });
-  const hasToken = Boolean(status?.values.TELEGRAM_BOT_TOKEN?.dashboard || status?.values.TELEGRAM_BOT_TOKEN?.github);
+  const hasToken = Boolean(status?.values?.TELEGRAM_BOT_TOKEN?.dashboard || status?.values?.TELEGRAM_BOT_TOKEN?.github);
   return (
     <Step id="telegram" n={7} title="Telegram alerts" optional done={done} intro={<>Optional: alerts on your phone, and approve, pause or switch Auto Review &amp; Post from anywhere. Creating content doesn't need it.
       In Telegram, open <b>@BotFather</b>, send <code>/newbot</code>, choose a name and a username ending in <code>bot</code>, then copy the token it sends you.</>}>
-      <SecretField name="TELEGRAM_BOT_TOKEN" label="Bot token" state={status?.values.TELEGRAM_BOT_TOKEN} placeholder="123456789:AA…"
+      <SecretField name="TELEGRAM_BOT_TOKEN" label="Bot token" state={status?.values?.TELEGRAM_BOT_TOKEN} placeholder="123456789:AA…"
         help="The private link between the bot and the studio is made for you when you save." />
       <div className="rounded-lg border border-line p-3 text-sm">
         <p className="font-medium text-ink">Link your chat {chat && <span className="ml-1 text-penny">✅ linked</span>}</p>
@@ -345,12 +345,12 @@ function PlatformStep({ platform, status, done }: { platform: Platform; status?:
 function ResearchStep({ status, done }: { status?: Status; done: boolean }) {
   return (
     <Step id="research" n={8} title="Research and stock photo keys" optional done={done} intro="More sources for ideas and better pictures. All free. Skip any you don't want.">
-      <SecretField name="YOUTUBE_API_KEY" label="YouTube Data API key" state={status?.values.YOUTUBE_API_KEY}
+      <SecretField name="YOUTUBE_API_KEY" label="YouTube Data API key" state={status?.values?.YOUTUBE_API_KEY}
         help="Google Cloud → APIs & Services → Credentials → Create credentials → API key (same project, with YouTube Data API v3 enabled)." />
-      <SecretField name="PEXELS_API_KEY" label="Pexels API key" state={status?.values.PEXELS_API_KEY} help="pexels.com/api → Your API key." />
-      <SecretField name="PIXABAY_API_KEY" label="Pixabay API key" state={status?.values.PIXABAY_API_KEY} help="pixabay.com/api/docs → your key is shown when signed in." />
-      <SecretField name="FRED_API_KEY" label="FRED API key (economic data for Penny)" state={status?.values.FRED_API_KEY} help="fredaccount.stlouisfed.org → API Keys → Request API key." />
-      <SecretField name="SEC_USER_AGENT" label="SEC contact (name and email)" secret={false} state={status?.values.SEC_USER_AGENT}
+      <SecretField name="PEXELS_API_KEY" label="Pexels API key" state={status?.values?.PEXELS_API_KEY} help="pexels.com/api → Your API key." />
+      <SecretField name="PIXABAY_API_KEY" label="Pixabay API key" state={status?.values?.PIXABAY_API_KEY} help="pixabay.com/api/docs → your key is shown when signed in." />
+      <SecretField name="FRED_API_KEY" label="FRED API key (economic data for Penny)" state={status?.values?.FRED_API_KEY} help="fredaccount.stlouisfed.org → API Keys → Request API key." />
+      <SecretField name="SEC_USER_AGENT" label="SEC contact (name and email)" secret={false} state={status?.values?.SEC_USER_AGENT}
         placeholder="Your Name you@example.com" help="SEC asks every app to say who it is. Not a password." />
       {status?.engine_checked_at && <p className="text-xs text-muted">GitHub secrets last checked by the engine {new Date(status.engine_checked_at).toLocaleString()}.</p>}
     </Step>

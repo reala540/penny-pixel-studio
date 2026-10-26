@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from . import config, db, jobs, notify, produce
+from . import config, db, jobs, links, notify, produce
 from .ai.router import Router
 from .script import pipeline, quality
 from .script.models import Script, ShortScript
@@ -48,7 +48,7 @@ def process_owner_jobs(conn, router: Router, storage, limit: int = 10, rounds: i
             done.append({"type": "auto_replace", "status": "completed", **out})
     except Exception as exc:
         notify.send(conn, "job_failed", "Automatic replacement couldn't run", str(exc)[:300],
-                    link=f"{config.runtime().dashboard_url}/content", dedupe_key=f"replacefail:{datetime.now(timezone.utc):%Y%m%d%H}")
+                    link=links.needs_you(), dedupe_key=f"replacefail:{datetime.now(timezone.utc):%Y%m%d%H}")
     return done
 
 
@@ -76,12 +76,12 @@ def _process_round(conn, router: Router, storage, limit: int) -> list[dict]:
                       (id=%s or id in (select project_id from generation_jobs where parent_job_id=%s))
                       and status in ('draft','scripting','verifying','rendering')""", (job['project_id'],job['id']))
             notify.send(conn, "job_cancelled", "Work cancelled", "Completed work was kept. Other projects are unchanged.",
-                        link=f"{config.runtime().dashboard_url}/activity?job={job['id']}", dedupe_key=f"cancelled:{job['id']}")
+                        link=links.job(job), dedupe_key=f"cancelled:{job['id']}")
             done.append({"id": str(job["id"]), "type": job["job_type"], "status": "cancelled"})
         except Exception as exc:  # report to owner, never crash the queue
             _finish(conn, job, "failed", error=str(exc)[:1000])
             notify.send(conn, "job_failed", f"Request failed: {job['job_type']}", str(exc)[:300],
-                        link=f"{config.runtime().dashboard_url}/activity?job={job['id']}", dedupe_key=f"jobfail:{job['id']}")
+                        link=links.job(job), dedupe_key=f"jobfail:{job['id']}")
             done.append({"id": str(job["id"]), "type": job["job_type"], "status": "failed", "error": str(exc)[:200]})
     if rows and not any(j["job_type"] == "auto_review" for j in rows):
         # a rewrite or re-render may have made a package ready again: review it if Auto Review & Post is ON
@@ -94,7 +94,7 @@ def _process_round(conn, router: Router, storage, limit: int) -> list[dict]:
                 auto.run(conn, router, [x["project_id"] for x in targets])
         except Exception as exc:
             notify.send(conn, "job_failed", "Auto Review couldn't run", str(exc)[:300],
-                        link=f"{config.runtime().dashboard_url}/review", dedupe_key=f"autorun:{rows[0]['id']}")
+                        link=links.needs_you(), dedupe_key=f"autorun:{rows[0]['id']}")
     return done
 
 
@@ -122,7 +122,7 @@ def _run_owner_job(conn, router: Router, storage, job: dict) -> dict:
         )
         if t == "run_research":
             notify.send(conn, "research_ready", "Your research is ready", "Open the researched ideas and sources.",
-                        link=f"{config.runtime().dashboard_url}/content/ideas?source=research", dedupe_key=f"research:{job['id']}")
+                        link=links.research_since(job.get("started_at") or job["created_at"]), dedupe_key=f"research:{job['id']}")
             return research_out
         # A mission may create and render a package, but approval remains a separate
         # owner action and no publishing job is started here.
@@ -143,7 +143,7 @@ def _run_owner_job(conn, router: Router, storage, job: dict) -> dict:
         results = run_provider_check(conn, only)
         output = {"ok": sum(1 for r in results if r["status"] == "ok"), "checked": len(results)}
         notify.send(conn, "provider_check_ready", "AI service test finished", f"{output['ok']} of {output['checked']} services passed. Open AI services for model details.",
-                    link=f"{config.runtime().dashboard_url}/settings/ai#key-check", dedupe_key=f"keycheck:{job['id']}")
+                    link=links.job(job), dedupe_key=f"keycheck:{job['id']}")
         return output
     if t == "auto_review":
         from .review import auto
@@ -254,5 +254,5 @@ def expire_stale(conn) -> int:
         returning sp.id, p.title""")
     for r in rows:
         notify.send(conn, "expired", "Content needs a freshness re-check", r["title"],
-                    link=f"{config.runtime().dashboard_url}/review", dedupe_key=f"expired:{r['id']}")
+                    link=links.project(r["id"]), dedupe_key=f"expired:{r['id']}")
     return len(rows)

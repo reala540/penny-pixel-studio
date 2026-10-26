@@ -12,6 +12,7 @@ import { must, useSetting } from "../lib/api";
 import { useCleared, visibleAfterClear } from "../lib/clear";
 import { supabase } from "../lib/supabase";
 import { DEFAULT_IDEA_CONFIG } from "../lib/ideas";
+import { useUrlState } from "../lib/state";
 import { useActiveIdeaJob, useIdeaActions, useIdeaRuns, useIdeas } from "../lib/ideasApi";
 import type { Idea, IdeaGeneratorConfig, IdeaStatus } from "../lib/types";
 
@@ -30,22 +31,27 @@ export default function Ideas() {
   const navigate = useNavigate();
   const source = (params.get("source") ?? "both") as "both" | "generator" | "research";
   const setSource = (v: string) => { const p = new URLSearchParams(params); p.set("source", v); setParams(p, { replace: true }); };
-  const [tab, setTab] = useState<IdeaStatus | "all">("all");
-  const [q, setQ] = useState("");
-  const [sort, setSort] = useState<"score" | "newest">("newest");
-  const [page,setPage]=useState(0);
-  useEffect(()=>setPage(0),[tab,q,sort,source]);
+  // filters, page and the run/request being looked at live in the address (links from Telegram and Activity use them)
+  const [tab, setTab] = useUrlState<IdeaStatus | "all">("status", "all");
+  const [q, setQ] = useUrlState<string>("q", "");
+  const [sort, setSort] = useUrlState<"score" | "newest">("sort", "newest");
+  const [pageText, setPageText] = useUrlState<string>("page", "0");
+  const page = Math.max(0, Number(pageText) || 0);
+  const setPage = (n: number | ((p: number) => number)) => setPageText(String(typeof n === "function" ? n(page) : n));
+  const runId = params.get("run") ?? undefined;       // one Idea Generator run's own ideas
+  const since = params.get("since");                  // research a request made (ideas created from that request on)
+  const showAll = () => { const p = new URLSearchParams(params); p.delete("run"); p.delete("since"); p.delete("page"); setParams(p, { replace: true }); };
   const job = useActiveIdeaJob();
-  const ideas = useIdeas({ status: tab, limit: 50, page, search: q, sort }, Boolean(job.data));
+  const ideas = useIdeas({ runId, status: tab, limit: 50, page, search: q, sort }, Boolean(job.data));
   const runs = useIdeaRuns(12, Boolean(job.data));
   const cfg = { ...DEFAULT_IDEA_CONFIG, ...(useSetting<Partial<IdeaGeneratorConfig>>("idea_generator", {}).data ?? {}) };
   const { generate } = useIdeaActions();
   const qc = useQueryClient();
   const cleared = useCleared();
   const history = visibleAfterClear(runs.data ?? [], cleared.map, "idea_runs", (r) => r.started_at);
-  const filtered = tab !== "all" || q.trim() !== "" || sort !== "newest";
+  const filtered = tab !== "all" || q.trim() !== "" || sort !== "newest" || Boolean(runId || since);
   const research = useQuery({
-    queryKey: ["research-ideas", "library", tab, page, q, sort],
+    queryKey: ["research-ideas", "library", tab, page, q, sort, since],
     enabled: source !== "generator",
     queryFn: async () => {
       let qy = supabase.from("content_ideas").select("*").order(sort === "score" ? "score" : "batch_week", { ascending: false }).order("id").range(page*50,page*50+49);
@@ -53,6 +59,7 @@ export default function Ideas() {
       if(needle)qy=qy.or(`title.ilike.%${needle}%,angle.ilike.%${needle}%`);
       const st = RESEARCH_FOR[tab];
       if (st) qy = qy.in("status", st);
+      if (since && !Number.isNaN(Date.parse(since))) qy = qy.gte("created_at", since);
       return (await must(qy)) as Idea[];
     },
   });
@@ -117,8 +124,14 @@ export default function Ideas() {
             <option value="newest">Newest</option><option value="score">Highest score</option>
           </select>
         </label>
-        {filtered && <button className="btn-quiet" onClick={() => { setTab("all"); setQ(""); setSort("newest"); }}>Clear filters</button>}
+        {filtered && <button className="btn-quiet" onClick={() => { setTab("all"); setQ(""); setSort("newest"); showAll(); }}>Clear filters</button>}
       </div>
+      {(runId || since) && (
+        <p role="status" className="mb-3 rounded-lg bg-pixel-soft px-3 py-2 text-sm text-pixel">
+          {runId ? "Showing the ideas from one Idea Generator run." : `Showing research found since ${new Date(since!).toLocaleString()} (the request you opened).`}{" "}
+          <button className="underline" onClick={showAll}>Show all ideas</button>
+        </p>
+      )}
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
         <div className="min-w-0 space-y-3">

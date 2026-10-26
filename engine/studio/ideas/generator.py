@@ -24,7 +24,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from .. import config, db, jobs, notify
+from .. import config, db, jobs, links, notify
 from ..ai.router import Router, companies
 from ..research import engine as research
 from ..research.sources import ADAPTERS
@@ -520,7 +520,7 @@ def run(conn, router: Router, *, trigger: str = "manual", job_id=None, overrides
         if cfg["notify"]:
             notify.send(conn, "ideas_ready", f"{len(chosen)} new ideas are ready",
                         f"Top idea: {chosen[0]['title']} ({chosen[0]['total']:.0f}/100)" if chosen else "",
-                        link=f"{config.runtime().dashboard_url}/ideas", dedupe_key=f"ideas:{run_id}")
+                        link=links.idea_run(run_id), dedupe_key=f"ideas:{run_id}")
         return {"run_id": str(run_id), "status": status, "ideas": len(chosen), "evidence": len(pool), "notes": notes}
     except Exception as exc:
         db.run(conn, "update idea_runs set status='failed', error=%s, notes=%s, finished_at=now() where id=%s",
