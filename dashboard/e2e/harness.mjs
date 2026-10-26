@@ -65,17 +65,20 @@ function answer(db, table, url) {
     if (["select", "order", "limit", "offset", "or"].includes(k)) continue;
     const [op, ...rest] = v.split(".");
     const val = rest.join(".");
-    if (op === "eq") rows = rows.filter((r) => String(r[k]) === val);
-    if (op === "in") { const set = val.replace(/^\(|\)$/g, "").split(",").map((x) => x.replace(/"/g, "")); rows = rows.filter((r) => set.includes(String(r[k]))); }
-    if (op === "is" && val === "null") rows = rows.filter((r) => r[k] == null);
+    const get = (r) => (k.includes("->>") ? k.split("->>").reduce((o, part) => o?.[part.replace(/^->/, "")], r) : r[k]);
+    if (op === "eq") rows = rows.filter((r) => String(get(r)) === val);
+    if (op === "in") { const set = val.replace(/^\(|\)$/g, "").split(",").map((x) => x.replace(/"/g, "")); rows = rows.filter((r) => set.includes(String(get(r)))); }
+    if (op === "is" && val === "null") rows = rows.filter((r) => get(r) == null);
   }
+  const order = url.searchParams.get("order");
+  if (order) { const [col, dir] = order.split("."); rows = [...rows].sort((a, b) => String(a[col]).localeCompare(String(b[col])) * (dir === "desc" ? -1 : 1)); }
   const limit = Number(url.searchParams.get("limit") || 0);
   return limit ? rows.slice(0, limit) : rows;
 }
 
 /**
  * Open a page with the simulated services.
- * opts: { signedIn = true, fail = { table|"*"|"rpc:name"|"worker:path": status }, slow = { table: ms }, db, viewport, onRequest }
+ * opts: { signedIn = true, userId, fail = { table|"*"|"rpc:name"|"worker:path": status }, slow = { table: ms }, db, viewport, onRequest }
  */
 export async function openStudio(browser, path = "/", opts = {}) {
   const db = opts.db ?? seed();
@@ -83,7 +86,7 @@ export async function openStudio(browser, path = "/", opts = {}) {
   const calls = [];
   if (opts.signedIn !== false) {
     const session = { access_token: "test-access", refresh_token: "test-refresh", token_type: "bearer", expires_in: 3600,
-      expires_at: Math.floor(Date.now() / 1000) + (opts.sessionSeconds ?? 3600), user: { id: OWNER.id, email: OWNER.email, aud: "authenticated", role: "authenticated" } };
+      expires_at: Math.floor(Date.now() / 1000) + (opts.sessionSeconds ?? 3600), user: { id: opts.userId ?? OWNER.id, email: OWNER.email, aud: "authenticated", role: "authenticated" } };
     await context.addInitScript(([k, v]) => { try { localStorage.setItem(k, v); } catch { /* ignore */ } }, ["sb-mock-supabase-auth-token", JSON.stringify(session)]);
   }
   await context.route(`${SUPABASE}/**`, async (route) => {
@@ -122,11 +125,11 @@ export async function openStudio(browser, path = "/", opts = {}) {
         const rows = answer(db, table, url);
         return route.fulfill({ status: 200, headers: { ...cors, "content-range": `0-${Math.max(rows.length - 1, 0)}/${rows.length}` }, body: req.method() === "HEAD" ? "" : JSON.stringify(rows) });
       }
-      // writes: remember them (settings upserts change the simulated database)
-      if (table === "settings") {
-        const body = JSON.parse(req.postData() || "{}");
-        for (const r of Array.isArray(body) ? body : [body]) if (r.key) db.settings[r.key] = r.value;
-      }
+      // writes: remember them (settings upserts change the simulated database; inserted rows are kept)
+      const body = JSON.parse(req.postData() || "{}");
+      const rows = Array.isArray(body) ? body : [body];
+      if (table === "settings") for (const r of rows) { if (r.key) db.settings[r.key] = r.value; }
+      else if (req.method() === "POST") for (const r of rows) (db[table] ??= []).push({ id: `new-${Math.random().toString(16).slice(2)}`, created_at: new Date().toISOString(), ...r });
       return route.fulfill({ status: 201, headers: cors, body: "[]" });
     }
     return route.fulfill({ status: 404, headers: cors, body: "{}" });
@@ -146,6 +149,13 @@ export async function openStudio(browser, path = "/", opts = {}) {
   page.on("pageerror", (e) => errors.push(String(e)));
   await page.goto(`${BASE}${path}`);
   return { page, context, calls, errors, db };
+}
+
+/** Another tab in the same browser (shares this device's storage). */
+export async function newTab(context, path) {
+  const page = await context.newPage();
+  await page.goto(`${BASE}${path}`);
+  return page;
 }
 
 export async function withBrowser(fn) {

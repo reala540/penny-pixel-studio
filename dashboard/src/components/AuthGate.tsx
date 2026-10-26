@@ -1,6 +1,7 @@
 import type { Session } from "@supabase/supabase-js";
 import { FormEvent, ReactNode, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
+import { OwnerContext } from "../lib/drafts";
 import { friendlyError, rememberDestination, takeDestination } from "../lib/state";
 import { configured, signedOutDeliberately, signOut, supabase } from "../lib/supabase";
 
@@ -82,7 +83,7 @@ export default function AuthGate({ children }: { children: ReactNode }) {
         <button className="btn-quiet mt-6" onClick={() => signOut()}>Sign out</button>
       </Shell>
     );
-  return <>{children}</>;
+  return <OwnerContext.Provider value={session.user.id}>{children}</OwnerContext.Provider>;
 }
 
 function Shell({ children }: { children: ReactNode }) {

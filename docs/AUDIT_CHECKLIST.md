@@ -16,7 +16,7 @@ The status is updated phase by phase. Findings that are improvements rather than
 | Phase | Scope | Branch | Status |
 |---|---|---|---|
 | 1 | Trustworthy state, authentication, errors | `audit/phase-1-state` | done (PR open, not merged) |
-| 2 | Durable drafts and unfinished-project recovery | `audit/phase-2-drafts` | open |
+| 2 | Durable drafts and unfinished-project recovery | `audit/phase-2-drafts` | done (PR open, not merged) |
 | 3 | Direct navigation and discoverable work | `audit/phase-3-navigation` | open |
 | 4 | Settings reliability | `audit/phase-4-settings` | open |
 | 5 | Job lifecycle, recovery and cancellation | `audit/phase-5-jobs` | open |
@@ -125,3 +125,23 @@ The status is updated phase by phase. Findings that are improvements rather than
 Remaining limitations (Phase 1): a sign-in link opened in another browser can't know where you were (it opens Home);
 the "last known" time is shown only for data this tab loaded before the failure; the demo page is unchanged.
 No migration is needed for Phase 1.
+
+## Phase 2: drafts and unfinished work
+
+| Item | Phase 2 | Notes |
+|---|---|---|
+| Create (`/create`) | fixed | Leaving the page lost the chosen channel, idea and typed idea: every step and the typed idea are now kept as a draft on this device ("Saved on this device"), also saved at once when the tab closes. Opening Create offers **Continue where you left off** for each draft, plus **Start new** (the old draft is kept). |
+| Home (`/`) | fixed | **Unfinished** lists drafts with Continue / View progress / Fix problem and Remove (with Undo). A failed package in Needs you without a project now has **Fix problem** (its progress page with Try again) instead of no link. |
+| Drafts: owner, privacy | verified | Stored per signed-in account; known fields only; text that looks like a key, token or password is never written; at most 10 drafts, 30 days. Browser test: another account doesn't see them. |
+| Drafts vs the database | fixed | Each draft is checked against the database before it's offered: idea deleted → "no longer exists", Continue goes back to choosing an idea; package being made → View progress; failed → Fix problem; made → leaves the list (it's in Content). If the check fails, the draft says it couldn't check. |
+| Version conflicts | fixed | The same draft changed in two tabs: the second save asks which version to keep (newer one / this one) instead of silently overwriting. |
+| Continue never starts work | verified | Browser test: continuing a draft, a failed package or a deleted idea queues no job. Nothing starts until **Create package** or **Try again** is pressed. |
+| Duplicate packages | fixed | **Create package** and **Try again** re-check the database right before queuing; a second tab updates itself, a second device gets "already being made". Browser test: two tabs + another device → one job. The engine also resumes, never duplicates (one package per idea; finished steps kept). |
+| `produce_idea` job | verified | Engine behaviour unchanged: re-running resumes from the step that failed. |
+
+Evidence: `node e2e/phase2.mjs` (8 scenarios, desktop and phone), screenshots in `dashboard/e2e/screenshots/phase2/`;
+unit tests `src/lib/drafts.test.ts` (13). Phase 1 checks and the all-failing sweep still pass.
+
+Remaining limitations (Phase 2): drafts live on the device where they were made (a package that was actually started
+is visible everywhere, because that's in the database); private browsing may not keep drafts (the page says
+"Couldn't save on this device"). No migration is needed.
