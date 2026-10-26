@@ -433,7 +433,12 @@ export async function handleCron(env: Env): Promise<Record<string, boolean>> {
     } catch { /* migration13 has not been applied yet: preserve the existing cron */ }
   }
   // a step waiting to retry (a busy or rate-limited service) is due: the queue run resumes it
-  const retrying = await db.select("generation_jobs", `select=id&status=eq.retrying&next_attempt_at=lte.${new Date().toISOString()}&limit=1`);
+  // (only retries the engine will really run: attempts left, and the package isn't decided)
+  const DECIDED = ["approved", "scheduled", "published", "rejected", "archived"];
+  const retrying = ((await db.select("generation_jobs",
+    `select=id,attempts,max_attempts,content_projects(status)&status=eq.retrying&next_attempt_at=lte.${new Date().toISOString()}&limit=20`)) as
+    { attempts: number; max_attempts: number; content_projects?: { status?: string } | null }[])
+    .filter((j) => j.attempts < j.max_attempts && !DECIDED.includes(j.content_projects?.status ?? ""));
   const sinceQ = Date.now() - Date.parse(lastQ);
   if ((queued.length && (out.ideas || sinceQ > 12 * 60_000)) || (replaceDue && sinceQ > 60 * 60_000) || (deliveryDue && sinceQ > 12 * 60_000)
       || (retrying.length && sinceQ > 12 * 60_000)) {

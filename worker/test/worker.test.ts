@@ -633,10 +633,19 @@ describe("delivery acknowledgement",()=>{
 
 describe("scheduled retries", () => {
   it("wakes the engine when a step's retry is due, without dispatching on every tick", async () => {
-    routes.push((u) => (u.includes("generation_jobs") && u.includes("status=eq.retrying") ? ok([{ id: "stage-1" }]) : undefined));
+    routes.push((u) => (u.includes("generation_jobs") && u.includes("status=eq.retrying") ? ok([{ id: "stage-1", attempts: 1, max_attempts: 3, content_projects: { status: "failed" } }]) : undefined));
     routes.push((u) => (u.includes("api.github.com") ? new Response(null, { status: 204 }) : undefined));
     expect((await handleCron(env())).queue).toBe(true);
     routes.unshift((u) => (u.includes("key=eq.last_queue_dispatch") ? ok([{ value: new Date().toISOString() }]) : undefined));
+    expect((await handleCron(env())).queue).toBeUndefined();
+  });
+});
+
+describe("retries that won't run", () => {
+  it("don't wake the engine: no attempts left, or the package was already decided", async () => {
+    routes.push((u) => (u.includes("generation_jobs") && u.includes("status=eq.retrying")
+      ? ok([{ id: "a", attempts: 3, max_attempts: 3, content_projects: { status: "failed" } }, { id: "b", attempts: 1, max_attempts: 3, content_projects: { status: "rejected" } }]) : undefined));
+    routes.push((u) => (u.includes("api.github.com") ? new Response(null, { status: 204 }) : undefined));
     expect((await handleCron(env())).queue).toBeUndefined();
   });
 });
