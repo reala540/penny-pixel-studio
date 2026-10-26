@@ -43,7 +43,7 @@ export function seed() {
         oauth_connections: { status: "disconnected", last_error: null, token_expires_at: null, app_publish_mode: "unverified" } },
     ],
     content_projects: [
-      { id: "proj-1", title: "How to write better prompts for ChatGPT", channel_slug: "ai", format: "long", status: "ready_for_review",
+      { id: "proj-1", title: "How to write better prompts for ChatGPT", channel_slug: "ai", format: "long", status: "ready_for_review", current_script_version_id: "sv-1",
         parent_project_id: null, created_at: iso(-90), updated_at: iso(-30), quality_report: {}, recipe: {} },
     ],
     generation_jobs: [
@@ -110,6 +110,9 @@ export async function openStudio(browser, path = "/", opts = {}) {
     if (path.startsWith("/auth/v1/logout")) return route.fulfill({ status: 204, headers: cors });
     const rpc = path.match(/^\/rest\/v1\/rpc\/(.+)$/);
     if (rpc) {
+      // opts.pre13: a database that doesn't have migration 13 yet (the functions and studio_drafts are missing)
+      const NEW13 = ["patch_studio_setting","enqueue_owner_job","cancel_owner_job","reschedule_post","save_studio_draft","save_posting_schedule","studio_activity"];
+      if (opts.pre13 && NEW13.includes(rpc[1])) return route.fulfill({ status: 404, headers: cors, body: JSON.stringify({ code: "PGRST202", message: `Could not find the function public.${rpc[1]} in the schema cache` }) });
       const status = fail[`rpc:${rpc[1]}`];
       if (status) return route.fulfill({ status, headers: cors, body: JSON.stringify({ message: "simulated failure" }) });
       const data = JSON.parse(req.postData() || "{}");
@@ -139,6 +142,7 @@ export async function openStudio(browser, path = "/", opts = {}) {
     }
     const table = path.match(/^\/rest\/v1\/([a-z_]+)/)?.[1];
     if (table) {
+      if (opts.pre13 && table === "studio_drafts") return route.fulfill({ status: 404, headers: cors, body: JSON.stringify({ code: "PGRST205", message: "Could not find the table 'public.studio_drafts' in the schema cache" }) });
       if (opts.slow?.[table]) await sleep(opts.slow[table]);
       const failing = fail[table] ?? fail["*"];
       if (failing) return route.fulfill({ status: failing, headers: cors, body: JSON.stringify({ message: `simulated ${table} failure`, code: "500" }) });
@@ -149,6 +153,11 @@ export async function openStudio(browser, path = "/", opts = {}) {
           return route.fulfill({ status: 200, headers: cors, body: JSON.stringify(rows) });
         }
         const rows = answer(db, table, url);
+        // .single() / .maybeSingle() ask for one object, as PostgREST answers them
+        if ((req.headers()["accept"] ?? "").includes("vnd.pgrst.object")) {
+          if (!rows.length) return route.fulfill({ status: 406, headers: cors, body: JSON.stringify({ code: "PGRST116", message: "JSON object requested, multiple (or no) rows returned" }) });
+          return route.fulfill({ status: 200, headers: cors, body: JSON.stringify(rows[0]) });
+        }
         return route.fulfill({ status: 200, headers: { ...cors, "content-range": `0-${Math.max(rows.length - 1, 0)}/${rows.length}` }, body: req.method() === "HEAD" ? "" : JSON.stringify(rows) });
       }
       // writes: remember them (settings upserts change the simulated database; inserted rows are kept)

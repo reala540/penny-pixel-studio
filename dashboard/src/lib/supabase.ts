@@ -32,10 +32,20 @@ export async function callWorker<T>(path: string, body: unknown): Promise<T> {
   return json;
 }
 
+/** A stored file that no longer exists (its storage period ended or it was cleared), as opposed to a failed request. */
+export class MissingFileError extends Error {
+  constructor() { super("This file is no longer stored (its storage period ended or it was cleared)."); this.name = "MissingFileError"; }
+}
+
+/** A fresh download link on every call, so an old link never expires on the owner; a deleted file says so. */
 export async function signedUrl(key: string | null | undefined, seconds = 3600): Promise<string | null> {
   if (!key) return null;
   const { data, error } = await supabase.storage.from("studio").createSignedUrl(key, seconds);
-  if (error) throw new Error(friendlyError(error.message));
+  if (error) {
+    const status = (error as { statusCode?: string | number; status?: number }).statusCode ?? (error as { status?: number }).status;
+    if (String(status) === "404" || /not.?found/i.test(error.message)) throw new MissingFileError();
+    throw new Error(friendlyError(error.message));
+  }
   return data?.signedUrl ?? null;
 }
 

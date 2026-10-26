@@ -2,12 +2,14 @@ import { useEffect } from "react";
 import { Link } from "react-router-dom";
 import { draftLabel, draftState, draftUrl, useDraftFacts } from "../lib/draftStatus";
 import { removeDraft, saveDraft, useDrafts, useOwnerId, type CreateDraft } from "../lib/drafts";
+import { useCloudDrafts } from "./DraftSync";
 import { useToast } from "./ui";
 
 /** Unfinished "Create content" work on this device, checked against the database. Continue only opens the page. */
 export default function DraftList({ title = "Continue where you left off", exclude, compact = false }: { title?: string; exclude?: string | null; compact?: boolean }) {
   const owner = useOwnerId();
   const toast = useToast();
+  const cloud = useCloudDrafts();
   const drafts = useDrafts().filter((d) => d.id !== exclude);
   const facts = useDraftFacts(drafts);
   const states = drafts.map((d) => [d, draftState(d, facts.data)] as const);
@@ -31,7 +33,7 @@ export default function DraftList({ title = "Continue where you left off", exclu
           <li key={d.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm">
             <span className="min-w-0 flex-1">
               <span className={s.state === "failed" || s.state === "missing" ? "text-alert" : ""}>{draftLabel(d, s)}</span>
-              <span className="block text-xs text-muted">Saved on this device {new Date(d.updatedAt).toLocaleString()}{facts.isError ? " · couldn't check the studio just now" : ""}</span>
+              <span className="block text-xs text-muted">Saved on this device {new Date(d.updatedAt).toLocaleString()}{cloud === "needs_update" ? " · not on your other devices until the latest database update is applied" : ""}{facts.isError ? " · couldn't check the studio just now" : ""}</span>
             </span>
             <span className="flex gap-2">
               <Link className={s.state === "failed" ? "btn-primary" : "btn-quiet"} to={draftUrl(d, s)}>

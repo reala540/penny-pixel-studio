@@ -363,15 +363,18 @@ def _approve(conn, family: list[dict], variants: list[dict], note: str, now: dat
     """Same effect as the owner's approve_project, recorded as an automatic decision. Returns posts scheduled."""
     ids = [p["id"] for p in family]
     with db.transaction(conn):
-        locked = db.all_(conn, "select id, status from content_projects where id = any(%s) for update", (ids,))
-        if any(r["status"] != "ready_for_review" for r in locked) or not mode_on(conn):
-            return -1  # the owner acted, or switched auto mode off, while we were reviewing
+        locked = db.all_(conn, "select id, status, current_script_version_id from content_projects where id = any(%s) for update",
+                         (ids,))
+        reviewed = {p["id"]: p["current_script_version_id"] for p in family}
+        if (any(r["status"] != "ready_for_review" for r in locked) or not mode_on(conn)
+                or any(r["current_script_version_id"] != reviewed.get(r["id"]) for r in locked)):
+            return -1  # the owner acted, changed the script, or switched auto mode off while we were reviewing
         for p in family:
             db.run(conn, """insert into approvals (target_type, target_id, decision, script_version_id, notes, source)
                             values ('project', %s, 'approved', %s, %s, 'auto_review')""",
                    (p["id"], p["current_script_version_id"], note))
         db.run(conn, """update content_projects set status='approved', approved_script_version_id=current_script_version_id
-                        where id = any(%s) and status='ready_for_review'""", (ids,))
+                        where id = any(%s) and status='ready_for_review'""", (ids,))  # versions checked above, under lock
         vids = [v["id"] for v in variants]
         scheduled_before = db.one(conn, "select count(*) n from scheduled_posts where variant_id = any(%s) and status='scheduled'",
                                   (vids,))["n"]

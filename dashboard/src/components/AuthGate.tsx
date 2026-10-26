@@ -1,4 +1,5 @@
 import type { Session } from "@supabase/supabase-js";
+import { useQueryClient } from "@tanstack/react-query";
 import { FormEvent, ReactNode, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { OwnerContext } from "../lib/drafts";
@@ -10,7 +11,12 @@ type OwnerState = "checking" | "owner" | "not-owner" | "failed";
 
 export default function AuthGate({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null | undefined>(undefined);
-  const [owner, setOwner] = useState<OwnerState>("checking");
+  // the access answer belongs to one account: a different account is never shown the previous answer
+  const [access, setAccess] = useState<{ user: string | null; state: OwnerState }>({ user: null, state: "checking" });
+  const owner: OwnerState = session && access.user === session.user.id ? access.state : "checking";
+  const setOwner = (uid: string, state: OwnerState) => setAccess({ user: uid, state });
+  const qc = useQueryClient();
+  const lastUser = useRef<string | null>(null);
   const [checkError, setCheckError] = useState("");
   const [attempt, setAttempt] = useState(0);
   const hadSession = useRef(false);
@@ -23,6 +29,11 @@ export default function AuthGate({ children }: { children: ReactNode }) {
     supabase.auth.getSession().then(({ data }) => setSession(data.session)).catch(() => setSession(null));
     const { data } = supabase.auth.onAuthStateChange((_event, s) => {
       if (!s && hadSession.current && !signedOutDeliberately()) setEndedMidway(true);  // expired, not the Sign out button
+      // signed out or a different account: nothing loaded for the previous account stays in memory
+      const uid = s?.user.id ?? null;
+      if (lastUser.current && uid !== lastUser.current) qc.clear();
+      if (uid) lastUser.current = uid;
+      else if (_event === "SIGNED_OUT") { qc.clear(); lastUser.current = null; }
       setSession(s);
     });
     return () => data.subscription.unsubscribe();
@@ -40,17 +51,18 @@ export default function AuthGate({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!session) return;
     let live = true;
-    setOwner("checking");
+    const uid = session.user.id;
+    setOwner(uid, "checking");
     // The first account to sign in becomes the owner; everyone after that is refused by the database.
     Promise.resolve(supabase.rpc("claim_ownership"))
       .then(({ data, error }) => {
         if (!live) return;
-        if (error) { setCheckError(friendlyError(error.message)); setOwner("failed"); return; }
-        setOwner(data ? "owner" : "not-owner");
+        if (error) { setCheckError(friendlyError(error.message)); setOwner(uid, "failed"); return; }
+        setOwner(uid, data ? "owner" : "not-owner");
       })
-      .catch((e) => { if (live) { setCheckError(friendlyError(e)); setOwner("failed"); } });
+      .catch((e) => { if (live) { setCheckError(friendlyError(e)); setOwner(uid, "failed"); } });
     return () => { live = false; };
-  }, [session?.user.id, attempt]);
+  }, [session?.user.id, attempt]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Access confirmed: go back to where the owner was heading, if it was somewhere else.
   useEffect(() => {

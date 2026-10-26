@@ -4,10 +4,10 @@ import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { ApprovalModeNotice } from "../components/AutoPostToggle";
 import { Confirm, Empty, ErrorNote, HostTag, Loading, PageHeader, StatusBadge, useToast } from "../components/ui";
-import { must, queueJob, useTimezone } from "../lib/api";
+import { approveProject, must, queueJob, useTimezone } from "../lib/api";
 import { useProjectHistory } from "../lib/content";
 import { safeUrl, estSeconds, fmtDateTime, fmtDuration, HOST, KIND_NAME, PLATFORM_NAME } from "../lib/format";
-import { signedUrl, supabase } from "../lib/supabase";
+import { MissingFileError, signedUrl, supabase } from "../lib/supabase";
 import type { Claim, Project, ScriptBody, Variant } from "../lib/types";
 
 function AutoChecks({ projectId }: { projectId: string }) {
@@ -54,7 +54,8 @@ function History({ projectId }: { projectId: string }) {
 }
 
 function usePreview(key?: string) {
-  return useQuery({ queryKey: ["signed", key], enabled: Boolean(key), staleTime: 50 * 60_000, queryFn: () => signedUrl(key) });
+  return useQuery({ queryKey: ["signed", key], enabled: Boolean(key), staleTime: 50 * 60_000, queryFn: () => signedUrl(key),
+    retry: (n, e) => !(e instanceof MissingFileError) && n < 1 });
 }
 
 type Tab = "script" | "facts" | "thumbs" | "posts" | "shorts" | "history";
@@ -92,9 +93,15 @@ export function Detail({ id }: { id: string }) {
     },
   });
   const video = usePreview(data.data?.project.recipe?.preview_key);
+  // only on the owner's click: a preview whose file was removed is rebuilt from the saved script (no new script)
+  const rebuild = useMutation({
+    mutationFn: () => queueJob("rerender_preview", { projectId: id }),
+    onSuccess: (r) => toast(r.startsSoon ? "Rebuilding the preview: it appears here in a few minutes." : "Preview rebuild saved: it starts within about 15 minutes."),
+    onError: (e) => toast((e as Error).message, "bad"),
+  });
 
   const approve = useMutation({
-    mutationFn: async () => must(supabase.rpc("approve_project", { p_project_id: id, p_notes: null })),
+    mutationFn: async () => approveProject(id, data.data?.project.current_script_version_id ?? null),
     onSuccess: (n) => { qc.invalidateQueries(); toast(`Approved: ${n} post${n === 1 ? "" : "s"} scheduled`); },
     onError: (e) => toast((e as Error).message, "bad"),
   });
@@ -136,7 +143,14 @@ export function Detail({ id }: { id: string }) {
           {video.data ? (
             <><video key={video.data} src={video.data} controls preload="metadata" className={`mx-auto ${project.format === "short" ? "aspect-[9/16] h-[480px] max-w-full" : "aspect-video w-full"}`} /><button className="btn-quiet mt-2" onClick={() => video.refetch()} disabled={video.isFetching}>Refresh preview link</button></>
           ) : (
-            <div className="grid aspect-video place-items-center text-sm text-surface/70">{video.isLoading ? "Loading preview…" : "No preview yet"}</div>
+            <div className="grid aspect-video place-items-center px-4 text-center text-sm text-surface/80">
+              {video.isLoading ? "Loading preview…"
+                : video.error instanceof MissingFileError ? (
+                  <span>The preview file is no longer stored.{" "}
+                    {!decided && <button className="underline" disabled={rebuild.isPending} onClick={() => rebuild.mutate()}>{rebuild.isPending ? "Asking…" : "Rebuild the preview"}</button>}</span>)
+                : video.isError ? <span>Couldn't load the preview: {(video.error as Error).message} <button className="underline" onClick={() => video.refetch()}>Retry</button></span>
+                : project.recipe?.preview_key ? "Loading preview…" : "No preview yet"}
+            </div>
           )}
         </div>
         <aside className="space-y-4" aria-label="Approval">
@@ -223,6 +237,8 @@ function ScriptEditor({ project, version }: { project: Project; version: { id: s
       <p className="text-sm text-muted">
         Version {version.version}{version.origin === "owner_edit" ? " (your edit)" : ""} · about {fmtDuration(total)} of narration. Edits save as a new version; earlier versions are kept.
       </p>
+      {project.status === "published" && <p role="note" className="rounded-lg bg-sunken px-3 py-2 text-sm">This package is published, so its script can't be changed. Earlier versions are kept in History.</p>}
+      {["approved", "scheduled"].includes(project.status) && <p role="note" className="rounded-lg bg-gold/15 px-3 py-2 text-sm text-ink">This package is approved. Saving an edit withdraws that approval: its posts wait for your approval again after the new version is checked and re-rendered.</p>}
       <label className="block">
         <span className="text-sm font-medium">Opening hook</span>
         <textarea className="field mt-1" rows={2} value={body.hook} onChange={(e) => setBody({ ...body, hook: e.target.value })} />
@@ -247,7 +263,7 @@ function ScriptEditor({ project, version }: { project: Project; version: { id: s
         </label>
       )}
       <div className="sticky bottom-16 -mx-1 flex gap-2 rounded-xl bg-bg/95 px-1 py-2 backdrop-blur md:bottom-0">
-        <button className="btn-primary" disabled={!dirty || save.isPending || draft.conflict} onClick={() => save.mutate()}>Save and re-render</button>
+        <button className="btn-primary" disabled={!dirty || save.isPending || draft.conflict || project.status === "published"} onClick={() => save.mutate()}>{["approved", "scheduled"].includes(project.status) ? "Save, withdraw approval and re-render" : "Save and re-render"}</button>
         {dirty && <button className="btn-quiet" onClick={() => setBody(version.body)}>Undo changes</button>}
       </div>
     </div>
