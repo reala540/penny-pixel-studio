@@ -36,7 +36,7 @@ function AutoChecks({ projectId }: { projectId: string }) {
 function History({ projectId }: { projectId: string }) {
   const h = useProjectHistory(projectId);
   if (h.isLoading) return <Loading />;
-  if (h.error) return <ErrorNote error={h.error} />;
+  if (h.error) return <ErrorNote error={h.error} onRetry={() => h.refetch()} retrying={h.isFetching} />;
   if (!h.data?.length) return <p className="text-sm text-muted">Nothing has happened to this package yet.</p>;
   return (
     <ol className="divide-y divide-line rounded-xl border border-line bg-surface">
@@ -110,7 +110,7 @@ export function Detail({ id }: { id: string }) {
   });
 
   if (data.isLoading) return <Loading />;
-  if (!data.data) return <ErrorNote error={data.error} />;
+  if (!data.data) return <ErrorNote error={data.error} onRetry={() => data.refetch()} retrying={data.isFetching} />;
   const { project, script, children, variants, claims, thumbs } = data.data;
   const issues = [...(project.quality_report?.issues ?? []), ...(project.quality_report?.package_problems ?? [])];
   const bad = claims.filter((c) => ["unsupported", "contradicted"].includes(c.status));
@@ -310,7 +310,7 @@ function Thumbs({ thumbs, projectId }: { thumbs: any[]; projectId: string }) {
                   {u?.mobile && <img src={u.mobile} alt="" width={84} height={47} className="rounded" title="Phone feed size" />}
                   <span className="text-xs text-muted">Phone size</span>
                 </span>
-                <button className={t.selected ? "btn-primary px-2.5 py-1" : "btn-quiet px-2.5 py-1"} onClick={() => pick.mutate(t.id)} aria-pressed={t.selected}>
+                <button className={t.selected ? "btn-primary px-2.5 py-1" : "btn-quiet px-2.5 py-1"} onClick={() => pick.mutate(t.id)} disabled={pick.isPending} aria-pressed={t.selected}>
                   {t.selected ? "Chosen" : "Choose"}
                 </button>
               </figcaption>
@@ -378,7 +378,7 @@ function PostEditor({ v, tz }: { v: Variant; tz: string }) {
       </label>
       <div className="mt-2 flex gap-2">
         <button className="btn-quiet" disabled={!dirty || body.length > limit || save.isPending} onClick={() => save.mutate()}>Save text</button>
-        {!["skipped", "rejected", "published"].includes(v.status) && <button className="btn-quiet" onClick={() => skip.mutate()}>Skip this post</button>}
+        {!["skipped", "rejected", "published"].includes(v.status) && <button className="btn-quiet" onClick={() => skip.mutate()} disabled={skip.isPending}>Skip this post</button>}
       </div>
     </li>
   );

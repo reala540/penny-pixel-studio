@@ -5,7 +5,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { ApprovalModeNotice } from "../components/AutoPostToggle";
 import IdeaCard from "../components/IdeaCard";
 import ResearchIdeaCard from "../components/ResearchIdeaCard";
-import { Empty, ErrorNote, Loading, PageHeader, useToast } from "../components/ui";
+import { Empty, ErrorNote, Loading, NotConfirmed, PageHeader, useToast } from "../components/ui";
 import { must, queueJob } from "../lib/api";
 import { stageRows, useStageJobs } from "../lib/content";
 import { safeUrl } from "../lib/format";
@@ -144,8 +144,7 @@ function IdeaStep({ channel, onPick }: { channel: Channel; onPick: (k: Kind, id:
           <Sparkles size={14} aria-hidden />{job.data ? "Finding ideas…" : "Generate new ideas"}</button>
       </div>
       {job.data && <p role="status" className="mb-3 rounded-lg bg-pixel-soft px-3 py-2 text-sm text-pixel">{job.data.status === "queued" ? "Waiting to start (within 15 minutes)…" : "Finding and scoring ideas…"} The list updates by itself.</p>}
-      <ErrorNote error={generated.error || research.error} />
-      {generated.isLoading || research.isLoading ? <Loading label="Loading ideas" /> : (
+      {generated.isLoading || research.isLoading ? <Loading label="Loading ideas" /> : generated.isError || research.isError ? <NotConfirmed q={generated.isError ? generated : research} what="ideas" /> : (
         (source !== "research" ? gen.length : 0) + (source !== "generated" ? res.length : 0) === 0 ? (
           <Empty title={`No ideas for ${CHANNEL_NAME[channel]} yet`}>Press <strong>Generate new ideas</strong>, or write your own below.</Empty>
         ) : (
@@ -216,7 +215,7 @@ function ResearchStep({ channel, kind, id, onContinue, onChooseAnother }: { chan
     return channel === "ai" || channel === "money" ? channel : null;
   }
   if (sel.isLoading) return <Loading label="Loading the idea" />;
-  if (sel.error) return <ErrorNote error={sel.error} />;
+  if (sel.error) return <ErrorNote error={sel.error} onRetry={() => sel.refetch()} retrying={sel.isFetching} />;
   const d = sel.data!;
   const list = d.generated
     ? d.generated.trend_signals.map((s) => ({ key: s.source_id, title: s.title, url: s.url, meta: `${s.observed ?? ""}${s.published_at ? ` · ${s.published_at.slice(0, 10)}` : ""}` }))
@@ -231,7 +230,7 @@ function ResearchStep({ channel, kind, id, onContinue, onChooseAnother }: { chan
         <p role="status" className="mb-3 rounded-lg bg-penny-soft px-3 py-2 text-sm text-ink">A package was already made from this idea. <Link className="font-medium text-pixel underline" to={projectPath(d.project.id)}>Open it</Link></p>
       )}
       <h3 className="text-sm font-semibold">Sources ({list.length})</h3>
-      {sources.isLoading ? <Loading /> : noSources ? (
+      {sources.isLoading ? <Loading /> : sources.isError ? <NotConfirmed q={sources} what="this idea's sources" /> : noSources ? (
         <p className="mt-2 rounded-lg bg-alert-soft px-3 py-2 text-sm text-alert">This idea has no stored sources, so its facts can't be checked. Use <strong>Research it deeper</strong> first.</p>
       ) : (
         <ul className="mt-2 space-y-2">
@@ -282,7 +281,7 @@ function PackageStep({ channel, kind, id, onStarted }: { channel: "ai" | "money"
     onError: (e) => toast((e as Error).message, "bad"),
   });
   if (sel.isLoading) return <Loading />;
-  if (sel.error) return <ErrorNote error={sel.error} />;
+  if (sel.error) return <ErrorNote error={sel.error} onRetry={() => sel.refetch()} retrying={sel.isFetching} />;
   return (
     <section aria-labelledby="pk-title">
       <h2 id="pk-title" className="section-title mb-1">Step 4 · Create the package</h2>

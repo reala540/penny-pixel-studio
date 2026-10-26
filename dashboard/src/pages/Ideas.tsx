@@ -7,7 +7,7 @@ import ResearchIdeaCard from "../components/ResearchIdeaCard";
 import { isCleared } from "../lib/clear";
 import ClearButton from "../components/ClearButton";
 import IdeaCard from "../components/IdeaCard";
-import { Empty, ErrorNote, Loading, PageHeader, useToast } from "../components/ui";
+import { Empty, ErrorNote, Loading, NotConfirmed, PageHeader, useToast } from "../components/ui";
 import { must, useSetting } from "../lib/api";
 import { useCleared, visibleAfterClear } from "../lib/clear";
 import { supabase } from "../lib/supabase";
@@ -115,10 +115,9 @@ export default function Ideas() {
         {filtered && <button className="btn-quiet" onClick={() => { setTab("all"); setQ(""); setSort("newest"); }}>Clear filters</button>}
       </div>
 
-      <ErrorNote error={ideas.error} />
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
         <div className="min-w-0 space-y-3">
-          {source !== "research" && (ideas.isLoading ? <Loading label="Loading ideas" /> : shown.length === 0
+          {source !== "research" && (ideas.isLoading ? <Loading label="Loading ideas" /> : ideas.isError ? <NotConfirmed q={ideas} what="your ideas" /> : shown.length === 0
             ? (source === "generator" || researchShown.length === 0) && <Empty title="No ideas here yet">Generate a batch, or change the filter.</Empty>
             : shown.map((i) => <IdeaCard key={i.id} idea={i} />))}
           {source !== "generator" && (
@@ -129,8 +128,7 @@ export default function Ideas() {
                   body="Research ideas found so far leave this list, except ones shortlisted or being made. Their sources stay saved, because videos cite them. You can undo this."
                   onClear={() => cleared.clear("research")} />}
               </div>
-              <ErrorNote error={research.error} />
-              {research.isLoading ? <Loading /> : researchShown.length === 0
+              {research.isLoading ? <Loading /> : research.isError ? <NotConfirmed q={research} what="research ideas" /> : researchShown.length === 0
                 ? <p className="text-sm text-muted">No research ideas here. Weekly research runs on Saturday, or start it from Activity → Quick actions.</p>
                 : <div className="space-y-3">{researchShown.map((i) => <ResearchIdeaCard key={i.id} idea={i}
                     onUse={() => navigate(`/create?step=research&kind=research&id=${i.id}&channel=${i.channel_slug}`)} useLabel="Create from this idea" />)}</div>}
@@ -143,7 +141,7 @@ export default function Ideas() {
             {history.length > 0 && <ClearButton title="Clear the generation history?" done="History cleared" className="btn-quiet px-2.5 py-1 text-xs"
               body="This hides the runs listed here. The ideas stay in the library. You can undo this." onClear={() => cleared.clear("idea_runs")} />}
           </div>
-          {runs.isLoading ? <Loading /> : history.length === 0 ? <p className="mt-2 text-sm text-muted">No runs yet.</p> : (
+          {runs.isLoading ? <Loading /> : runs.isError ? <NotConfirmed q={runs} what="idea runs" /> : history.length === 0 ? <p className="mt-2 text-sm text-muted">No runs yet.</p> : (
             <ul className="mt-3 divide-y divide-line rounded-xl border border-line bg-surface">
               {history.map((r) => (
                 <li key={r.id} className="px-4 py-3 text-sm">

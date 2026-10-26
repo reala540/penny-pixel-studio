@@ -5,7 +5,7 @@ import { Link } from "react-router-dom";
 import ClearButton from "../components/ClearButton";
 import { AutoPostBadge } from "../components/AutoPostToggle";
 import Rundown from "../components/Rundown";
-import { Confirm, ErrorNote, HostTag, Loading, PageHeader, StatusBadge, useToast } from "../components/ui";
+import { Confirm, ErrorNote, HostTag, Loading, NotConfirmed, PageHeader, StatusBadge, useToast } from "../components/ui";
 import { must, useAccounts, useSaveSetting, useSetting, useTimezone } from "../lib/api";
 import { useCleared, visibleAfterClear } from "../lib/clear";
 import { fixFor } from "../lib/labels";
@@ -43,7 +43,7 @@ export default function Home() {
   };
   return (
     <>
-      <PageHeader title="Home" intro={summaryLine(counts)}
+      <PageHeader title="Home" intro={posts.isSuccess ? summaryLine(counts) : posts.isError ? "Couldn't load this week's posts." : "Loading this week…"}
         actions={<CreateButton canCreate={ready.canCreate} reason={ready.blockers[0]?.text} />} />
       <div className="-mt-3 mb-6 max-w-md"><AutoPostBadge /></div>
       <NeedsYou readiness={ready} />
@@ -56,8 +56,7 @@ export default function Home() {
           <h2 id="rundown-title" className="section-title">This week</h2>
           <WeekPicker offset={offset} setOffset={setOffset} />
         </div>
-        <ErrorNote error={posts.error || accounts.error} />
-        {accounts.isLoading || posts.isLoading ? <Loading /> : (
+        {accounts.isLoading || posts.isLoading ? <Loading /> : accounts.isError || posts.isError ? <NotConfirmed q={accounts.isError ? accounts : posts} what="this week's plan" /> : (
           <Rundown accounts={accounts.data ?? []} posts={week} days={days} tz={tz} today={localDay(new Date(), tz)} />
         )}
         <p className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted">
@@ -94,7 +93,7 @@ function CreateButton({ canCreate, reason }: { canCreate: boolean; reason?: stri
 function TelegramHint() {
   const linked = useSetting<string | null>("telegram_chat_id", null);
   const [hidden, setHidden] = useState(() => { try { return localStorage.getItem("studio-hide-telegram-hint") === "1"; } catch { return false; } });
-  if (linked.isLoading || linked.data || hidden) return null;
+  if (!linked.isSuccess || linked.data || hidden) return null;  // only when the database confirms it isn't linked
   return (
     <p className="flex items-start gap-2 rounded-lg bg-sunken px-3 py-2 text-sm">
       <span>Recommended: get alerts on your phone. <Link to="/settings/notifications" className="text-pixel underline">Link Telegram</Link> (optional).</span>
@@ -130,11 +129,14 @@ function NeedsYou({ readiness }: { readiness: ReturnType<typeof useReadiness> })
   const cleared = useCleared();
   const needs: Need[] = [];
   for (const b of readiness.blockers) needs.push({ key: b.text, tone: "bad", text: b.text, action: <Link className="btn-quiet" to={b.to}>Fix it</Link> });
-  if (readiness.checkedAt && readiness.stale || !readiness.checkedAt) {
+  if (readiness.checkError || readiness.aiError) {
+    needs.push({ key: "ai-unknown", tone: "warn", text: readiness.checkError ? "Couldn't load the last AI key check, so it isn't known whether the AI services work." : "Couldn't load the AI services and models.",
+      action: <Link className="btn-quiet" to="/settings/ai">Open AI services</Link> });
+  } else if (readiness.checkedAt && readiness.stale || !readiness.checkedAt) {
     needs.push({ key: "stale", tone: "warn", text: readiness.checkedAt ? `The AI key check is ${hoursAgo(readiness.checkedAt)} old; results may have changed.` : "The AI keys haven't been checked yet.",
       action: <button className="btn-quiet" disabled={keyCheck.running || keyCheck.run.isPending} onClick={() => keyCheck.run.mutate(undefined, { onSuccess: () => toast("Testing the AI keys. Results appear in a few minutes."), onError: (e) => toast((e as Error).message, "bad") })}>{keyCheck.running ? "Testing…" : "Test again"}</button> });
   }
-  if (readiness.uncoveredRoles.length && readiness.checkedAt) {
+  if (!readiness.checkError && readiness.uncoveredRoles.length && readiness.checkedAt) {
     needs.push({ key: "roles", tone: "warn", text: `No AI service that passed the last check does: ${readiness.uncoveredRoles.join(", ")}. Packages may stop at that step.`, action: <Link className="btn-quiet" to="/settings/ai">Check AI services</Link> });
   }
   for (const j of visibleAfterClear(data.data?.jobs ?? [], cleared.map, "rundown_problems", (x) => x.updated_at)) {
@@ -157,8 +159,8 @@ function NeedsYou({ readiness }: { readiness: ReturnType<typeof useReadiness> })
       <h2 id="needs-title" className="section-title mb-3">Needs you</h2>
       {data.isLoading || readiness.loading ? <Loading /> : (
         <>
-          <ErrorNote error={data.error} />
-          {needs.length === 0 ? <p className="rounded-xl border border-dashed border-line px-4 py-3 text-sm text-muted">Nothing needs you right now.</p> : (
+          <NotConfirmed q={data} what="what needs you" />
+          {needs.length === 0 ? (data.isError ? null : <p className="rounded-xl border border-dashed border-line px-4 py-3 text-sm text-muted">Nothing needs you right now.</p>) : (
             <ul className="divide-y divide-line rounded-xl border border-line bg-surface">
               {needs.map((n) => (
                 <li key={n.key} className="flex flex-wrap items-center gap-3 px-4 py-3">
@@ -187,7 +189,7 @@ function BeingMade() {
   return (
     <section aria-labelledby="making-title">
       <h2 id="making-title" className="section-title mb-3">Being made now</h2>
-      {running.isLoading ? <Loading /> : jobs.length === 0 ? <p className="text-sm text-muted">Nothing is being made right now.</p> : (
+      {running.isLoading ? <Loading /> : running.isError ? <NotConfirmed q={running} what="what's being made" /> : jobs.length === 0 ? <p className="text-sm text-muted">Nothing is being made right now.</p> : (
         <ul className="space-y-2">
           {jobs.slice(0, 4).map((j) => (
             <li key={j.id} className="rounded-xl border border-line bg-surface px-4 py-3 text-sm">
@@ -211,7 +213,7 @@ function NextPosts({ tz }: { tz: string }) {
   return (
     <section aria-labelledby="next-title">
       <h2 id="next-title" className="section-title mb-3">Next posts</h2>
-      {next.isLoading ? <Loading /> : (next.data ?? []).length === 0 ? <p className="text-sm text-muted">Nothing planned yet. <Link to="/create" className="text-pixel underline">Create content</Link> to fill your week.</p> : (
+      {next.isLoading ? <Loading /> : next.isError ? <NotConfirmed q={next} what="the next posts" /> : (next.data ?? []).length === 0 ? <p className="text-sm text-muted">Nothing planned yet. <Link to="/create" className="text-pixel underline">Create content</Link> to fill your week.</p> : (
         <ul className="divide-y divide-line rounded-xl border border-line bg-surface text-sm">
           {(next.data ?? []).map((p) => (
             <li key={p.id}>
@@ -248,13 +250,15 @@ function summaryLine(c: { total: number; waiting: number; done: number; problems
 }
 
 export function PauseButton() {
-  const paused = useSetting<boolean>("paused", false).data ?? false;
+  const q = useSetting<boolean>("paused", false);
+  const paused = q.data === true;
   const save = useSaveSetting();
   const toast = useToast();
   const [ask, setAsk] = useState(false);
+  if (!q.isSuccess) return <NotConfirmed q={q} what="whether publishing is paused" compact />;  // never offer the wrong action
   return (
     <>
-      <button className={paused ? "btn-primary" : "btn-danger"} onClick={() => setAsk(true)}>
+      <button className={paused ? "btn-primary" : "btn-danger"} onClick={() => setAsk(true)} disabled={save.isPending}>
         {paused ? <Play size={16} aria-hidden /> : <Pause size={16} aria-hidden />}
         {paused ? "Resume publishing" : "Pause publishing"}
       </button>
@@ -267,7 +271,10 @@ export function PauseButton() {
         onCancel={() => setAsk(false)}
         onConfirm={() => {
           setAsk(false);
-          save.mutate({ key: "paused", value: !paused }, { onSuccess: () => toast(paused ? "Publishing resumed" : "Publishing paused") });
+          save.mutate({ key: "paused", value: !paused }, {
+            onSuccess: () => toast(paused ? "Publishing resumed" : "Publishing paused"),
+            onError: (e) => toast(`${paused ? "Publishing is still paused" : "Publishing was not paused"}: ${(e as Error).message}`, "bad"),
+          });
         }}
       />
     </>
@@ -311,8 +318,12 @@ function DownloadButton({ storageKey }: { storageKey: string }) {
   const toast = useToast();
   return (
     <button className="btn-quiet" onClick={async () => {
-      const url = await signedUrl(storageKey, 600);
-      if (url) window.location.href = url; else toast("That file has expired. Ask for a new render from Review Studio.", "bad");
+      try {
+        const url = await signedUrl(storageKey, 600);
+        if (url) window.location.href = url; else toast("That file has expired. Ask for a new render from Review Studio.", "bad");
+      } catch (e) {
+        toast(`Couldn't get the download link: ${(e as Error).message}`, "bad");
+      }
     }}>Download video</button>
   );
 }
@@ -336,7 +347,7 @@ function Health() {
   const cleared = useCleared();
   if (health.isLoading) return <Loading />;
   const d = health.data;
-  if (!d) return <ErrorNote error={health.error} />;
+  if (!d) return <ErrorNote error={health.error} onRetry={() => health.refetch()} retrying={health.isFetching} />;
   const problems = visibleAfterClear(d.failed, cleared.map, "rundown_problems", (f) => f.updated_at).slice(0, 5);
   const enabled = d.providers.filter((p) => p.enabled);
   const resting = enabled.filter((p) => p.circuit_open_until && Date.parse(p.circuit_open_until) > Date.now());

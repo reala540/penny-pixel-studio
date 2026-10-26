@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, CircleAlert, CircleCheck, CircleDashed, Copy, Eye, EyeOff, Info } from "lucide-react";
 import { ReactNode, useState } from "react";
 import { Link } from "react-router-dom";
-import { ErrorNote, Loading, useToast } from "../components/ui";
+import { ErrorNote, Loading, NotConfirmed, useToast } from "../components/ui";
 import { useAccounts, useSaveSetting, useSetting } from "../lib/api";
 import { useKeyCheck, useReadiness } from "../lib/readiness";
 import { PLATFORM_NAME } from "../lib/format";
@@ -35,10 +35,10 @@ export function useSetupProgress() {
       return (count ?? 0) > 0;
     },
   });
-  const has = (n: string) => Boolean(status.data?.values[n]?.dashboard || status.data?.values[n]?.github);
+  const has = (n: string) => Boolean(status.data?.values?.[n]?.dashboard || status.data?.values?.[n]?.github);
   const connected = (p: Platform) => (accounts.data ?? []).filter((a) => a.platform === p).every((a) => a.oauth_connections?.status === "connected")
     && (accounts.data ?? []).some((a) => a.platform === p);
-  const coreOk = status.data ? Object.values(status.data.core).every((c) => c.ok) : false;
+  const coreOk = status.data?.core ? Object.values(status.data.core).every((c) => c.ok) : false;
   // Only "create" and "publish" steps count towards the progress bar; Telegram and the rest are recommended.
   const steps: { id: string; title: string; done: boolean; group: "create" | "publish" | "recommended"; optional?: boolean }[] = [
     { id: "basics", title: "The basics", done: coreOk, group: "create" },
@@ -56,6 +56,8 @@ export function useSetupProgress() {
   return {
     steps, done: required.filter((s) => s.done).length, total: required.length,
     loading: status.isLoading || accounts.isLoading, status, accounts,
+    // the count is real only when every check it depends on answered
+    confirmed: [status, accounts, chat, check, progress, firstVideo].every((q) => q.isSuccess),
   };
 }
 
@@ -76,7 +78,7 @@ export default function Setup() {
       <h2 className="section-title">Getting started</h2>
       <p className="mb-4 mt-1 max-w-3xl text-sm text-muted">Each step tests itself and shows ✅ when it works. Paste values here instead of GitHub: they're encrypted on the server and the page only ever shows the last 4 characters. Only <strong>Needed to create</strong> and <strong>Needed to publish</strong> count towards the bar; Telegram and the rest are recommended.</p>
       <div className="mb-8 max-w-4xl">
-        <div className="flex items-baseline justify-between text-sm"><span className="font-medium">{p.done} of {p.total} needed steps done</span><span className="tabular text-muted">{pct}%</span></div>
+        <div className="flex items-baseline justify-between text-sm"><span className="font-medium">{p.confirmed ? `${p.done} of ${p.total} needed steps done` : `At least ${p.done} of ${p.total} needed steps done (some checks didn't answer)`}</span><span className="tabular text-muted">{pct}%</span></div>
         <div className="mt-2 h-2 overflow-hidden rounded-full bg-sunken" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-label="Setup progress">
           <span className="block h-full bg-penny transition-all" style={{ width: `${pct}%` }} />
         </div>
@@ -89,7 +91,7 @@ export default function Setup() {
           ))}
         </nav>
       </div>
-      <ErrorNote error={p.status.error} />
+      <ErrorNote error={p.status.error} onRetry={() => p.status.refetch()} retrying={p.status.isFetching} />
       {p.loading ? <Loading label="Checking your setup" /> : (
         <div className="max-w-4xl space-y-6">
           <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">Needed to create</h3>
@@ -234,7 +236,8 @@ function Basics({ status, done }: { status?: Status; done: boolean }) {
 }
 
 function TelegramStep({ status, done }: { status?: Status; done: boolean }) {
-  const chat = useSetting<string | null>("telegram_chat_id", null).data;
+  const chatQ = useSetting<string | null>("telegram_chat_id", null);
+  const chat = chatQ.data;
   const toast = useToast();
   const [code, setCode] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -251,6 +254,7 @@ function TelegramStep({ status, done }: { status?: Status; done: boolean }) {
         help="The private link between the bot and the studio is made for you when you save." />
       <div className="rounded-lg border border-line p-3 text-sm">
         <p className="font-medium text-ink">Link your chat {chat && <span className="ml-1 text-penny">✅ linked</span>}</p>
+        {chatQ.isError && <NotConfirmed q={chatQ} what="whether your chat is linked" compact />}
         <p className="mt-1 text-xs text-muted">Press the button, then send the line it shows to your bot in Telegram.</p>
         <button className="btn-quiet mt-2" onClick={() => get.mutate()} disabled={get.isPending || !hasToken}>{chat ? "Link a different chat" : "Get a link code"}</button>
         {code && <p className="mt-2 rounded-lg bg-sunken px-3 py-2">Send to your bot: <code className="font-semibold">/link {code}</code></p>}
@@ -310,13 +314,13 @@ function PlatformStep({ platform, status, done }: { platform: Platform; status?:
     onError: (e) => toast((e as Error).message, "bad"),
   });
   const mine = (accounts.data ?? []).filter((a) => a.platform === platform);
-  const ready = cfg.names.every((n) => status?.values[n]?.dashboard || status?.values[n]?.github);
+  const ready = cfg.names.every((n) => status?.values?.[n]?.dashboard || status?.values?.[n]?.github);
   return (
     <Step id={platform} n={cfg.n} title={PLATFORM_NAME[platform]} done={done} intro={cfg.where}>
       <CopyValue label="Redirect address to paste on the platform" value={`${workerUrl}/oauth/${platform}/callback`} />
       <div className="grid gap-3 sm:grid-cols-2">
-        <SecretField name={cfg.names[0]} label={cfg.labels[0]} state={status?.values[cfg.names[0]]} secret={false} />
-        <SecretField name={cfg.names[1]} label={cfg.labels[1]} state={status?.values[cfg.names[1]]} />
+        <SecretField name={cfg.names[0]} label={cfg.labels[0]} state={status?.values?.[cfg.names[0]]} secret={false} />
+        <SecretField name={cfg.names[1]} label={cfg.labels[1]} state={status?.values?.[cfg.names[1]]} />
       </div>
       <ul className="divide-y divide-line rounded-lg border border-line">
         {mine.map((a) => {
@@ -359,7 +363,7 @@ function ScheduleStep({ done }: { done: boolean }) {
     <Step id="schedule" n={9} title="Posting schedule" done={done} intro="Which days and times each account posts, and how many posts a week. The default works well; change it any time.">
       <div className="flex flex-wrap gap-2">
         <Link to="/settings/schedule" className="btn-quiet">Open the posting schedule</Link>
-        {!done && <button className="btn-primary" onClick={() => save.mutate({ key: "setup_progress", value: { ...progress, schedule_reviewed: true } })}>The schedule looks right</button>}
+        {!done && <button className="btn-primary" disabled={save.isPending} onClick={() => save.mutate({ key: "setup_progress", value: { ...progress, schedule_reviewed: true } })}>The schedule looks right</button>}
       </div>
     </Step>
   );

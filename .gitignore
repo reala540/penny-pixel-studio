@@ -10,3 +10,4 @@ __pycache__/
 .env.*
 !.env.example
 backup/
+dashboard/e2e/screenshots/sweep/

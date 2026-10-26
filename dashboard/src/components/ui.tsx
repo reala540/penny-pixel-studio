@@ -1,6 +1,7 @@
-import { createContext, ReactNode, useCallback, useContext, useState } from "react";
+import { createContext, ReactNode, useCallback, useContext, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { HOST, statusText, statusTone, type Tone } from "../lib/format";
+import { friendlyError } from "../lib/state";
 import type { Channel } from "../lib/types";
 
 const TONE: Record<Tone, string> = {
@@ -59,13 +60,37 @@ export function Empty({ title, children }: { title: string; children?: ReactNode
   );
 }
 
-export function ErrorNote({ error }: { error: unknown }) {
+export function ErrorNote({ error, onRetry, retrying }: { error: unknown; onRetry?: () => void; retrying?: boolean }) {
   if (!error) return null;
   return (
-    <p role="alert" className="rounded-lg bg-alert-soft px-3 py-2 text-sm text-alert">
-      {error instanceof Error ? error.message : String(error)}
+    <p role="alert" className="flex flex-wrap items-center gap-2 rounded-lg bg-alert-soft px-3 py-2 text-sm text-alert">
+      <span>{friendlyError(error)}</span>
+      {onRetry && <button type="button" className="rounded-md border border-alert/40 px-2 py-0.5 text-xs font-semibold" onClick={onRetry} disabled={retrying}>
+        {retrying ? "Retrying…" : "Retry"}</button>}
     </p>
   );
+}
+
+/** The state of something the page needs to know, when it isn't a confirmed answer: loading, offline or failed (with Retry).
+ *  Renders nothing once it's confirmed. Never says "off", "none" or "not linked" on its own. */
+export function NotConfirmed({ q, what, compact = false }: { q: { isLoading: boolean; isError: boolean; error: unknown; isFetching?: boolean; refetch: () => unknown; dataUpdatedAt?: number }; what: string; compact?: boolean }) {
+  const online = typeof navigator === "undefined" || navigator.onLine !== false;
+  if (!q.isError && !q.isLoading) return null;
+  if (q.isLoading && !q.isError) return compact ? <span className="text-xs text-muted">Checking {what}…</span> : <Loading label={`Loading ${what}`} />;
+  const stale = q.dataUpdatedAt ? ` Showing what was known at ${new Date(q.dataUpdatedAt).toLocaleTimeString()}.` : "";
+  const text = online ? `Couldn't load ${what}: ${friendlyError(q.error)}${stale}` : `You're offline, so ${what} can't be checked.${stale}`;
+  return (
+    <p role="alert" className={`flex flex-wrap items-center gap-2 rounded-lg bg-alert-soft text-alert ${compact ? "px-2 py-1 text-xs" : "px-3 py-2 text-sm"}`}>
+      <span>{text}</span>
+      <button type="button" className="rounded-md border border-alert/40 px-2 py-0.5 text-xs font-semibold" onClick={() => q.refetch()} disabled={q.isFetching}>
+        {q.isFetching ? "Retrying…" : "Retry"}</button>
+    </p>
+  );
+}
+
+/** Report an error from anywhere (shown as a toast by ToastProvider). */
+export function reportError(error: unknown): void {
+  window.dispatchEvent(new CustomEvent("studio-error", { detail: friendlyError(error) }));
 }
 
 export function Loading({ label = "Loading" }: { label?: string }) {
@@ -99,20 +124,32 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const push = useCallback<Push>((text, tone = "good", action) => {
     const id = Date.now() + Math.random();
-    setToasts((t) => [...t, { id, text, tone, action }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), action ? 9000 : 4500);  // longer when it can be undone
+    const shown = tone === "bad" ? friendlyError(text) : text;
+    setToasts((t) => {
+      if (tone !== "bad") return [...t, { id, text: shown, tone, action }];
+      // one failure, one message: a specific "X wasn't done: reason" replaces the general "reason" toast for the same error
+      const recent = (x: Toast) => x.tone === "bad" && id - x.id < 3000;
+      if (t.some((x) => recent(x) && x.text.includes(shown))) return t;
+      return [...t.filter((x) => !(recent(x) && shown.includes(x.text))), { id, text: shown, tone, action }];
+    });
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), action ? 9000 : tone === "bad" ? 9000 : 4500);  // longer for errors and Undo
   }, []);
   const dismiss = (id: number) => setToasts((t) => t.filter((x) => x.id !== id));
+  useEffect(() => {
+    const onError = (e: Event) => push(String((e as CustomEvent).detail), "bad");
+    window.addEventListener("studio-error", onError);
+    return () => window.removeEventListener("studio-error", onError);
+  }, [push]);
   return (
     <ToastCtx.Provider value={push}>
       {children}
-      <div aria-live="polite" className="pointer-events-none fixed bottom-20 right-4 z-50 flex flex-col gap-2 md:bottom-6">
+      <div aria-live="polite" role="status" className="pointer-events-none fixed bottom-20 right-4 z-50 flex max-w-[calc(100vw-2rem)] flex-col gap-2 md:bottom-6">
         {toasts.map((t) => (
           <div key={t.id} className={`pointer-events-auto flex items-center gap-3 rounded-lg px-4 py-2.5 text-sm shadow-lg ${t.tone === "good" ? "bg-ink text-surface" : "bg-alert text-surface"}`}>
             <span>{t.text}</span>
             {t.action && (
               <button className="rounded-md border border-surface/40 px-2 py-0.5 text-xs font-semibold hover:bg-surface/10"
-                onClick={async () => { dismiss(t.id); await t.action!.run(); }}>{t.action.label}</button>
+                onClick={async () => { dismiss(t.id); try { await t.action!.run(); } catch (e) { push(`${t.action!.label} didn't work: ${friendlyError(e)}`, "bad"); } }}>{t.action.label}</button>
             )}
           </div>
         ))}

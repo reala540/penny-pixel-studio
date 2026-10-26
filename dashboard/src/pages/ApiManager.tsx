@@ -108,7 +108,7 @@ export default function ApiManager() {
   return (
     <>
       <PageHeader title="AI API Manager" intro="Keys for each AI provider, how they share the work, their limits and how they're doing. Full keys never come back to this page: only the last 4 characters." />
-      <ErrorNote error={data.error} />
+      <ErrorNote error={data.error} onRetry={() => data.refetch()} retrying={data.isFetching} />
       {!workerUrl && <p role="alert" className="mb-4 rounded-lg bg-alert-soft px-3 py-2 text-sm text-alert">Configuration required: adding, testing and removing keys needs the Worker (VITE_WORKER_URL). You can still change limits and strategies.</p>}
 
       <dl className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
@@ -119,7 +119,7 @@ export default function ApiManager() {
           ["Failures (30 days)", `${totals.failed}`],
           ["Rate-limit events", `${totals.limited}`],
           ["Cost this month", totals.estimated ? `≈ $${totals.cost.toFixed(2)}` : "not tracked"],
-        ].map(([k, v]) => (
+        ].map(([k, v]) => [k, data.isSuccess ? v : "—"]).map(([k, v]) => (
           <div key={k} className="rounded-xl border border-line bg-surface px-4 py-3"><dt className="text-xs text-muted">{k}</dt><dd className="mt-1 font-display text-lg font-semibold tabular-nums text-ink">{v}</dd></div>
         ))}
       </dl>

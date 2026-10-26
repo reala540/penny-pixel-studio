@@ -53,9 +53,9 @@ export default function ResearchIdeaCard({ idea, onUse, useLabel = "Use this ide
           )}
           <div className="mt-3 flex flex-wrap gap-1.5">
             {onUse && <button className="btn-primary" onClick={() => onUse(idea)} disabled={idea.status === "rejected"}><Send size={14} aria-hidden />{useLabel}</button>}
-            {open && idea.status !== "shortlisted" && <button className="btn-quiet px-2.5 py-1" onClick={() => setStatus.mutate("shortlisted")}>Shortlist</button>}
-            {open && idea.status !== "saved" && <button className="btn-quiet px-2.5 py-1" onClick={() => setStatus.mutate("saved")}>Save for later</button>}
-            {open && <button className="btn-quiet px-2.5 py-1" onClick={() => setStatus.mutate("rejected")}>Drop</button>}
+            {open && idea.status !== "shortlisted" && <button className="btn-quiet px-2.5 py-1" onClick={() => setStatus.mutate("shortlisted")} disabled={setStatus.isPending}>Shortlist</button>}
+            {open && idea.status !== "saved" && <button className="btn-quiet px-2.5 py-1" onClick={() => setStatus.mutate("saved")} disabled={setStatus.isPending}>Save for later</button>}
+            {open && <button className="btn-quiet px-2.5 py-1" onClick={() => setStatus.mutate("rejected")} disabled={setStatus.isPending}>Drop</button>}
           </div>
         </div>
         <div>

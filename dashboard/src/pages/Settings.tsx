@@ -8,7 +8,7 @@ import ThemeControl from "../components/ThemeControl";
 import { useCleared, visibleAfterClear } from "../lib/clear";
 import { STALE_HOURS, useKeyCheck, useReadiness } from "../lib/readiness";
 import { SETTINGS_SECTIONS, type SettingsSection } from "../lib/routes";
-import { ErrorNote, Loading, PageHeader, useToast } from "../components/ui";
+import { ErrorNote, Loading, NotConfirmed, PageHeader, useToast } from "../components/ui";
 import { cleanCategories, cleanRegions, DEFAULT_IDEA_CONFIG, SOURCES } from "../lib/ideas";
 import { useIdeaRuns } from "../lib/ideasApi";
 import type { IdeaGeneratorConfig } from "../lib/types";
@@ -81,7 +81,7 @@ function KeyCheckPanel() {
     <Section id="key-check" title="AI key check" intro="One short test request for every model that's switched on, with the keys the studio really uses: built-in services, services you added, and keys saved here or in GitHub secrets.">
       <div className="max-w-3xl rounded-xl border border-line bg-surface p-4 text-sm">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p>{ready.checkedAt ? <>Last checked {new Date(ready.checkedAt).toLocaleString()}{ready.stale && <span className="ml-1 font-medium text-alert">(older than {STALE_HOURS} hours: results may have changed)</span>}</> : "Not checked yet."}</p>
+          <p>{ready.checkedAt ? <>Last checked {new Date(ready.checkedAt).toLocaleString()}{ready.stale && <span className="ml-1 font-medium text-alert">(older than {STALE_HOURS} hours: results may have changed)</span>}</> : check.isSuccess ? "Not checked yet." : check.isError ? "Couldn't load the last check." : "Loading the last check…"}</p>
           <button className="btn-primary" disabled={keyCheck.running || keyCheck.run.isPending}
             onClick={() => keyCheck.run.mutate(undefined, { onSuccess: () => toast("Testing the AI keys. Results appear here in a few minutes."), onError: (e) => toast((e as Error).message, "bad") })}>
             {keyCheck.running ? "Testing…" : "Test again"}</button>
@@ -244,7 +244,7 @@ function Automation() {
           body="This hides the runs listed here and in the Idea Library. The ideas themselves stay. You can undo this."
           onClear={() => cleared.clear("idea_runs")} />}
       </div>
-      {runs.isLoading ? <Loading /> : shownRuns.length === 0 ? <p className="mt-1 text-sm text-muted">None yet.</p> : (
+      {runs.isLoading ? <Loading /> : runs.isError ? <NotConfirmed q={runs} what="recent idea runs" /> : shownRuns.length === 0 ? <p className="mt-1 text-sm text-muted">None yet.</p> : (
         <ul className="mt-2 max-w-3xl divide-y divide-line rounded-xl border border-line bg-surface text-sm">
           {shownRuns.map((r) => <li key={r.id} className="flex flex-wrap justify-between gap-2 px-4 py-2">
             <span>{new Date(r.started_at).toLocaleString()} · {r.trigger}</span>
@@ -265,7 +265,7 @@ function Accounts() {
   });
   return (
     <Section id="accounts" title="Accounts" intro="Sign in once per account. Your login tokens are encrypted; the dashboard never sees them.">
-      {accounts.isLoading ? <Loading /> : (
+      {accounts.isLoading ? <Loading /> : accounts.isError ? <NotConfirmed q={accounts} what="your accounts" /> : (
         <ul className="divide-y divide-line rounded-xl border border-line bg-surface">
           {(accounts.data ?? []).map((a) => {
             const c = a.oauth_connections;
@@ -329,7 +329,7 @@ function Writers() {
   const d = data.data;
   return (
     <Section id="writers" title="AI writers" intro="Free services only. If one is busy or out of free requests, the next one takes over automatically. A service is used only if it has a key (added below or saved as a GitHub secret).">
-      <ErrorNote error={data.error} />
+      <ErrorNote error={data.error} onRetry={() => data.refetch()} retrying={data.isFetching} />
       <div className="overflow-x-auto rounded-xl border border-line bg-surface">
         <table className="w-full min-w-[620px] text-left text-sm">
           <thead className="border-b border-line text-xs text-muted">
@@ -365,7 +365,7 @@ function Voices() {
   const channels = useQuery({ queryKey: ["channels"], queryFn: async () => (await must(supabase.from("channel_profiles").select("*").order("slug"))) as any[] });
   return (
     <Section id="voices" title="Channel voices" intro="How Pixel and Penny sound. The writers follow these rules for every script.">
-      {channels.isLoading ? <Loading /> : (
+      {channels.isLoading ? <Loading /> : channels.isError ? <NotConfirmed q={channels} what="channel voices" /> : (
         <div className="grid gap-6 lg:grid-cols-2">
           {(channels.data ?? []).map((c) => <VoiceForm key={c.id} channel={c} onSaved={() => { qc.invalidateQueries({ queryKey: ["channels"] }); toast(`${c.display_name} voice saved`); }} />)}
         </div>
@@ -439,7 +439,8 @@ function Schedule() {
 }
 
 function Telegram() {
-  const linked = useSetting<string | null>("telegram_chat_id", null).data;
+  const linkedQ = useSetting<string | null>("telegram_chat_id", null);
+  const linked = linkedQ.data;
   const toast = useToast();
   const [code, setCode] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -450,7 +451,8 @@ function Telegram() {
   });
   return (
     <Section id="telegram" title="Notifications (Telegram, optional)" intro="Recommended, not required: get 'ready for review', 'posted' and problem alerts on your phone, and pause publishing from anywhere.">
-      <p className="text-sm">{linked ? "Linked. Alerts go to your Telegram chat." : "Not linked yet."}</p>
+      {linkedQ.isSuccess ? <p className="text-sm">{linked ? "Linked. Alerts go to your Telegram chat." : "Not linked yet."}</p>
+        : <NotConfirmed q={linkedQ} what="whether Telegram is linked" />}
       <button className="btn-quiet mt-3" onClick={() => get.mutate()} disabled={get.isPending || !workerUrl}>{linked ? "Link a different chat" : "Get a link code"}</button>
       {code && (
         <p className="mt-3 rounded-lg bg-sunken px-4 py-3 text-sm">

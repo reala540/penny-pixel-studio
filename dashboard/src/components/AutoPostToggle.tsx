@@ -5,7 +5,7 @@ import { Link } from "react-router-dom";
 import { must, useSaveSetting, useSetting } from "../lib/api";
 import { useCleared, visibleAfterClear } from "../lib/clear";
 import { callWorker, supabase, workerUrl } from "../lib/supabase";
-import { Confirm, useToast } from "./ui";
+import { Confirm, NotConfirmed, useToast } from "./ui";
 
 /** Current mode, kept in sync with Telegram changes (polled, and refreshed when the tab regains focus). */
 export function useAutoPost() {
@@ -29,7 +29,16 @@ async function setMode(on: boolean): Promise<{ on: boolean; reverted_posts: numb
 
 /** The always-visible "who approves" line: you, or Auto Review & Post. */
 export function AutoPostBadge() {
-  const on = useAutoPost().data === true;
+  const q = useAutoPost();
+  const on = q.data === true;
+  if (!q.isSuccess && !q.dataUpdatedAt) {  // never confirmed: don't claim either mode
+    return (
+      <Link to="/settings/automation" className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium ${q.isError ? "bg-alert-soft text-alert" : "bg-sunken text-muted"}`}
+        aria-label={q.isError ? "Approval mode couldn't be checked. Open Automation settings." : "Checking the approval mode"}>
+        <UserCheck size={14} aria-hidden />{q.isError ? "Approval: couldn't check" : "Approval: checking…"}
+      </Link>
+    );
+  }
   return (
     <Link to="/settings/automation" className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium ${on ? "bg-penny-soft text-penny" : "bg-sunken text-muted"}`}
       aria-label={`Approval: ${on ? "automatic. Auto Review and Post: ON" : "you approve each package. Auto Review and Post: OFF"}. Change in Settings.`}>
@@ -44,6 +53,7 @@ export function ApprovalModeNotice({ compact = false }: { compact?: boolean }) {
   const q = useAutoPost();
   const on = q.data === true;
   if (q.isLoading) return <p className="text-sm text-muted">Checking who approves…</p>;
+  if (q.isError && !q.dataUpdatedAt) return <NotConfirmed q={q} what="who approves packages" />;
   return (
     <div role="note" className={`rounded-lg border px-3 py-2 text-sm ${on ? "border-penny/40 bg-penny-soft text-ink" : "border-line bg-sunken text-ink"}`}>
       {on ? (
@@ -76,13 +86,14 @@ export default function AutoPostToggle({ compact = false }: { compact?: boolean 
   });
   return (
     <div className={compact ? "flex items-center gap-3" : "flex flex-wrap items-center gap-3"}>
-      <button type="button" role="switch" aria-checked={on} disabled={mode.isLoading || change.isPending}
+      <button type="button" role="switch" aria-checked={on} disabled={!mode.isSuccess || change.isPending}
         onClick={() => (on ? change.mutate(false) : setConfirm(true))}
         className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border transition-colors ${on ? "border-penny bg-penny" : "border-line bg-sunken"} disabled:opacity-50`}>
         <span className={`inline-block h-5 w-5 rounded-full bg-surface shadow transition-transform ${on ? "translate-x-6" : "translate-x-1"}`} />
         <span className="sr-only">Auto Review and Post</span>
       </button>
-      <span className="text-sm font-semibold text-ink" aria-live="polite">Auto Review &amp; Post: {mode.isLoading ? "…" : on ? "ON" : "OFF"}</span>
+      <span className="text-sm font-semibold text-ink" aria-live="polite">Auto Review &amp; Post: {mode.isLoading ? "…" : mode.isError && !mode.dataUpdatedAt ? "unknown" : on ? "ON" : "OFF"}</span>
+      {mode.isError && <NotConfirmed q={mode} what="the approval mode" compact />}
       {!compact && <span className="text-sm text-muted">{on ? "Packages that pass every check are approved and posted on schedule; the rest come to you." : "Every package waits for your approval."}</span>}
       <Confirm open={confirm} title="Turn on Auto Review & Post?" confirmLabel="Turn on"
         body={<>
@@ -181,6 +192,7 @@ export function AutoReviewLog() {
   const cleared = useCleared();
   const list = visibleAfterClear(rows.data ?? [], cleared.map, "review_log", (r) => r.created_at);
   const label: Record<string, string> = { approved: "Auto-approved", needs_review: "Sent to you", error: "Couldn't check: sent to you", skipped: "Skipped", fixing: "Fixing, will check again" };
+  if (!rows.isSuccess) return <NotConfirmed q={rows} what="the automatic reviews" compact />;
   if (!list.length) return <p className="mt-1 text-sm text-muted">No automatic reviews yet.</p>;
   return (
     <ul className="mt-2 max-w-3xl divide-y divide-line rounded-xl border border-line bg-surface text-sm">

@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { friendlyError } from "./state";
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const anon = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
@@ -15,13 +16,19 @@ export const workerUrl = (import.meta.env.VITE_WORKER_URL as string | undefined)
 export async function callWorker<T>(path: string, body: unknown): Promise<T> {
   if (!workerUrl) throw new Error("The Worker address (VITE_WORKER_URL) is not set. See GUIDE.md, step 9.");
   const { data } = await supabase.auth.getSession();
-  const res = await fetch(`${workerUrl}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session?.access_token ?? ""}` },
-    body: JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${workerUrl}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session?.access_token ?? ""}` },
+      body: JSON.stringify(body),
+    });
+  } catch (e) {  // offline, or the Worker can't be reached: nothing was done
+    throw new Error(friendlyError(e));
+  }
   const json = (await res.json().catch(() => ({}))) as T & { error?: string };
-  if (!res.ok) throw new Error(json.error || `Worker returned ${res.status}`);
+  if (res.status === 401) throw new Error(data.session ? "Your sign-in has expired. Sign in again: you'll come back to this page." : "Sign in first.");
+  if (!res.ok) throw new Error(friendlyError(json.error || `The studio's server answered ${res.status}. Nothing was changed; try again.`));
   return json;
 }
 
@@ -30,3 +37,11 @@ export async function signedUrl(key: string | null | undefined, seconds = 3600):
   const { data } = await supabase.storage.from("studio").createSignedUrl(key, seconds);
   return data?.signedUrl ?? null;
 }
+
+let deliberate = false;
+/** Sign out on purpose (so the sign-in page doesn't say the session expired). */
+export async function signOut(): Promise<void> {
+  deliberate = true;
+  await supabase.auth.signOut();
+}
+export const signedOutDeliberately = () => deliberate;

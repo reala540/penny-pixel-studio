@@ -2,9 +2,11 @@ import { Activity, CalendarDays, ChevronDown, CircleHelp, Home, LayoutList, LogO
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { useSetting } from "../lib/api";
+import { known, useOnline, useOtherTabChanges } from "../lib/state";
 import { useNeedsYouCount } from "../lib/content";
-import { supabase } from "../lib/supabase";
+import { signOut, supabase } from "../lib/supabase";
 import { AutoPostBadge } from "./AutoPostToggle";
 import RunningNow from "./RunningNow";
 import ThemeControl from "./ThemeControl";
@@ -44,8 +46,40 @@ function CountBadge({ n }: { n: number }) {
 const secondaryLink = ({ isActive }: { isActive: boolean }) =>
   `flex items-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm ${isActive ? "bg-sunken text-ink" : "text-muted hover:bg-sunken hover:text-ink"}`;
 
+/** Connection and "is publishing paused?" — said only when known; a failed check says so instead of guessing. */
+function StatusBanners() {
+  const online = useOnline();
+  const pausedQ = useSetting<boolean>("paused", false);
+  const paused = known(pausedQ, online);
+  return (
+    <>
+      {!online && (
+        <div role="alert" className="bg-gold px-4 py-2 text-center text-sm font-medium text-ink">
+          You're offline. What you see may be out of date, and changes can't be saved until you're back online.
+        </div>
+      )}
+      {paused.state === "confirmed" && paused.value === true && (
+        <div role="status" className="bg-alert px-4 py-2 text-center text-sm font-medium text-surface">
+          Publishing is paused: nothing will be posted until you resume it. Making content still works.
+        </div>
+      )}
+      {paused.state === "failed" && (
+        <div role="alert" className="flex flex-wrap items-center justify-center gap-2 bg-alert-soft px-4 py-2 text-center text-sm text-alert">
+          Couldn't check whether publishing is paused: {paused.error}
+          <button type="button" className="rounded-md border border-alert/40 px-2 py-0.5 text-xs font-semibold" onClick={() => pausedQ.refetch()}>Retry</button>
+        </div>
+      )}
+    </>
+  );
+}
+
 export default function Layout() {
-  const paused = useSetting<boolean>("paused", false).data;
+  const qc = useQueryClient();
+  // another tab changed something: refresh what this tab shows
+  useOtherTabChanges(useCallback((keys?: string[][]) => {
+    if (keys?.length) keys.forEach((k) => qc.invalidateQueries({ queryKey: k }));
+    else qc.invalidateQueries();
+  }, [qc]));
   const needsYou = useNeedsYouCount().data ?? 0;
   const scroller = useRef<HTMLDivElement>(null);
   const [more, setMore] = useState(false);
@@ -97,7 +131,7 @@ export default function Layout() {
               <NavLink to="/help" className={secondaryLink}><CircleHelp size={17} aria-hidden /> Help</NavLink>
               <ThemeControl compact />
             </div>
-            <button onClick={() => supabase.auth.signOut()} className="flex items-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-left text-sm text-muted hover:bg-sunken hover:text-ink">
+            <button onClick={() => signOut()} className="flex items-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-left text-sm text-muted hover:bg-sunken hover:text-ink">
               <LogOut size={17} aria-hidden /> Sign out
             </button>
           </nav>
@@ -121,11 +155,7 @@ export default function Layout() {
               className="flex items-center gap-1 rounded-lg px-2 py-2 text-sm text-muted"><Menu size={20} aria-hidden />More</button>
           </div>
         </div>
-        {paused && (
-          <div role="status" className="bg-alert px-4 py-2 text-center text-sm font-medium text-surface">
-            Publishing is paused: nothing will be posted until you resume it. Making content still works.
-          </div>
-        )}
+        <StatusBanners />
         <main id="main" className="mx-auto w-full max-w-[1600px] flex-1 px-4 pb-28 pt-6 sm:px-6 md:pb-12">
           <Suspense fallback={<Loading label="Loading page" />}>
             <Outlet />
@@ -156,7 +186,7 @@ export default function Layout() {
               <NavLink to="/settings" className={secondaryLink}><Settings size={17} aria-hidden /> Settings</NavLink>
               <NavLink to="/help" className={secondaryLink}><CircleHelp size={17} aria-hidden /> Help</NavLink>
               <div className="flex items-center justify-between px-3 py-1.5 text-sm text-muted">Theme <ThemeControl compact /></div>
-              <button onClick={() => supabase.auth.signOut()} className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-left text-sm text-muted hover:bg-sunken">
+              <button onClick={() => signOut()} className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-left text-sm text-muted hover:bg-sunken">
                 <LogOut size={17} aria-hidden /> Sign out
               </button>
             </div>
