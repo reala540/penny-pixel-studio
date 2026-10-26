@@ -506,8 +506,8 @@ function AlertPreference() {
   return (
     <fieldset className="mt-5 max-w-2xl text-sm">
       <legend className="font-medium">Telegram alerts</legend>
-      {([["all", "Everything", "Problems, things that need you, and routine updates (ideas ready, posted, tests finished)."],
-        ["important", "Only what needs me", "Problems, packages waiting for your review, posts to check or post yourself, connection, key and budget problems. Routine updates stay in the app only."]] as const)
+      {([["all", "Everything", "Problems, things that need you, and routine updates (ideas ready, posted, tests finished, and the evening heads-up that tomorrow's posts are ready)."],
+        ["important", "Only what needs me", "Problems, packages waiting for your review, posts to check or post yourself, a heads-up when a post in the next 24 hours won't go out by itself, connection, key and budget problems. Routine updates stay in the app only."]] as const)
         .map(([v, label, help]) => (
           <label key={v} className="mt-2 flex items-start gap-2">
             <input type="radio" name="telegram_alerts" className="mt-1" checked={pref.data === v} disabled={save.isPending}

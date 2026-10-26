@@ -18,6 +18,10 @@ def post(post_id) -> str:
     return f"{_base()}/calendar?post={post_id}"
 
 
+def calendar() -> str:
+    return f"{_base()}/calendar"
+
+
 def job(job: dict) -> str:
     """Progress or results of one request."""
     kind, inp = job.get("job_type"), job.get("input") or {}
