@@ -95,7 +95,7 @@ def refresh(providers_cfg: dict, client: httpx.Client | None = None) -> dict[str
             if m.get("kind", "chat") != "chat" or m["id"] in ids:
                 continue
             missing[m["id"]] = pick_substitute(m["id"], ids, free_only=m["id"].endswith(":free"))
-        out[name] = {"listed": True, "missing": missing}
+        out[name] = {"listed": True, "missing": missing, "ids": sorted(ids)[:400]}  # what the provider serves today
     return out
 
 

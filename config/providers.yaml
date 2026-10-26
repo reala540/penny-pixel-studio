@@ -58,11 +58,6 @@ providers:
         daily_requests: 1000
         context: 131000
         priority: 20
-      - id: moonshotai/kimi-k2-instruct-0905
-        roles: [brainstormer, voice_editor]
-        daily_requests: 1000
-        context: 131000
-        priority: 30
 
   mistral:
     tier: 1

@@ -110,3 +110,17 @@ def test_a_section_written_too_short_gets_one_follow_up(monkeypatch):
     monkeypatch.setattr(pipeline, "SHORT_SECTION", 0)
     again, _ = pipeline.draft(ScriptedRouter(monkeypatch), "ai", {"title": "AI ROI", "angle": ""}, facts)
     assert not any(sc.visual.headline == "More" for sc in again.scenes)
+
+
+def test_with_no_voice_editor_free_the_checked_script_goes_on(monkeypatch):
+    from studio.errors import QuotaError
+    from studio.script.models import Fact, FactSheet
+
+    def no_editor(*a, **k):
+        raise QuotaError("All free providers for 'voice_editor' are exhausted or failing")
+    monkeypatch.setattr(pipeline, "voice_edit", no_editor)
+    router = ScriptedRouter(monkeypatch)
+    sources = [{"adapter": "web_article", "title": f"AI and firms {i}", "publisher": f"site{i}.org", "summary": f"Fact {i} is stated.",
+                "credibility": "unrated", "published_at": None, "body_text": f"Fact {i} is stated here."} for i in range(4)]
+    result = pipeline.write_long(router, "ai", {"title": "AI ROI", "angle": ""}, sources)
+    assert result.script.scenes and any(t.get("step") == "voice_edit" and "skipped" in t for t in result.trail)

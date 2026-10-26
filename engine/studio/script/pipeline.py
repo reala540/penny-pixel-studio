@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 
 from .. import config
 from ..ai.router import Router
-from ..errors import NeedsReview
+from ..errors import NeedsReview, QuotaError
 from ..research.engine import source_block
 from . import quality, verify
 from .models import (WORDS_PER_SECOND, CriticReport, FactSheet, Outline, OutlineSection, Package, SceneRewrite,
@@ -300,9 +300,12 @@ def write_long(router: Router, channel: str, idea: dict, sources: list[dict]) ->
         writers |= set(t.get("companies", []))
         trail.append({"step": f"fix_round_{round_no + 1}", **t})
 
-    script, t = voice_edit(router, channel, script, writers)
-    writers |= set(t["companies"])
-    trail.append({"step": "voice_edit", **t})
+    try:
+        script, t = voice_edit(router, channel, script, writers)
+        writers |= set(t["companies"])
+        trail.append({"step": "voice_edit", **t})
+    except QuotaError as exc:  # polish, not a check: with no editor free, the checked script goes on unchanged
+        trail.append({"step": "voice_edit", "skipped": str(exc)[:300]})
     report, t = critique(router, channel, script, writers)
     trail.append({"step": "critic", **t})
     if report.minimum() < CRITIC_MIN and report.weak_scenes:
