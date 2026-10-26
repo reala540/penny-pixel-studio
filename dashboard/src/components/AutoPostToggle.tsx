@@ -94,7 +94,7 @@ export default function AutoPostToggle({ compact = false }: { compact?: boolean 
       </button>
       <span className="text-sm font-semibold text-ink" aria-live="polite">Auto Review &amp; Post: {mode.isLoading ? "…" : mode.isError && !mode.dataUpdatedAt ? "unknown" : on ? "ON" : "OFF"}</span>
       {mode.isError && <NotConfirmed q={mode} what="the approval mode" compact />}
-      {!compact && <span className="text-sm text-muted">{on ? "Packages that pass every check are approved and posted on schedule; the rest come to you." : "Every package waits for your approval."}</span>}
+      {!compact && mode.isSuccess && <span className="text-sm text-muted">{on ? "Packages that pass every check are approved and posted on schedule; the rest come to you." : "Every package waits for your approval."}</span>}
       <Confirm open={confirm} title="Turn on Auto Review & Post?" confirmLabel="Turn on"
         body={<>
           <p>The AI will approve a package only if it passed every quality, fact, freshness, destination and licence check
@@ -116,11 +116,12 @@ export function AutoFixAttempts() {
   const save = useSaveSetting();
   const toast = useToast();
   const value = Math.min(5, Math.max(0, Number(cfg.data?.max_attempts ?? 3)));
+  if (!cfg.isSuccess) return <NotConfirmed q={cfg} what="automatic fix settings" />;
   return (
     <label className="mt-4 flex max-w-xl flex-wrap items-center gap-2 text-sm">
       <span className="text-ink">When a check fails, fix it and try again</span>
       <select aria-label="Automatic fix attempts" className="field w-auto" value={value} disabled={cfg.isLoading}
-        onChange={(e) => save.mutate({ key: "auto_review_fix", value: { ...(cfg.data ?? {}), max_attempts: Number(e.target.value) } },
+        onChange={(e) => save.mutate({ key: "auto_review_fix", value: { max_attempts: Number(e.target.value) }, patch: true },
           { onSuccess: () => toast("Saved"), onError: (er) => toast((er as Error).message, "bad") })}>
         {[0, 1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n === 0 ? "never (send to me)" : `up to ${n} time${n === 1 ? "" : "s"}`}</option>)}
       </select>
@@ -141,9 +142,10 @@ export function AutoReplaceSettings() {
   const put = (patch: Partial<AutoReplace>) => {
     const next = { ...v, ...patch };
     if (next.replace_after_hours < next.remind_after_hours) next.replace_after_hours = next.remind_after_hours;
-    save.mutate({ key: "auto_replace", value: next }, { onSuccess: () => toast("Saved"), onError: (er) => toast((er as Error).message, "bad") });
+    save.mutate({ key: "auto_replace", value: { ...patch, ...(next.replace_after_hours !== v.replace_after_hours ? { replace_after_hours: next.replace_after_hours } : {}) }, patch: true }, { onSuccess: () => toast("Saved"), onError: (er) => toast((er as Error).message, "bad") });
   };
   const hours = [1, 2, 4, 6, 8, 12, 18, 24, 36, 48, 72];
+  if (!cfg.isSuccess) return <NotConfirmed q={cfg} what="automatic replacement settings" />;
   return (
     <fieldset className="mt-4 max-w-xl text-sm" disabled={cfg.isLoading}>
       <legend className="font-semibold text-ink">When a sensitive package waits for you</legend>

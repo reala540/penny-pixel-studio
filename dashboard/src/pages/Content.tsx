@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Lightbulb, PlusCircle } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import ClearButton from "../components/ClearButton";
 import { Confirm, Empty, ErrorNote, HostTag, Loading, NotConfirmed, PageHeader, StatusBadge, useToast } from "../components/ui";
@@ -21,13 +21,15 @@ export default function Content() {
   const [q, setQ] = useState("");
   const [channel, setChannel] = useState("all");
   const [format, setFormat] = useState("all");
+  const [page, setPage] = useState(0);
+  useEffect(() => setPage(0), [tab, q, channel, format]);
   const [askAll, setAskAll] = useState(false);
   const cleared = useCleared();
   const statuses = tabStatuses(tab);
   const data = useQuery({
-    queryKey: ["content", tab, q, channel, format],
+    queryKey: ["content", tab, q, channel, format, page],
     queryFn: async () => {
-      let query = supabase.from("content_projects").select("*").order("created_at", { ascending: false }).limit(150);
+      let query = supabase.from("content_projects").select("*").order("created_at", { ascending: false }).range(page * 50, page * 50 + 49);
       if (statuses) query = query.in("status", [...statuses]);
       if (q.trim()) query = query.ilike("title", `%${q.trim()}%`);
       if (channel !== "all") query = query.eq("channel_slug", channel);
@@ -39,9 +41,14 @@ export default function Content() {
   const counts = useQuery({
     queryKey: ["content-counts"],
     queryFn: async () => {
-      const rows = (await must(supabase.from("content_projects").select("status").is("parent_project_id", null).limit(2000))) as { status: string }[];
       const out: Record<string, number> = {};
-      for (const [k, , st] of CONTENT_TABS) out[k] = st ? rows.filter((r) => (st as readonly string[]).includes(r.status)).length : rows.length;
+      for (const [key, , statuses] of CONTENT_TABS) {
+        let query=supabase.from("content_projects").select("id",{count:"exact",head:true}).is("parent_project_id",null);
+        if(statuses)query=query.in("status",[...statuses]);
+        const {count,error}=await query;
+        if(error)throw new Error(error.message);
+        out[key]=count??0;
+      }
       return out;
     },
   });
@@ -58,10 +65,22 @@ export default function Content() {
   // "Clear drafts" hides rejected and failed packages made so far (as in the old Library)
   const rows = (data.data ?? []).filter((p) => !(["rejected", "failed"].includes(p.status) && isCleared(cleared.map, "library", p.created_at)));
   const eligible = tab === "needs-you" ? rows.filter((p) => p.status === "ready_for_review" && !p.parent_project_id && !(p.quality_report?.issues ?? []).length) : [];
+  const [bulkResults, setBulkResults] = useState<{ title: string; ok: boolean; error?: string }[]>([]);
   const approveAll = useMutation({
-    mutationFn: async () => { for (const p of eligible) await must(supabase.rpc("approve_project", { p_project_id: p.id, p_notes: "approved in bulk" })); },
-    onSuccess: () => { qc.invalidateQueries(); toast(`Approved ${eligible.length} package${eligible.length === 1 ? "" : "s"}`); },
-    onError: (e) => toast((e as Error).message, "bad"),
+    mutationFn: async () => {
+      const outcomes: { title: string; ok: boolean; error?: string }[] = [];
+      for (const p of eligible) {
+        try { await must(supabase.rpc("approve_project", { p_project_id: p.id, p_notes: "approved in bulk" })); outcomes.push({ title: p.title, ok: true }); }
+        catch (e) { outcomes.push({ title: p.title, ok: false, error: (e as Error).message }); }
+      }
+      return outcomes;
+    },
+    onSuccess: (outcomes) => {
+      setBulkResults(outcomes);
+      const approved = outcomes.filter((x) => x.ok).length;
+      toast(`${approved} approved; ${outcomes.length - approved} could not be approved.`, approved === outcomes.length ? "good" : "bad");
+    },
+    onSettled: () => { qc.invalidateQueries(); },
   });
   const filtersOn = q.trim() !== "" || channel !== "all" || format !== "all";
   const setTab = (t: string) => { const p = new URLSearchParams(params); p.set("tab", t); setParams(p); };
@@ -75,6 +94,7 @@ export default function Content() {
       <Confirm open={askAll} title={`Approve ${eligible.length} packages?`} confirmLabel={`Approve ${eligible.length}`}
         body="Only packages that passed every check are approved. Anything that needs a look stays for you."
         onCancel={() => setAskAll(false)} onConfirm={() => { setAskAll(false); approveAll.mutate(); }} />
+      {bulkResults.length > 0 && <ul aria-label="Approval results" className="mb-4 rounded-xl border border-line p-3 text-sm">{bulkResults.map((x, i) => <li key={i}>{x.title}: {x.ok ? "Approved" : `Not approved — ${x.error}`}</li>)}</ul>}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div role="tablist" aria-label="Show" className="flex flex-wrap gap-1">
           {CONTENT_TABS.map(([k, label]) => (
@@ -97,6 +117,7 @@ export default function Content() {
         </select>
         {filtersOn ? <button type="button" className="btn-quiet" onClick={() => { setQ(""); setChannel("all"); setFormat("all"); }}>Clear filters</button> : <span />}
       </form>
+      <nav aria-label="Content pages" className="mb-3 flex items-center gap-3"><button className="btn-quiet" disabled={!page || data.isFetching} onClick={() => setPage((n)=>n-1)}>Previous</button><span className="text-sm">Page {page+1}</span><button className="btn-quiet" disabled={(data.data?.length??0)<50 || data.isFetching} onClick={() => setPage((n)=>n+1)}>Next</button></nav>
       {tab === "not-used" && (
         <div className="mb-3"><ClearButton label="Clear drafts" title="Clear rejected and failed items?" done="Rejected and failed items cleared"
           body="Rejected and failed packages made so far are hidden from this list. Nothing is deleted. You can undo this." onClear={() => cleared.clear("library")} /></div>

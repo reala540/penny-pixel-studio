@@ -20,7 +20,7 @@ describe("activity timeline", () => {
     );
     expect(items.map((i) => i.title)).toEqual([
       "Posted to YouTube",
-      "Rewriting a script: AI tools (automatic fix): failed",
+      "Rewriting a script: AI tools (automatic fix): needs attention",
       "Generating ideas: finished",
       "Auto Review & Post switched ON",
     ]);

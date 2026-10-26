@@ -49,13 +49,16 @@ export async function dispatch(env: Env, workflow: keyof typeof WORKFLOWS | stri
   return r.status === 204;
 }
 
-async function telegram(env: Env, chatId: string | number, text: string): Promise<void> {
-  if (!env.TELEGRAM_BOT_TOKEN) return;
-  await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+async function telegram(env: Env, chatId: string | number, text: string): Promise<boolean> {
+  if (!env.TELEGRAM_BOT_TOKEN) return false;
+  const response = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ chat_id: chatId, text: text.slice(0, 4000), parse_mode: "HTML", disable_web_page_preview: true }),
   });
+  const payload = await response.json().catch(() => null) as {ok?:boolean}|null;
+  if(!response.ok || payload?.ok !== true) throw new Error(`Telegram delivery was not confirmed (HTTP ${response.status})`);
+  return true;
 }
 
 const HELP = [
@@ -86,13 +89,20 @@ export async function setAutoPost(env: Env, on: boolean, actor: "owner" | "teleg
     const chat = await db.setting<string>("telegram_chat_id");
     if (chat) {
       const where = actor === "telegram" ? "from Telegram" : "from the dashboard";
-      await telegram(env, chat, on
+      notified = await telegram(env, chat, on
         ? `🤖 <b>Auto Review &amp; Post: ON</b> (${where}).\nPackages that pass every check are approved and posted at their scheduled times. Anything else comes to you here. Send /autopost off to stop.`
         : `🧑 <b>Auto Review &amp; Post: OFF</b> (${where}).\nEvery package waits for your approval.${result.reverted_posts ? ` ${result.reverted_posts} auto-approved post(s) that hadn't gone out are back in Review.` : ""}`);
-      notified = true;
     }
   } catch (e) {
     console.error("autopost notice", (e as Error).message);
+  }
+  if (!notified) {
+    // The mode is already saved: persist a notification rather than losing it when Telegram is unavailable.
+    try {
+      await db.insert("notifications", {kind: "approval_mode", title: on ? "Auto Review & Post is ON" : "Auto Review & Post is OFF",
+        body: on ? "Eligible packages may be approved automatically and posted on schedule." : "Every package now waits for your approval.",
+        link: `${env.DASHBOARD_URL}/settings/automation`, dedupe_key: `approval-mode:${Date.now()}`});
+    } catch { /* mode remains saved; response still reports notified=false */ }
   }
   if (on) {
     try {
@@ -415,8 +425,15 @@ export async function handleCron(env: Env): Promise<Record<string, boolean>> {
   // a package waiting for the owner is due a reminder or a safer replacement (the engine decides which)
   const replaceAt = await db.setting<string>("auto_replace_next_at");
   const replaceDue = Boolean(replaceAt) && Date.parse(replaceAt as string) <= Date.now();
+  let deliveryDue = false;
+  if (env.TELEGRAM_BOT_TOKEN) {
+    try {
+      const waiting = await db.select("notifications", `select=id&sent_at=is.null&delivery_attempts=lt.5&next_delivery_at=lte.${new Date().toISOString()}&limit=1`);
+      deliveryDue = waiting.length > 0 && Boolean(await db.setting<string>("telegram_chat_id"));
+    } catch { /* migration13 has not been applied yet: preserve the existing cron */ }
+  }
   const sinceQ = Date.now() - Date.parse(lastQ);
-  if ((queued.length && (out.ideas || sinceQ > 12 * 60_000)) || (replaceDue && sinceQ > 60 * 60_000)) {
+  if ((queued.length && (out.ideas || sinceQ > 12 * 60_000)) || (replaceDue && sinceQ > 60 * 60_000) || (deliveryDue && sinceQ > 12 * 60_000)) {
     out.queue = await dispatch(env, "queue");
     if (out.queue) await db.putSetting("last_queue_dispatch", new Date().toISOString());
   }

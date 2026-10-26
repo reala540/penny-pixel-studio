@@ -3,7 +3,7 @@
 import { mkdirSync } from "node:fs";
 import { openStudio, startServer, withBrowser } from "./harness.mjs";
 
-const OUT = new URL("./screenshots/sweep/", import.meta.url).pathname;
+const OUT = (process.env.E2E_SCREENSHOT_DIR || new URL("./screenshots/sweep/", import.meta.url).pathname).replace(/\/?$/, "/");
 mkdirSync(OUT, { recursive: true });
 const SECTIONS = ["setup", "accounts", "schedule", "automation", "ideas", "ai", "voices", "notifications", "budget", "appearance"];
 const PAGES = ["/", "/create", "/content", "/content/ideas", "/content/proj-1", "/calendar", "/activity", "/help", ...SECTIONS.map((s) => `/settings/${s}`)];

@@ -1,18 +1,22 @@
+import { useFormDraft } from "../lib/formDraft";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, RotateCcw, TriangleAlert, X } from "lucide-react";
 import { useState } from "react";
-import { useAccounts, useSetting, useTimezone } from "../lib/api";
+import { missingFunction, useAccounts, useSetting, useTimezone } from "../lib/api";
 import { PLATFORM_NAME } from "../lib/format";
 import { DAY_LABEL, DAYS, Day, draftFrom, KINDS, payload, ScheduleDraft, totalPerWeek, warnings, weekPreview } from "../lib/schedule";
 import { supabase } from "../lib/supabase";
 import type { Account } from "../lib/types";
-import { Loading, useToast } from "./ui";
+import { Confirm, Loading, NotConfirmed, useToast } from "./ui";
 
 /** Settings → Posting schedule: days, times, posts per week and pause, per account, with a weekly preview. */
 export default function PostingSchedule() {
   const accounts = useAccounts();
-  const tz = useTimezone();
+  const timezone = useSetting<string>("timezone", "Africa/Nairobi");
+  const tz = timezone.data;
   if (accounts.isLoading) return <Loading />;
+  if (!accounts.isSuccess) return <NotConfirmed q={accounts} what="account schedules" />;
+  if (!timezone.isSuccess) return <NotConfirmed q={timezone} what="the schedule timezone" />;
   return (
     <div className="space-y-5">
       <p className="text-sm text-muted">Times are in {tz}. Changes apply from the next production run; posts already planned stay where they are unless you tick "move".</p>
@@ -64,12 +68,16 @@ function AccountSchedule({ account }: { account: Account }) {
   const toast = useToast();
   const defaults = useSetting<Record<string, Record<string, unknown>>>("posting_schedule_defaults", {}).data ?? {};
   const initial = draftFrom(account.platform, account.enabled, account.weekly_targets ?? {});
-  const [d, setD] = useState<ScheduleDraft>(initial);
+  const [d, setD, draft] = useFormDraft<ScheduleDraft>(`schedule:${account.id}`, initial);
   const [move, setMove] = useState(false);
+  const [askMove, setAskMove] = useState(false);
   const changed = JSON.stringify(d) !== JSON.stringify(initial);
   const save = useMutation({
     mutationFn: async () => {
-      const { data, error } = await supabase.rpc("set_posting_schedule", { p_account_id: account.id, p_schedule: payload(account.platform, d), p_move: move });
+      const args = { p_account_id: account.id, p_schedule: payload(account.platform, d), p_move: move };
+      let response = await supabase.rpc("save_posting_schedule", { ...args, p_expected: { weekly_targets: account.weekly_targets, enabled: account.enabled } });
+      if (missingFunction(response.error)) response = await supabase.rpc("set_posting_schedule", args);
+      const {data,error} = response;
       if (error) throw new Error(error.message);
       return data as { moved_posts: number };
     },
@@ -130,14 +138,16 @@ function AccountSchedule({ account }: { account: Account }) {
           )}
         </div>
       </div>
+      {draft.message && <p role="status" className="mt-3 text-sm text-muted">{draft.message}</p>}
       <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-line pt-3">
-        <button className="btn-primary" disabled={!changed || save.isPending} onClick={() => save.mutate()}>{save.isPending ? "Saving…" : "Save schedule"}</button>
-        {changed && <button className="btn-quiet" onClick={() => setD(initial)}>Undo changes</button>}
-        {def && <button className="btn-quiet" onClick={() => setD(draftFrom(account.platform, true, def))}><RotateCcw size={14} aria-hidden />Reset to default</button>}
+        <button className="btn-primary" disabled={!changed || save.isPending || draft.conflict} onClick={() => move ? setAskMove(true) : save.mutate()}>{save.isPending ? "Saving…" : "Save schedule"}</button>
+        {changed && <button className="btn-quiet" onClick={draft.reset}>Undo changes</button>}
+        {def && <button className="btn-quiet" onClick={() => setD(draftFrom(account.platform, d.enabled, def))}><RotateCcw size={14} aria-hidden />Reset to default</button>}
         <label className="flex items-center gap-2 text-sm text-muted">
           <input type="checkbox" checked={move} onChange={(e) => setMove(e.target.checked)} />Also move posts already waiting to the new times
         </label>
       </div>
+      <Confirm open={askMove} title={`Move waiting posts for ${account.label}?`} body="This saves the schedule and moves this account’s future waiting posts to the new slots. Published and currently publishing posts stay unchanged." confirmLabel="Save and move" onCancel={() => setAskMove(false)} onConfirm={() => { setAskMove(false); save.mutate(); }} />
     </section>
   );
 }

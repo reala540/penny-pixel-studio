@@ -1,11 +1,12 @@
+import JobActions from "../components/JobActions";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, BookOpenCheck, CircleAlert, CircleCheck, Info, LoaderCircle, OctagonX, Search, Sparkles } from "lucide-react";
 import { lazy, Suspense, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import ClearButton from "../components/ClearButton";
 import { Confirm, Empty, ErrorNote, Loading, NotConfirmed, PageHeader, useToast } from "../components/ui";
-import { buildTimeline, Category, inFilter, Item, jobTitle, useRunningJobs, type AuditRow, type JobRow, type NoteRow } from "../lib/activity";
-import { must, runWorkflow, stopAndClear, useSetting, useTimezone } from "../lib/api";
+import { buildTimeline, JOB_LABEL, Category, inFilter, Item, jobTitle, useRunningJobs, type AuditRow, type JobRow, type NoteRow } from "../lib/activity";
+import { missingFunction, must, runWorkflow, stopAndClear, useSetting, useTimezone } from "../lib/api";
 import { useCleared, visibleAfterClear } from "../lib/clear";
 import { fixFor } from "../lib/labels";
 import { supabase } from "../lib/supabase";
@@ -33,25 +34,34 @@ function startOfToday(tz: string): string {
 export default function Activity() {
   const tz = useTimezone();
   const [filter, setFilter] = useState<Category | "all" | "errors">("all");
+  const [page,setPage]=useState(0);
   const cleared = useCleared();
   const running = useRunningJobs();
   const feed = useQuery({
-    queryKey: ["activity-feed"],
+    queryKey: ["activity-feed",page],
     refetchInterval: 15_000,
     queryFn: async () => {
+      const unified=await supabase.rpc("studio_activity",{p_offset:page*150,p_limit:150});
+      if(!unified.error && Array.isArray(unified.data)) {
+        const rows=unified.data as {kind:string;record:any}[];
+        return buildTimeline(rows.filter(x=>x.kind==="job").map(x=>x.record),rows.filter(x=>x.kind==="note").map(x=>x.record),rows.filter(x=>x.kind==="audit").map(x=>x.record));
+      }
+      if(unified.error && !missingFunction(unified.error))throw new Error(unified.error.message);
+      if(page>0)throw new Error("Older activity is unavailable until the studio is updated. Return to the previous page for recent events.");
+
       const [jobs, notes, audits] = await Promise.all([
-        must(supabase.from("generation_jobs").select("id, job_type, status, progress, input, error_message, requested_by, created_at, started_at, finished_at, updated_at, content_projects(title)")
-          .in("status", ["completed", "failed"]).order("updated_at", { ascending: false }).limit(120)),
+        must(supabase.from("generation_jobs").select("id, project_id, job_type, status, progress, input, error_message, requested_by, created_at, started_at, finished_at, updated_at, content_projects(title)")
+          .in("job_type",Object.keys(JOB_LABEL)).in("status", ["completed", "failed", "cancelled", "blocked", "needs_review"]).order("updated_at", { ascending: false }).limit(150)),
         must(supabase.from("notifications").select("id, kind, title, body, link, created_at, error").order("created_at", { ascending: false }).limit(150)),
         must(supabase.from("audit_logs").select("id, actor, action, details, created_at")
           .in("action", ["auto_review_post_on", "auto_review_post_off", "posting_schedule_changed", "setup_value_saved", "setup_value_removed", "paused", "resumed", "telegram_linked"])
-          .order("created_at", { ascending: false }).limit(60)),
+          .order("created_at", { ascending: false }).limit(150)),
       ]);
       return buildTimeline(jobs as unknown as JobRow[], notes as NoteRow[], audits as AuditRow[]);
     },
   });
   const today = useToday(tz);
-  const items = useMemo(() => visibleAfterClear(feed.data ?? [], cleared.map, "activity", (i) => i.at), [feed.data, cleared.map]);
+  const items = useMemo(() => (feed.data ?? []).slice(0,150).filter((i) => i.error || i.deliveryError || visibleAfterClear([i], cleared.map, "activity", (x) => x.at).length > 0), [feed.data, cleared.map]);
   const shown = items.filter((i) => inFilter(i, filter));
 
   return (
@@ -62,6 +72,7 @@ export default function Activity() {
           body={<>This hides the {items.length} event{items.length === 1 ? "" : "s"} listed now. Work in progress stays, new events keep appearing, and the audit log is never cleared. You can undo this.</>}
           onClear={() => cleared.clear("activity")} />} />
 
+      <JobDetail />
       <QuickActions />
       <HowItWorks />
 
@@ -112,6 +123,7 @@ export default function Activity() {
           </ol>
         )}
       </section>
+      <nav aria-label="Activity pages" className="mt-3 flex items-center gap-3"><button className="btn-quiet" disabled={!page || feed.isFetching} onClick={()=>setPage((p)=>p-1)}>Newer activity</button><span className="text-sm">Page {page+1}</span><button className="btn-quiet" disabled={feed.isFetching || (feed.data?.length??0)<150} onClick={()=>setPage((p)=>p+1)}>Older activity</button></nav>
       <TechnicalDetails />
     </>
   );
@@ -129,7 +141,7 @@ function StopAndClear({ running }: { running: number }) {
       if (!r.stopped) return toast("Nothing was running, so nothing was cleared.");
       const parts = [[r.packages, "package"], [r.ideas, "idea"], [r.sources, "source"], [r.files_removed, "file"]]
         .filter(([n]) => Number(n) > 0).map(([n, w]) => `${n} ${w}${n === 1 ? "" : "s"}`);
-      toast(`Stopped${parts.length ? ` and cleared ${parts.join(", ")}` : ""}. The studio is idle.`, "good");
+      toast(`Stop requested${parts.length ? ` and cleared ${parts.join(", ")}` : ""}. Work stops at its next checkpoint; requests already in flight may finish first.`, "good");
     },
     onError: (e) => toast((e as Error).message, "bad"),
   });
@@ -205,12 +217,13 @@ function RunningRow({ job, tz }: { job: JobRow; tz: string }) {
   const p = job.progress;
   const pct = p?.step && p?.total ? Math.round((p.step / p.total) * 100) : null;
   return (
-    <li className="rounded-xl border border-line bg-surface px-4 py-3">
+    <li id={`job-${job.id}`} className="scroll-mt-6 rounded-xl border border-line bg-surface px-4 py-3">
       <div className="flex items-center gap-2">
         <LoaderCircle size={16} className={job.status === "running" ? "animate-spin text-pixel" : "text-muted"} aria-hidden />
         <span className="text-sm font-medium">{jobTitle(job)}</span>
         <span className="ml-auto text-xs text-muted">{job.status === "queued" ? `Waiting to start · asked ${when(job.created_at, tz)}` : `Started ${when(job.started_at ?? job.updated_at, tz)}`}</span>
       </div>
+      <JobActions job={job} />
       {job.status === "running" && (
         <>
           <p className="mt-1 text-sm text-muted">{p?.label ?? "Working…"}</p>
@@ -229,17 +242,25 @@ function RunningRow({ job, tz }: { job: JobRow; tz: string }) {
 function TimelineRow({ item, tz }: { item: Item; tz: string }) {
   const Icon = item.tone === "bad" ? CircleAlert : item.tone === "good" ? CircleCheck : Info;
   const fix = item.error ? fixFor(`${item.title} ${item.detail ?? ""}`) : null;
-  const internal = item.link && item.link.includes("/review/") ? `/content/${item.link.split("/review/")[1]}` : null;
+  const internal = (() => {
+    if (!item.link) return null;
+    try {
+      const u = new URL(item.link, window.location.origin);
+      const path = u.pathname + u.search + u.hash;
+      return path.startsWith("/review/") ? path.replace("/review/", "/content/") : path;
+    } catch { return null; }
+  })();
   return (
     <li className="flex gap-3 px-4 py-3">
       <Icon size={17} className={`mt-0.5 shrink-0 ${item.tone === "bad" ? "text-alert" : item.tone === "good" ? "text-penny" : "text-muted"}`} aria-hidden />
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium">{item.title}</p>
+        {item.deliveryError && <p className="mt-1 text-xs text-alert">Telegram alert was not confirmed: {item.deliveryError} <Link className="underline" to="/settings/notifications">Check notifications</Link></p>}
         {item.detail && <p className="mt-0.5 line-clamp-3 text-sm text-muted">{item.detail}</p>}
         <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-muted">
           <time dateTime={item.at}>{when(item.at, tz)}</time>
           {fix && <Link to={fix.to} className="inline-flex items-center gap-1 rounded-md bg-alert-soft px-2 py-0.5 font-medium text-alert hover:underline">{fix.label}<ArrowRight size={12} aria-hidden /></Link>}
-          {!fix && internal && <Link to={internal} className="text-pixel hover:underline">Open</Link>}
+          {internal && <Link to={internal} className="text-pixel hover:underline">Open</Link>}
         </div>
       </div>
     </li>
@@ -315,4 +336,25 @@ function HowItWorks() {
       </ol>
     </section>
   );
+}
+
+/** Exact owner request, including work that completed before the owner opened its link. */
+function JobDetail() {
+  const [params] = useSearchParams();
+  const id = params.get("job");
+  const q = useQuery({
+    queryKey: ["job-detail", id], enabled: Boolean(id), refetchInterval: 5000,
+    queryFn: async () => await must(supabase.from("generation_jobs").select("id,project_id,job_type,status,progress,input,error_message,requested_by,created_at,started_at,finished_at,updated_at,content_projects(title)").eq("id", id!).maybeSingle()) as unknown as JobRow | null,
+  });
+  if (!id) return null;
+  if (!q.isSuccess) return <NotConfirmed q={q} what="this task" />;
+  if (!q.data) return <p role="status" className="mb-4">This task no longer exists. Its saved project may still be in <Link className="underline" to="/content">Content</Link>.</p>;
+  const job = q.data;
+  const result = job.job_type.includes("research") ? "/content/ideas?source=research" : job.job_type.includes("idea") ? "/content/ideas" : "/content";
+  return <section id="job-detail" className="mb-6 rounded-xl border border-line p-4" aria-label="Selected task">
+    <h2 className="section-title">{jobTitle(job)}</h2>
+    <p className="mt-2 text-sm">Status: {job.status} {job.progress?.label ? `· ${job.progress.label}` : ""}</p>
+    {job.error_message && <p className="mt-2 text-sm text-alert">{job.error_message.slice(0,300)}</p>}
+    {job.status === "completed" ? <Link className="mt-2 inline-block text-pixel underline" to={job.project_id ? `/content/${job.project_id}` : result}>Open results</Link> : <JobActions job={job} />}
+  </section>;
 }

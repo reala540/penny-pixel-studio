@@ -133,6 +133,8 @@ def cmd_maintain(a):
 
     with _conn() as conn:
         _recheck_paused(conn)
+        from . import notify
+        notify.retry_pending(conn)
         out = {"cleanup": maintenance.cleanup(conn, default_storage()), "expired": maintenance.expire_stale(conn)}
         if config.runtime().token_key:
             out["tokens"] = oauth.check_health(conn)

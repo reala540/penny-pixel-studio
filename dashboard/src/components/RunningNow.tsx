@@ -1,6 +1,6 @@
 import { LoaderCircle } from "lucide-react";
 import { Link } from "react-router-dom";
-import { jobTitle, useRunningJobs } from "../lib/activity";
+import { jobDestination, jobTitle, useRunningJobs } from "../lib/activity";
 
 /** Always-visible "is the studio working?" line in the menu. */
 export default function RunningNow() {
@@ -14,7 +14,7 @@ export default function RunningNow() {
     ? `${first.progress?.label ?? jobTitle(first)}${running.length > 1 ? ` (+${running.length - 1} more)` : ""}`
     : `${jobs.length} job${jobs.length === 1 ? "" : "s"} waiting to start`;
   return (
-    <Link to="/activity" aria-live="polite" title={text}
+    <Link to={first ? jobDestination(first) : "/activity"} aria-live="polite" title={text}
       className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium ${running.length ? "bg-pixel-soft text-pixel" : q.isError ? "bg-alert-soft text-alert" : "bg-sunken text-muted"}`}>
       <LoaderCircle size={14} className={running.length ? "animate-spin" : ""} aria-hidden />
       <span className="truncate">{running.length ? "Working: " : ""}{text}</span>

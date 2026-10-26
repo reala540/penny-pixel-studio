@@ -55,6 +55,12 @@ export default function Help() {
     <>
       <PageHeader title="Help" intro="How the studio works and what to do. The complete guide is GUIDE.md in your GitHub repository."
         actions={<><Link to="/settings/setup" className="btn-primary">Getting started</Link><button className="btn-quiet" onClick={replayTour}>Replay the tour</button></>} />
+      <section className="my-6 rounded-xl border border-line p-4" aria-label="Recover your work">
+        <h2 className="section-title">Continue or stop unfinished work</h2>
+        <p className="mt-2 text-sm">Home and Create show your unfinished drafts. Continue opens saved work without generating anything. Creation drafts keep a device copy and sync to your owner account when cloud recovery is available; a banner explains sync problems.</p>
+        <p className="mt-2 text-sm">View progress opens the related project or task. Cancel work stops only that request at its next checkpoint and keeps completed work. Clear draft removes only a bookmark. Global Stop &amp; clear affects all active content work and is a separate destructive action.</p>
+        <p className="mt-2 text-sm">Unsaved script, post, voice, budget and schedule edits are recovered on the device where you edited them. Review conflict warnings before saving. Telegram delivery problems are shown in Activity; missing Telegram does not prevent creation.</p>
+      </section>
       <div className="mb-10 grid max-w-5xl gap-4 lg:grid-cols-3">
         {GUIDE.map((g) => (
           <section key={g.title} aria-labelledby={`g-${g.title}`} className="rounded-xl border border-line bg-surface p-5">

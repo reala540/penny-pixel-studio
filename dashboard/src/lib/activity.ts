@@ -7,6 +7,7 @@ export type Category = "ideas" | "research" | "production" | "review" | "posting
 export type Tone = "good" | "bad" | "info";
 
 export interface JobRow {
+  project_id?: string | null; cancel_requested_at?: string | null;
   id: string; job_type: string; status: string; progress: { label?: string; step?: number | null; total?: number | null } | null;
   input: Record<string, unknown> | null; error_message: string | null; requested_by: string;
   created_at: string; started_at: string | null; finished_at: string | null; updated_at: string;
@@ -16,7 +17,7 @@ export interface NoteRow { id: string; kind: string; title: string; body: string
 export interface AuditRow { id: number; actor: string; action: string; details: Record<string, unknown> | null; created_at: string }
 
 export interface Item {
-  id: string; at: string; category: Category; tone: Tone; title: string; detail?: string; link?: string | null; error?: boolean;
+  id: string; at: string; category: Category; tone: Tone; title: string; detail?: string; link?: string | null; error?: boolean; deliveryError?: string;
 }
 
 /** The work a person thinks of as "a job" (not the internal stages inside one). */
@@ -72,13 +73,14 @@ export function jobTitle(j: JobRow): string {
 export function buildTimeline(jobs: JobRow[], notes: NoteRow[], audits: AuditRow[]): Item[] {
   const items: Item[] = [];
   for (const j of jobs) {
-    if (!isTopJob(j) || !["completed", "failed"].includes(j.status)) continue;  // cancelled ones were your choice: no noise
-    const failed = j.status === "failed";
+    if (!isTopJob(j) || !["completed", "failed", "cancelled", "blocked", "needs_review"].includes(j.status)) continue;  // cancelled ones were your choice: no noise
+    const failed = ["failed", "blocked", "needs_review"].includes(j.status);
     items.push({
       id: `job:${j.id}`, at: j.finished_at ?? j.updated_at, category: JOB_CATEGORY[j.job_type] ?? "production",
       tone: failed ? "bad" : "info", error: failed,
-      title: `${jobTitle(j)}: ${failed ? "failed" : "finished"}`,
+      title: `${jobTitle(j)}: ${j.status === "cancelled" ? "cancelled" : failed ? "needs attention" : "finished"}`,
       detail: failed ? (j.error_message ?? "").slice(0, 300) : undefined,
+      link: jobDestination(j),
     });
   }
   for (const n of notes) {
@@ -87,6 +89,7 @@ export function buildTimeline(jobs: JobRow[], notes: NoteRow[], audits: AuditRow
       id: `note:${n.id}`, at: n.created_at, category: NOTE_CATEGORY[n.kind] ?? "production",
       tone: bad ? "bad" : n.kind === "published" || n.kind === "auto_approved" ? "good" : "info", error: bad,
       title: n.title, detail: n.body ?? undefined, link: n.link,
+      deliveryError: n.error && n.error !== "telegram not configured" ? n.error : undefined,
     });
   }
   for (const a of audits) {
@@ -109,7 +112,21 @@ export function useRunningJobs() {
     queryKey: ["running-jobs"],
     refetchInterval: 10_000,
     queryFn: async () => (await must(supabase.from("generation_jobs")
-      .select("id, job_type, status, progress, input, error_message, requested_by, created_at, started_at, finished_at, updated_at, content_projects(title)")
+      .select("*, content_projects(title)")
       .in("status", ["running", "queued"]).in("job_type", TOP).order("created_at").limit(20))) as unknown as JobRow[],
   });
+}
+
+/** One routing rule for status cards and the sidebar. Opening a destination never starts work. */
+export function jobDestination(j: Pick<JobRow, "id" | "job_type" | "input" | "project_id" | "status">): string {
+  if (j.job_type === "check_providers") return `/settings/ai?job=${encodeURIComponent(j.id)}#key-check`;
+  const idea = j.input?.generated_idea_id ?? j.input?.content_idea_id;
+  if (j.job_type === "produce_idea" && typeof idea === "string") {
+    const p = new URLSearchParams({ step: "progress", kind: j.input?.generated_idea_id ? "generated" : "research", id: idea });
+    if (j.input?.channel === "ai" || j.input?.channel === "money") p.set("channel", j.input.channel);
+    return `/create?${p}`;
+  }
+  const pid = j.project_id ?? j.input?.project_id;
+  if (typeof pid === "string") return `/content/${encodeURIComponent(pid)}`;
+  return `/activity?job=${encodeURIComponent(j.id)}#job-detail`;
 }

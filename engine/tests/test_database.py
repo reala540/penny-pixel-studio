@@ -135,7 +135,9 @@ def test_control_room_activity_indexes_exist(conn):
 def test_stale_running_jobs_resume(synced):
     c = synced
     j = jobs.ensure_job(c, "render", "stale")
-    db.run(c, "update generation_jobs set status='running', started_at=now() - interval '5 hours' where id=%s", (j["id"],))
+    c.execute("set session_replication_role=replica")
+    db.run(c, "update generation_jobs set status='running', started_at=now() - interval '7 hours', updated_at=now() - interval '7 hours' where id=%s", (j["id"],))
+    c.execute("set session_replication_role=origin")
     assert jobs.reset_stale_running(c) == 1
     assert db.one(c, "select status from generation_jobs where id=%s", (j["id"],))["status"] == "retrying"
 

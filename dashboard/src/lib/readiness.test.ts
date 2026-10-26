@@ -69,3 +69,8 @@ describe("readiness never reads a failed load as an answer", () => {
     expect(r.warnings.map((w) => w.text)).toEqual(["Couldn't load the AI services and models."]);
   });
 });
+
+it("does not block creation based on an old failed key check", () => {
+  const r=readiness({worker:true,core:{core:{database:{ok:true,detail:""},github:{ok:true,detail:""}}},check:{checked_at:"2020-01-01T00:00:00Z",results:[{provider:"groq",status:"failed"}]}});
+  expect(r.stale).toBe(true);expect(r.canCreate).toBe(true);expect(r.warnings.length).toBeGreaterThan(0);
+});

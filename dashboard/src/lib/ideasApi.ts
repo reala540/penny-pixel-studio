@@ -26,7 +26,7 @@ export function useIdeaRuns(limit = 10, poll = false) {
   });
 }
 
-export function useIdeas(filter: { runId?: string; status?: IdeaStatus | "all"; limit?: number }, poll = false) {
+export function useIdeas(filter: { runId?: string; status?: IdeaStatus | "all"; limit?: number; page?: number; search?: string; sort?: "score" | "newest" }, poll = false) {
   return useQuery({
     queryKey: ["ideas", filter],
     enabled: filter.runId !== "",
@@ -34,9 +34,12 @@ export function useIdeas(filter: { runId?: string; status?: IdeaStatus | "all"; 
     queryFn: async () => {
       let q = supabase.from("generated_ideas").select(IDEA_SELECT);
       if (filter.runId) q = q.eq("run_id", filter.runId).order("rank");
-      else q = q.order("created_at", { ascending: false }).order("rank");
+      else q = q.order(filter.sort === "score" ? "total" : "created_at", { ascending: false }).order("rank");
       if (filter.status && filter.status !== "all") q = q.eq("status", filter.status);
-      return (await must(q.limit(filter.limit ?? 200))) as GeneratedIdea[];
+      const needle=filter.search?.replace(/[,%()]/g," ").trim();
+      if(needle)q=q.or(`title.ilike.%${needle}%,summary.ilike.%${needle}%,category.ilike.%${needle}%`);
+      const size=filter.limit??200;
+      return (await must(q.range((filter.page??0)*size,(filter.page??0)*size+size-1))) as GeneratedIdea[];
     },
   });
 }

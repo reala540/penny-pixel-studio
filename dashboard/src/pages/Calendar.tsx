@@ -1,9 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { DragEvent, useState } from "react";
+import { DragEvent, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import ClearButton from "../components/ClearButton";
-import { ErrorNote, HostMark, Loading, NotConfirmed, PageHeader, StatusBadge, useToast } from "../components/ui";
-import { must, queueJob, useAccounts, useTimezone } from "../lib/api";
+import { Confirm, ErrorNote, HostMark, Loading, NotConfirmed, PageHeader, StatusBadge, useToast } from "../components/ui";
+import { missingFunction, must, queueJob, useAccounts, useSetting, useTimezone } from "../lib/api";
 import { dayLabel, fmtDateTime, fmtTime, KIND_NAME, localDay, moveToDay, weekDays } from "../lib/format";
 import { supabase } from "../lib/supabase";
 import type { Post } from "../lib/types";
@@ -13,6 +13,7 @@ const MOVABLE = ["pending_approval", "scheduled"];
 
 export default function Calendar() {
   const tz = useTimezone();
+  const timezone = useSetting<string>("timezone", "Africa/Nairobi");
   const qc = useQueryClient();
   const toast = useToast();
   const [params, setParams] = useSearchParams();
@@ -30,13 +31,29 @@ export default function Calendar() {
     },
   });
   const move = useMutation({
-    mutationFn: async ({ id, when }: { id: string; when: string }) => must(supabase.from("scheduled_posts").update({ scheduled_at: when }).eq("id", id)),
+    mutationFn: async ({ id, when }: { id: string; when: string }) => {
+      const result=await supabase.rpc("reschedule_post",{p_post_id:id,p_when:when});
+      if(!result.error)return;
+      if(!missingFunction(result.error))throw new Error(result.error.message);
+      return must(supabase.from("scheduled_posts").update({scheduled_at:when}).eq("id",id).in("status",MOVABLE).select("id").single());
+    },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["posts"] }); toast("Rescheduled"); },
     onError: (e) => toast((e as Error).message, "bad"),
   });
 
   const visible = (posts.data ?? []).filter((p) => account === "all" || p.social_account_id === account);
-  const selected = (posts.data ?? []).find((p) => p.id === params.get("post"));
+  const selectedId = params.get("post");
+  const linkedPost = useQuery({
+    queryKey: ["posts", "linked", selectedId], enabled: Boolean(selectedId),
+    queryFn: async () => (await must(supabase.from("scheduled_posts").select(POST_SELECT).eq("id", selectedId!).maybeSingle())) as unknown as Post | null,
+  });
+  const selected = linkedPost.data ?? (posts.data ?? []).find((p) => p.id === selectedId);
+  useEffect(() => {
+    if (!linkedPost.data) return;
+    const target = weekDays(new Date(linkedPost.data.scheduled_at), tz)[0];
+    const current = weekDays(new Date(), tz)[0];
+    setOffset(Math.round((Date.parse(target) - Date.parse(current)) / (7 * 86_400_000)));
+  }, [selectedId, linkedPost.data?.scheduled_at, tz]);
   const today = localDay(new Date(), tz);
 
   function onDrop(e: DragEvent, day: string) {
@@ -51,8 +68,11 @@ export default function Calendar() {
     move.mutate({ id, when });
   }
 
+  if (!timezone.isSuccess) return <NotConfirmed q={timezone} what="the calendar timezone" />;
   return (
     <>
+      {selectedId && linkedPost.isError && <ErrorNote error={linkedPost.error} onRetry={() => linkedPost.refetch()} />}
+      {selectedId && linkedPost.isSuccess && !linkedPost.data && <p role="status">This post no longer exists. Choose a post from the calendar.</p>}
       <PageHeader title="Calendar" intro="Drag a post to another day, or open it to change the exact time. Dashed posts are waiting for your approval." />
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <WeekPicker offset={offset} setOffset={setOffset} />
@@ -120,7 +140,9 @@ function fromLocalInput(value: string, tz: string): string {
   // Find the UTC instant whose local time in `tz` equals `value`.
   const guess = Date.parse(`${value}:00Z`);
   const shown = Date.parse(`${toLocalInput(new Date(guess).toISOString(), tz)}:00Z`);
-  return new Date(guess - (shown - guess)).toISOString();
+  const result=new Date(guess - (shown - guess)).toISOString();
+  if(toLocalInput(result,tz)!==value)throw new Error("This local time does not exist because the clocks change. Choose another time.");
+  return result;
 }
 
 function PostPanel({ post, tz, onMove }: { post: Post; tz: string; onMove: (when: string) => void }) {
@@ -128,6 +150,7 @@ function PostPanel({ post, tz, onMove }: { post: Post; tz: string; onMove: (when
   const toast = useToast();
   const [when, setWhen] = useState(toLocalInput(post.scheduled_at, tz));
   const movable = MOVABLE.includes(post.status);
+  const [askRetry, setAskRetry] = useState(false);
   const retry = useMutation({
     mutationFn: async () => must(supabase.from("scheduled_posts").update({ status: "scheduled" }).eq("id", post.id)),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["posts"] }); toast("Will try again at the next check"); },
@@ -145,9 +168,9 @@ function PostPanel({ post, tz, onMove }: { post: Post; tz: string; onMove: (when
       {post.last_error && <p className="rounded-lg bg-alert-soft px-3 py-2 text-sm text-alert">{post.last_error}</p>}
       {post.published_posts?.url && <a className="btn-quiet w-full" href={post.published_posts.url} target="_blank" rel="noreferrer">Open the post</a>}
       {movable && (
-        <form className="space-y-2" onSubmit={(e) => { e.preventDefault(); onMove(fromLocalInput(when, tz)); }}>
+        <form className="space-y-2" onSubmit={(e) => { e.preventDefault(); try { onMove(fromLocalInput(when, tz)); } catch { toast("Choose a valid date and time. Times skipped by a clock change cannot be used.","bad"); } }}>
           <label className="block text-sm font-medium" htmlFor="when">New time ({tz})</label>
-          <input id="when" type="datetime-local" className="field" value={when} onChange={(e) => setWhen(e.target.value)} />
+          <input id="when" type="datetime-local" required className="field" value={when} onChange={(e) => setWhen(e.target.value)} />
           <button className="btn-quiet w-full">Change time</button>
         </form>
       )}
@@ -160,7 +183,7 @@ function PostPanel({ post, tz, onMove }: { post: Post; tz: string; onMove: (when
       {["failed", "needs_review"].includes(post.status) && (
         <div className="space-y-2 text-sm">
           {post.status === "needs_review" && <p className="text-muted">Check the platform first: if the post is already there, don't retry. Use "Post it yourself" in Home to record it.</p>}
-          <button className="btn-quiet w-full" onClick={() => retry.mutate()} disabled={retry.isPending}>Try again</button>
+          <button className="btn-quiet w-full" onClick={() => setAskRetry(true)} disabled={retry.isPending}>Try again</button>
         </div>
       )}
       {movable && (
@@ -177,6 +200,7 @@ function PostPanel({ post, tz, onMove }: { post: Post; tz: string; onMove: (when
             };
           }} />
       )}
+      <Confirm open={askRetry} title="Retry this post?" body={post.status === "needs_review" ? "First confirm on the platform that this post was NOT published. Retrying clears the uncertainty hold and may send it again." : "This retries only this post through the normal publishing checks."} confirmLabel="I checked — retry" onCancel={() => setAskRetry(false)} onConfirm={() => {setAskRetry(false); retry.mutate();}} />
       <Link to={`/content/${post.content_variants?.project_id}`} className="block text-sm font-medium text-pixel underline-offset-2 hover:underline">Open the package</Link>
     </div>
   );

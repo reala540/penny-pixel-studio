@@ -1,5 +1,6 @@
 // Can the studio make content right now? Only what creation really needs counts: the database and the Worker
 // (it starts every job) plus working AI services. Telegram and social accounts are for alerts and publishing.
+import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { must, queueJob, useSetting } from "./api";
 import { callWorker, supabase, workerUrl } from "./supabase";
@@ -46,7 +47,7 @@ export function readiness(input: { worker: boolean; core?: Core | null; coreErro
   const stale = age > STALE_HOURS;
   if (input.checkError) warnings.push({ text: "Couldn't load the last AI key check.", to: "/settings/ai" });
   else if (!checkedAt) warnings.push({ text: "The AI keys haven't been checked yet.", to: "/settings/ai" });
-  else if (okProviders.length === 0) blockers.push({ text: "No AI service passed the last key check.", to: "/settings/ai" });
+  else if (okProviders.length === 0 && !stale) blockers.push({ text: "No AI service passed the last key check.", to: "/settings/ai" });
   if (checkedAt && stale) warnings.push({ text: `The last key check is ${Math.round(age)} hours old: results may have changed.`, to: "/settings/ai" });
   const enabled = new Set((input.providers ?? []).filter((p) => p.enabled).map((p) => p.name));
   const passing = new Set(okProviders.filter((p) => enabled.has(p)));
@@ -94,6 +95,15 @@ export function useKeyCheck() {
     mutationFn: () => queueJob("check_providers"),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["key-check-job"] }); },
   });
+  const previous = useRef(false);
+  useEffect(() => {
+    if (previous.current && active.isSuccess && !active.data) {
+      qc.invalidateQueries({ queryKey: ["setting", "provider_check"] });
+      qc.invalidateQueries({ queryKey: ["readiness-models"] });
+      qc.invalidateQueries({ queryKey: ["api-manager"] });
+    }
+    previous.current = Boolean(active.data);
+  }, [active.data, active.isSuccess, qc]);
   const wasActive = Boolean(active.data);
   return { running: wasActive, run, refresh: () => qc.invalidateQueries({ queryKey: ["setting", "provider_check"] }) };
 }

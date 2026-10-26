@@ -1,3 +1,4 @@
+import JobActions from "../components/JobActions";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Pause, Play, PlusCircle } from "lucide-react";
 import { useState } from "react";
@@ -141,7 +142,7 @@ function NeedsYou({ readiness }: { readiness: ReturnType<typeof useReadiness> })
   if (!readiness.checkError && readiness.uncoveredRoles.length && readiness.checkedAt) {
     needs.push({ key: "roles", tone: "warn", text: `No AI service that passed the last check does: ${readiness.uncoveredRoles.join(", ")}. Packages may stop at that step.`, action: <Link className="btn-quiet" to="/settings/ai">Check AI services</Link> });
   }
-  for (const j of visibleAfterClear(data.data?.jobs ?? [], cleared.map, "rundown_problems", (x) => x.updated_at)) {
+  for (const j of data.data?.jobs ?? []) {
     const fix = fixFor(j.error_message);
     needs.push({ key: j.id, tone: "bad", text: `${jobTitle(j)} didn't work: ${String(j.error_message ?? "").slice(0, 140)}`,
       action: j.project_id ? <Link className="btn-quiet" to={projectPath(j.project_id)}>Open</Link>
@@ -168,10 +169,10 @@ function NeedsYou({ readiness }: { readiness: ReturnType<typeof useReadiness> })
           {needs.length === 0 ? (data.isError ? null : <p className="rounded-xl border border-dashed border-line px-4 py-3 text-sm text-muted">Nothing needs you right now.</p>) : (
             <ul className="divide-y divide-line rounded-xl border border-line bg-surface">
               {needs.map((n) => (
-                <li key={n.key} className="flex flex-wrap items-center gap-3 px-4 py-3">
+                <li key={n.key} className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3 px-4 py-3 sm:flex sm:items-center">
                   <span className={`h-2 w-2 shrink-0 rounded-full ${n.tone === "bad" ? "bg-alert" : n.tone === "warn" ? "bg-gold" : "bg-pixel"}`} aria-hidden />
                   <span className="min-w-0 flex-1 text-sm">{n.text}</span>
-                  {n.action}
+                  <div className="col-start-2 sm:ml-auto">{n.action}</div>
                 </li>
               ))}
             </ul>
@@ -198,7 +199,7 @@ function BeingMade() {
         <ul className="space-y-2">
           {jobs.slice(0, 4).map((j) => (
             <li key={j.id} className="rounded-xl border border-line bg-surface px-4 py-3 text-sm">
-              <p className="font-medium">{jobTitle(j)}</p>
+              <p className="font-medium">{jobTitle(j)}</p><JobActions job={j} />
               <p className="text-muted">{j.status === "queued" ? "Waiting to start (within 15 minutes)" : j.progress?.label ?? "Working…"}</p>
             </li>
           ))}

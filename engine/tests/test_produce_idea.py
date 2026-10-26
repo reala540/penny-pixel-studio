@@ -232,3 +232,22 @@ def test_test_again_reruns_the_key_check(synced, monkeypatch):
     maintenance.process_owner_jobs(c, router=None, storage=None)
     assert seen["only"] == "ollama"
     assert db.one(c, "select output from generation_jobs where idempotency_key='owner:check:1'")["output"] == {"ok": 1, "checked": 2}
+
+
+def test_cancelled_stage_resumes_without_remaking_completed_script(synced,monkeypatch,silent_tts):
+    from studio import jobs
+    c=synced
+    router,storage,ideas=setup_ideas(c,monkeypatch,n=1)
+    real=pipeline.make_package
+    calls={'n':0}
+    def cancelled_once(*args,**kwargs):
+        calls['n']+=1
+        if calls['n']==1:raise jobs.JobCancelled('Owner cancelled the package stage')
+        return real(*args,**kwargs)
+    monkeypatch.setattr(pipeline,'make_package',cancelled_once)
+    with pytest.raises(jobs.JobCancelled):produce.produce_idea(c,router,storage,content_idea_id=ideas[0]['id'])
+    assert db.one(c,'select count(*) n from script_versions')['n']==1
+    out=produce.produce_idea(c,router,storage,content_idea_id=ideas[0]['id'])
+    assert out['status']=='ready_for_review'
+    assert db.one(c,"select count(*) n from content_projects where parent_project_id is null")['n']==1
+    assert db.one(c,"select attempts from generation_jobs where job_type='script'")['attempts']==1

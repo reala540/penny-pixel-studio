@@ -1,7 +1,7 @@
 import { Sparkles } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import ResearchIdeaCard from "../components/ResearchIdeaCard";
 import { isCleared } from "../lib/clear";
@@ -33,8 +33,10 @@ export default function Ideas() {
   const [tab, setTab] = useState<IdeaStatus | "all">("all");
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<"score" | "newest">("newest");
+  const [page,setPage]=useState(0);
+  useEffect(()=>setPage(0),[tab,q,sort,source]);
   const job = useActiveIdeaJob();
-  const ideas = useIdeas({ status: tab, limit: 300 }, Boolean(job.data));
+  const ideas = useIdeas({ status: tab, limit: 50, page, search: q, sort }, Boolean(job.data));
   const runs = useIdeaRuns(12, Boolean(job.data));
   const cfg = { ...DEFAULT_IDEA_CONFIG, ...(useSetting<Partial<IdeaGeneratorConfig>>("idea_generator", {}).data ?? {}) };
   const { generate } = useIdeaActions();
@@ -43,10 +45,12 @@ export default function Ideas() {
   const history = visibleAfterClear(runs.data ?? [], cleared.map, "idea_runs", (r) => r.started_at);
   const filtered = tab !== "all" || q.trim() !== "" || sort !== "newest";
   const research = useQuery({
-    queryKey: ["research-ideas", "library", tab],
+    queryKey: ["research-ideas", "library", tab, page, q, sort],
     enabled: source !== "generator",
     queryFn: async () => {
-      let qy = supabase.from("content_ideas").select("*").order("batch_week", { ascending: false }).order("score", { ascending: false }).limit(200);
+      let qy = supabase.from("content_ideas").select("*").order(sort === "score" ? "score" : "batch_week", { ascending: false }).order("id").range(page*50,page*50+49);
+      const needle=q.replace(/[,%()]/g," ").trim();
+      if(needle)qy=qy.or(`title.ilike.%${needle}%,angle.ilike.%${needle}%`);
       const st = RESEARCH_FOR[tab];
       if (st) qy = qy.in("status", st);
       return (await must(qy)) as Idea[];
@@ -87,6 +91,7 @@ export default function Ideas() {
             <Sparkles size={14} aria-hidden />{job.data ? "Generating…" : `Generate ${cfg.count} Ideas`}</button>
         </>} />
 
+      <nav aria-label="Idea pages" className="mb-3 flex items-center gap-3"><button className="btn-quiet" disabled={!page || ideas.isFetching || research.isFetching} onClick={()=>setPage((p)=>p-1)}>Previous</button><span className="text-sm">Page {page+1}</span><button className="btn-quiet" disabled={ideas.isFetching || research.isFetching || ((source === "research" || (ideas.data?.length??0)<50) && (source === "generator" || (research.data?.length??0)<50))} onClick={()=>setPage((p)=>p+1)}>Next</button></nav>
       <nav aria-label="Breadcrumb" className="-mt-3 mb-4 text-sm text-muted"><Link to="/content" className="hover:underline">Content</Link> › <span className="text-ink">Ideas</span></nav>
       <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
         <span className="text-muted">Source</span>

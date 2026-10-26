@@ -15,8 +15,8 @@ The status is updated phase by phase. Findings that are improvements rather than
 
 | Phase | Scope | Branch | Status |
 |---|---|---|---|
-| 1 | Trustworthy state, authentication, errors | `audit/phase-1-state` | done (PR open, not merged) |
-| 2 | Durable drafts and unfinished-project recovery | `audit/phase-2-drafts` | done (PR open, not merged) |
+| 1 | Trustworthy state, authentication, errors | `audit/phase-1-state` | merged; reliability follow-up documented below |
+| 2 | Durable drafts and unfinished-project recovery | `audit/phase-2-drafts` | merged; reliability follow-up documented below |
 | 3 | Direct navigation and discoverable work | `audit/phase-3-navigation` | open |
 | 4 | Settings reliability | `audit/phase-4-settings` | open |
 | 5 | Job lifecycle, recovery and cancellation | `audit/phase-5-jobs` | open |
@@ -145,3 +145,25 @@ unit tests `src/lib/drafts.test.ts` (13). Phase 1 checks and the all-failing swe
 Remaining limitations (Phase 2): drafts live on the device where they were made (a package that was actually started
 is visible everywhere, because that's in the database); private browsing may not keep drafts (the page says
 "Couldn't save on this device"). No migration is needed.
+
+
+## Reliability follow-up after PR #13
+
+See [RELIABILITY_RELEASE.md](RELIABILITY_RELEASE.md) for the current implementation, migration order,
+validation, and live-system limitations. The historical per-phase notes above describe those original PRs,
+not a certification of the production installation.
+
+| Area | Current evidence |
+|---|---|
+| Unknown states and Settings errors | Fixed and browser-tested, including editable-default and timezone failures missed by the first sweep |
+| Draft recovery | Local recovery retained; owner-only cloud revision storage and cross-device browser recovery added |
+| Direct destinations | Home, sidebar, Activity, AI-test detail, and cross-week Calendar links covered |
+| Settings saves | Atomic patches, revision checks, non-secret edit recovery, truthful errors and refreshes |
+| Job lifecycle | Single claim, active enqueue identity, scoped cooperative cancellation, and explicit checkpoint resume tested |
+| Review / scheduling / Undo | Partial bulk outcomes, schedule guards/confirmation, isolated conditional Undo, and pagination implemented |
+| Telegram | Durable bounded delivery retries and acknowledgement checks; local/mock tests only |
+| Acceptance | Unit/build/database and simulated-browser checks completed; live connectors/deployment verification blocked |
+
+The earlier "open" phases are superseded for the implemented items by this evidence. Live deployment,
+production migration, real provider access, OAuth, social publication, and real Telegram delivery are not
+certified by local tests. No production data was changed during this implementation.

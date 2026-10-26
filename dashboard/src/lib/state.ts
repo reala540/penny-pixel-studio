@@ -15,8 +15,8 @@ export function known<T>(q: Pick<UseQueryResult<T>, "isLoading" | "isError" | "e
                          online = typeof navigator === "undefined" || navigator.onLine !== false): Known<T> {
   const last = q.dataUpdatedAt ? q.data : undefined;
   if (q.isError) return online ? { state: "failed", error: friendlyError(q.error), last } : { state: "offline", last };
-  if (q.isSuccess) return { state: "confirmed", value: q.data as T };
   if (!online) return { state: "offline", last };
+  if (q.isSuccess) return { state: "confirmed", value: q.data as T };
   return { state: "loading" };
 }
 
@@ -35,6 +35,7 @@ export function friendlyError(error: unknown): string {
     return "Your sign-in has expired. Sign in again: you'll come back to this page.";
   if (low.includes("row-level security") || low.includes("permission denied"))
     return "Not allowed: only the studio owner can do this.";
+  if (low.includes("single json object") || low.includes("cannot coerce")) return "This item changed elsewhere or is no longer available. Reload it before trying again.";
   if (low.includes("duplicate key") || low.includes("already exists"))
     return "That already exists, so nothing new was added.";
   if (low.includes("timeout") || low.includes("timed out"))

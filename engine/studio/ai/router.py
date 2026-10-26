@@ -297,6 +297,10 @@ class Router:
             self._record(cand, role, False, 0, 0, started, f"network: {type(exc).__name__}", cred)
             self.pool.report(cred, "transient", error=f"network: {type(exc).__name__}")
             return ("transient", None)
+        from .. import jobs
+        conn = getattr(self.usage, "conn", None)
+        if conn is not None:
+            jobs.check_stop(conn)
         code = resp.status_code
         if code == 429:
             ra = str(resp.headers.get("retry-after", ""))

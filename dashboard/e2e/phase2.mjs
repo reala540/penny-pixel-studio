@@ -3,7 +3,7 @@
 import { mkdirSync } from "node:fs";
 import { BASE, newTab, openStudio, seed, startServer, withBrowser } from "./harness.mjs";
 
-const OUT = new URL("./screenshots/phase2/", import.meta.url).pathname;
+const OUT = (process.env.E2E_SCREENSHOT_DIR || new URL("./screenshots/phase2/", import.meta.url).pathname).replace(/\/?$/, "/");
 mkdirSync(OUT, { recursive: true });
 const PHONE = { width: 390, height: 844 };
 const results = [];
@@ -24,7 +24,7 @@ function withIdeas() {
   db.generation_jobs = [];
   return db;
 }
-const jobInserts = (calls) => calls.filter((c) => c.method === "POST" && c.path === "/rest/v1/generation_jobs").length;
+const jobInserts = (calls) => calls.filter((c) => c.method === "POST" && (c.path === "/rest/v1/generation_jobs" || c.path === "/rest/v1/rpc/enqueue_owner_job")).length;
 const drafts = (page) => page.evaluate(() => Object.entries(localStorage).filter(([k]) => k.startsWith("studio-create-drafts:")).map(([k, v]) => [k, JSON.parse(v)]));
 
 const server = await startServer();
@@ -165,7 +165,7 @@ try {
       await phone.page.getByRole("button", { name: "Create package" }).click();  // the other device still offers it
       await expectText(phone.page, "already being made");
       await shot(phone.page, "second-device-already-made-phone");
-      const inserts = jobInserts(calls) + jobInserts(phone.calls);
+      const inserts = db.generation_jobs.filter((j) => j.job_type === "produce_idea").length;
       if (inserts !== 1) throw new Error(`${inserts} jobs queued`);
       await phone.context.close();
       await context.close();

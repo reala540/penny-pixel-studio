@@ -24,20 +24,27 @@ BACKOFF_BASE_SECONDS = 60
 
 # Context-local so concurrent runners never attribute one job's model calls to another.
 active_job_id: ContextVar[object | None] = ContextVar("studio_active_job_id", default=None)
+root_job_id: ContextVar[object | None] = ContextVar("studio_root_job_id", default=None)
 
 
 @contextmanager
 def job_context(job_id):
     token = active_job_id.set(job_id)
+    root_token = root_job_id.set(job_id) if root_job_id.get() is None else None
     try:
         yield
     finally:
         active_job_id.reset(token)
+        if root_token is not None:
+            root_job_id.reset(root_token)
 
 
 class Stopped(BaseException):
     """The owner pressed Stop & clear. A BaseException so no `except Exception` handler turns it into a retry."""
 
+
+class JobCancelled(BaseException):
+    """One owner request was cancelled; unrelated jobs continue."""
 
 _process_started: datetime | None = None
 
@@ -46,6 +53,11 @@ def check_stop(conn) -> None:
     """Raise Stopped if the owner asked to stop after this process started (database clock on both sides).
     The first call only notes the start time."""
     global _process_started
+    root = root_job_id.get()
+    if root is not None:
+        row = db.one(conn, "select status, to_jsonb(j)->>'cancel_requested_at' cancelled from generation_jobs j where id=%s", (root,))
+        if row and (row["cancelled"] or row["status"] == "cancelled"):
+            raise JobCancelled("Cancelled by the owner; completed work was kept")
     try:
         row = db.one(conn, "select now() as now, (select value #>> '{}' from settings where key='stop_requested_at') as stop")
     except Exception:  # the check is best effort: a database hiccup never stops the work
@@ -134,7 +146,7 @@ def run_stage(conn, job_type: str, key: str, fn: Callable[[dict], dict], *, proj
               parent_job_id=None, input: dict | None = None, requested_by: str = "system",
               max_attempts: int = 3) -> StageResult:
     check_stop(conn)
-    job = ensure_job(conn, job_type, key, project_id=project_id, parent_job_id=parent_job_id,
+    job = ensure_job(conn, job_type, key, project_id=project_id, parent_job_id=parent_job_id or root_job_id.get(),
                      input=input, requested_by=requested_by, max_attempts=max_attempts)
     if job["status"] == "completed":
         return StageResult("completed", job["output"], job)
@@ -158,6 +170,10 @@ def run_stage(conn, job_type: str, key: str, fn: Callable[[dict], dict], *, proj
     try:
         with job_context(claimed["id"]):
             output = fn(dict(claimed["input"] or {})) or {}
+            check_stop(conn)
+    except JobCancelled as exc:
+        _finish(conn, claimed, attempt_row["id"], "cancelled", {}, exc, started)
+        raise
     except NeedsReview as exc:
         return _finish(conn, claimed, attempt_row["id"], "needs_review", {}, exc, started)
     except StudioError as exc:
@@ -202,10 +218,10 @@ def due_jobs(conn, limit: int = 20) -> list[dict]:
          order by created_at limit %s""", (limit,))
 
 
-def reset_stale_running(conn, older_than_minutes: int = 120) -> int:
+def reset_stale_running(conn, older_than_minutes: int = 360) -> int:
     """A crashed runner leaves jobs 'running'. Put them back so they can resume."""
     return db.run(conn, """
-        update generation_jobs set status='retrying', next_attempt_at=now(),
+        update generation_jobs set status=case when requested_by='owner' then 'queued' else 'retrying' end, next_attempt_at=now(),
                error_message='Runner stopped unexpectedly; resuming'
-         where status='running' and started_at < now() - make_interval(mins => %s)
+         where status='running' and greatest(started_at,updated_at) < now() - make_interval(mins => %s)
            and job_type not in ('weekly_research', 'weekly_production')""", (older_than_minutes,))

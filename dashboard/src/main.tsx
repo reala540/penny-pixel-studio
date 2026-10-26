@@ -27,7 +27,7 @@ const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 20_000, refetchOnWindowFocus: true, refetchOnReconnect: true, retry: 1 } },
   mutationCache: new MutationCache({
     onError: (error, _v, _c, mutation) => { if (!mutation.options.onError) reportError(error); },
-    onSuccess: () => announceChange(),
+    onSuccess: () => { void queryClient.invalidateQueries(); announceChange(); },
   }),
 });
 

@@ -31,6 +31,7 @@ def _finish(conn, job, status: str, output: dict | None = None, error: str | Non
 
 def process_owner_jobs(conn, router: Router, storage, limit: int = 10, rounds: int = 4) -> list[dict]:
     """Run queued owner jobs. Fixes queued by Auto Review & Post during a round run in the next one (bounded)."""
+    notify.retry_pending(conn)
     produce.apply_brand_overrides(conn)
     jobs.check_stop(conn)  # notes when this run started, so a later Stop & clear stops it
     done: list[dict] = []
@@ -53,28 +54,44 @@ def process_owner_jobs(conn, router: Router, storage, limit: int = 10, rounds: i
 
 def _process_round(conn, router: Router, storage, limit: int) -> list[dict]:
     done = []
-    rows = db.all_(conn, """update generation_jobs set status='running', started_at=now(), attempts=attempts+1
-                            where id in (select id from generation_jobs where status='queued' and requested_by='owner'
-                                         order by created_at limit %s for update skip locked)
-                            returning *""", (limit,))
-    for job in rows:
+    rows = []
+    for _ in range(limit):
+        job = db.one(conn, """update generation_jobs set status='running', started_at=now(), updated_at=now(), attempts=attempts+1
+                            where id = (select id from generation_jobs where status='queued' and requested_by='owner'
+                                        order by created_at limit 1 for update skip locked)
+                            returning *""")
+        if job is None:
+            break
+        rows.append(job)
         try:
             with jobs.job_context(job["id"]):
                 jobs.progress(conn, START_LABEL.get(job["job_type"], "Working on it"))
                 out = _run_owner_job(conn, router, storage, job)
+                jobs.check_stop(conn)
             _finish(conn, job, "completed", out)
             done.append({"id": str(job["id"]), "type": job["job_type"], "status": "completed"})
+        except jobs.JobCancelled:
+            _finish(conn, job, "cancelled")
+            db.run(conn, """update content_projects set status='failed' where
+                      (id=%s or id in (select project_id from generation_jobs where parent_job_id=%s))
+                      and status in ('draft','scripting','verifying','rendering')""", (job['project_id'],job['id']))
+            notify.send(conn, "job_cancelled", "Work cancelled", "Completed work was kept. Other projects are unchanged.",
+                        link=f"{config.runtime().dashboard_url}/activity?job={job['id']}", dedupe_key=f"cancelled:{job['id']}")
+            done.append({"id": str(job["id"]), "type": job["job_type"], "status": "cancelled"})
         except Exception as exc:  # report to owner, never crash the queue
             _finish(conn, job, "failed", error=str(exc)[:1000])
             notify.send(conn, "job_failed", f"Request failed: {job['job_type']}", str(exc)[:300],
-                        link=f"{config.runtime().dashboard_url}/", dedupe_key=f"jobfail:{job['id']}")
+                        link=f"{config.runtime().dashboard_url}/activity?job={job['id']}", dedupe_key=f"jobfail:{job['id']}")
             done.append({"id": str(job["id"]), "type": job["job_type"], "status": "failed", "error": str(exc)[:200]})
     if rows and not any(j["job_type"] == "auto_review" for j in rows):
         # a rewrite or re-render may have made a package ready again: review it if Auto Review & Post is ON
         from .review import auto
 
         try:
-            auto.run(conn, router)
+            completed_ids = [x["id"] for x in done if x["status"] == "completed"]
+            targets = db.all_(conn, "select distinct project_id from generation_jobs where id=any(%s::uuid[]) and project_id is not null", (completed_ids,))
+            if targets:
+                auto.run(conn, router, [x["project_id"] for x in targets])
         except Exception as exc:
             notify.send(conn, "job_failed", "Auto Review couldn't run", str(exc)[:300],
                         link=f"{config.runtime().dashboard_url}/review", dedupe_key=f"autorun:{rows[0]['id']}")
@@ -104,6 +121,8 @@ def _run_owner_job(conn, router: Router, storage, job: dict) -> dict:
             n_models=max(1, min(int(inp.get("models") or 3), 5)),
         )
         if t == "run_research":
+            notify.send(conn, "research_ready", "Your research is ready", "Open the researched ideas and sources.",
+                        link=f"{config.runtime().dashboard_url}/content/ideas?source=research", dedupe_key=f"research:{job['id']}")
             return research_out
         # A mission may create and render a package, but approval remains a separate
         # owner action and no publishing job is started here.
@@ -122,7 +141,10 @@ def _run_owner_job(conn, router: Router, storage, job: dict) -> dict:
 
         only = str(inp.get("provider") or "") or None
         results = run_provider_check(conn, only)
-        return {"ok": sum(1 for r in results if r["status"] == "ok"), "checked": len(results)}
+        output = {"ok": sum(1 for r in results if r["status"] == "ok"), "checked": len(results)}
+        notify.send(conn, "provider_check_ready", "AI service test finished", f"{output['ok']} of {output['checked']} services passed. Open AI services for model details.",
+                    link=f"{config.runtime().dashboard_url}/settings/ai#key-check", dedupe_key=f"keycheck:{job['id']}")
+        return output
     if t == "auto_review":
         from .review import auto
 

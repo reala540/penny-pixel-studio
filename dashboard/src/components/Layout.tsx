@@ -1,3 +1,4 @@
+import DraftSync from "./DraftSync";
 import { Activity, CalendarDays, ChevronDown, CircleHelp, Home, LayoutList, LogOut, Menu, PlusCircle, Settings, X } from "lucide-react";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -156,6 +157,7 @@ export default function Layout() {
           </div>
         </div>
         <StatusBanners />
+        <DraftSync />
         <main id="main" className="mx-auto w-full max-w-[1600px] flex-1 px-4 pb-28 pt-6 sm:px-6 md:pb-12">
           <Suspense fallback={<Loading label="Loading page" />}>
             <Outlet />

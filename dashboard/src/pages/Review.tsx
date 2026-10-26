@@ -1,3 +1,4 @@
+import { useFormDraft } from "../lib/formDraft";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
@@ -133,7 +134,7 @@ export function Detail({ id }: { id: string }) {
       <div className="mt-5 grid gap-6 xl:grid-cols-[minmax(0,1fr)_280px]">
         <div className="overflow-hidden rounded-xl bg-ink">
           {video.data ? (
-            <video key={video.data} src={video.data} controls preload="metadata" className={`mx-auto ${project.format === "short" ? "aspect-[9/16] h-[480px] max-w-full" : "aspect-video w-full"}`} />
+            <><video key={video.data} src={video.data} controls preload="metadata" className={`mx-auto ${project.format === "short" ? "aspect-[9/16] h-[480px] max-w-full" : "aspect-video w-full"}`} /><button className="btn-quiet mt-2" onClick={() => video.refetch()} disabled={video.isFetching}>Refresh preview link</button></>
           ) : (
             <div className="grid aspect-video place-items-center text-sm text-surface/70">{video.isLoading ? "Loading preview…" : "No preview yet"}</div>
           )}
@@ -202,7 +203,7 @@ export function Detail({ id }: { id: string }) {
 function ScriptEditor({ project, version }: { project: Project; version: { id: string; version: number; origin: string; body: ScriptBody } }) {
   const qc = useQueryClient();
   const toast = useToast();
-  const [body, setBody] = useState<ScriptBody>(version.body);
+  const [body, setBody, draft] = useFormDraft<ScriptBody>(`script:${project.id}`, version.body);
   const dirty = JSON.stringify(body) !== JSON.stringify(version.body);
   const total = estSeconds(body.hook) + body.scenes.reduce((a, s) => a + estSeconds(s.narration), 0) + estSeconds(body.cta ?? "");
   const save = useMutation({
@@ -210,7 +211,7 @@ function ScriptEditor({ project, version }: { project: Project; version: { id: s
       const latest = (await must(supabase.from("script_versions").select("version").eq("project_id", project.id).order("version", { ascending: false }).limit(1))) as { version: number }[];
       const words = body.scenes.reduce((a, s) => a + s.narration.split(/\s+/).length, 0);
       const created = (await must(supabase.from("script_versions").insert({ project_id: project.id, version: (latest[0]?.version ?? 0) + 1, origin: "owner_edit", hook: body.hook, body, word_count: words }).select("id").single())) as { id: string };
-      await must(supabase.from("content_projects").update({ current_script_version_id: created.id, status: "rendering" }).eq("id", project.id));
+      await must(supabase.from("content_projects").update({ current_script_version_id: created.id, status: "rendering" }).eq("id", project.id).eq("current_script_version_id", version.id).select("id").single());
       await queueJob("rerender_preview", { projectId: project.id });
     },
     onSuccess: () => { qc.invalidateQueries(); toast("Saved as a new version. The preview is being re-rendered."); },
@@ -218,6 +219,7 @@ function ScriptEditor({ project, version }: { project: Project; version: { id: s
   });
   return (
     <div className="space-y-4">
+      {draft.message && <p role="status" className="text-sm text-muted">{draft.message} <button className="underline" onClick={draft.reset}>Discard edits</button></p>}
       <p className="text-sm text-muted">
         Version {version.version}{version.origin === "owner_edit" ? " (your edit)" : ""} · about {fmtDuration(total)} of narration. Edits save as a new version; earlier versions are kept.
       </p>
@@ -245,7 +247,7 @@ function ScriptEditor({ project, version }: { project: Project; version: { id: s
         </label>
       )}
       <div className="sticky bottom-16 -mx-1 flex gap-2 rounded-xl bg-bg/95 px-1 py-2 backdrop-blur md:bottom-0">
-        <button className="btn-primary" disabled={!dirty || save.isPending} onClick={() => save.mutate()}>Save and re-render</button>
+        <button className="btn-primary" disabled={!dirty || save.isPending || draft.conflict} onClick={() => save.mutate()}>Save and re-render</button>
         {dirty && <button className="btn-quiet" onClick={() => setBody(version.body)}>Undo changes</button>}
       </div>
     </div>
@@ -338,13 +340,21 @@ function Posts({ variants, tz }: { variants: Variant[]; tz: string }) {
 function PostEditor({ v, tz }: { v: Variant; tz: string }) {
   const qc = useQueryClient();
   const toast = useToast();
-  const [title, setTitle] = useState(v.title ?? "");
-  const [body, setBody] = useState(v.body ?? "");
+  const [form, setForm, draft] = useFormDraft(`post:${v.id}`, {title: v.title ?? "", body: v.body ?? ""});
+  const {title, body} = form;
+  const setTitle = (title: string) => setForm((f) => ({...f, title}));
+  const setBody = (body: string) => setForm((f) => ({...f, body}));
   const platform = v.social_accounts?.platform ?? "x";
   const limit = platform === "x" ? 280 : platform === "youtube" ? 5000 : 2200;
   const post = v.scheduled_posts?.[0];
   const save = useMutation({
-    mutationFn: async () => must(supabase.from("content_variants").update({ title: title || null, body }).eq("id", v.id)),
+    mutationFn: async () => {
+      if (draft.conflict) throw new Error("This post changed elsewhere. Reload the current version before saving.");
+      let update=supabase.from("content_variants").update({title:title||null,body}).eq("id",v.id);
+      update=v.body == null ? update.is("body",null) : update.eq("body",v.body);
+      update=v.title == null ? update.is("title",null) : update.eq("title",v.title);
+      return must(update.select("id").single());
+    },
     onSuccess: () => { qc.invalidateQueries(); toast("Post text saved"); },
   });
   const skip = useMutation({
@@ -376,9 +386,10 @@ function PostEditor({ v, tz }: { v: Variant; tz: string }) {
         <textarea className="field mt-1" rows={v.kind === "long_video" ? 6 : 3} value={body} onChange={(e) => setBody(e.target.value)} />
         <span className={`mt-1 block text-right text-xs tabular ${body.length > limit ? "text-alert" : "text-muted"}`}>{body.length} / {limit}</span>
       </label>
+      {draft.message && <p role="status" className="mt-2 text-sm text-muted">{draft.message} <button className="underline" onClick={draft.reset}>Discard edits</button></p>}
       <div className="mt-2 flex gap-2">
-        <button className="btn-quiet" disabled={!dirty || body.length > limit || save.isPending} onClick={() => save.mutate()}>Save text</button>
-        {!["skipped", "rejected", "published"].includes(v.status) && <button className="btn-quiet" onClick={() => skip.mutate()} disabled={skip.isPending}>Skip this post</button>}
+        <button className="btn-quiet" disabled={!dirty || body.length > limit || save.isPending || draft.conflict} onClick={() => save.mutate()}>Save text</button>
+        {!["skipped", "rejected", "published"].includes(v.status) && <button className="btn-quiet" onClick={() => {if(window.confirm("Skip this post? This account will not receive it; the rest of the package is unchanged."))skip.mutate();}} disabled={skip.isPending}>Skip this post</button>}
       </div>
     </li>
   );

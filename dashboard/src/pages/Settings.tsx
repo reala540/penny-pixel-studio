@@ -1,3 +1,4 @@
+import { useFormDraft } from "../lib/formDraft";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { Link, NavLink, useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -72,6 +73,13 @@ export default function SettingsPage() {
 
 /** Settings → AI services: when the keys were last checked, what passed, which jobs have no passing service, and Test again. */
 function KeyCheckPanel() {
+  const [params]=useSearchParams();
+  const selectedId=params.get("job");
+  const selected=useQuery({
+    queryKey:["selected-key-check",selectedId],enabled:Boolean(selectedId),
+    refetchInterval:(q)=>q.state.data && ["queued","running"].includes(q.state.data.status) ? 5000 : false,
+    queryFn:async()=>await must(supabase.from("generation_jobs").select("id,status,progress,output,error_message").eq("id",selectedId!).eq("job_type","check_providers").maybeSingle()) as {status:string;progress?:{label?:string};output?:{ok?:number;checked?:number};error_message?:string}|null,
+  });
   const toast = useToast();
   const check = useSetting<{ checked_at?: string; results?: { provider: string; status: string; note?: string; error?: string }[] } | null>("provider_check", null);
   const ready = useReadiness();
@@ -79,6 +87,7 @@ function KeyCheckPanel() {
   const results = check.data?.results ?? [];
   return (
     <Section id="key-check" title="AI key check" intro="One short test request for every model that's switched on, with the keys the studio really uses: built-in services, services you added, and keys saved here or in GitHub secrets.">
+      {selectedId && (!selected.isSuccess ? <NotConfirmed q={selected} what="the selected AI test" /> : selected.data ? <p role="status" className="mb-3 rounded-lg bg-sunken p-3 text-sm">Selected test: {selected.data.status}{selected.data.progress?.label ? ` · ${selected.data.progress.label}` : ""}{selected.data.status === "completed" ? ` · ${selected.data.output?.ok ?? 0} of ${selected.data.output?.checked ?? 0} services passed` : ""}{selected.data.error_message ? ` · ${selected.data.error_message.slice(0,200)}` : ""}</p> : <p>This test is no longer available. The latest results are below.</p>)}
       <div className="max-w-3xl rounded-xl border border-line bg-surface p-4 text-sm">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p>{ready.checkedAt ? <>Last checked {new Date(ready.checkedAt).toLocaleString()}{ready.stale && <span className="ml-1 font-medium text-alert">(older than {STALE_HOURS} hours: results may have changed)</span>}</> : check.isSuccess ? "Not checked yet." : check.isError ? "Couldn't load the last check." : "Loading the last check…"}</p>
@@ -124,26 +133,30 @@ function Appearance() {
   );
 }
 
-function useIdeaConfig(): [IdeaGeneratorConfig, (patch: Partial<IdeaGeneratorConfig>, msg?: string) => void, boolean] {
+function useIdeaConfig(): [IdeaGeneratorConfig, (patch: Partial<IdeaGeneratorConfig>, msg?: string) => void, boolean, ReturnType<typeof useSetting<Partial<IdeaGeneratorConfig>>>] {
   const raw = useSetting<Partial<IdeaGeneratorConfig>>("idea_generator", {});
   const save = useSaveSetting();
   const toast = useToast();
   const cfg = { ...DEFAULT_IDEA_CONFIG, ...(raw.data ?? {}) };
   const update = (patch: Partial<IdeaGeneratorConfig>, msg = "Saved") =>
-    save.mutate({ key: "idea_generator", value: { ...cfg, ...patch } }, { onSuccess: () => toast(msg), onError: (e) => toast((e as Error).message, "bad") });
-  return [cfg, update, raw.isLoading];
+    save.mutate({ key: "idea_generator", value: patch, patch: true }, { onSuccess: () => toast(msg), onError: (e) => toast((e as Error).message, "bad") });
+  return [cfg, update, raw.isLoading, raw];
 }
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 function IdeaGeneration() {
-  const [cfg, update, loading] = useIdeaConfig();
-  const [categories, setCategories] = useState<string | null>(null);
-  const [regions, setRegions] = useState<string | null>(null);
-  const [audience, setAudience] = useState<string | null>(null);
+  const [cfg, update, loading, cfgQuery] = useIdeaConfig();
+  const [textDraft,setTextDraft,draft]=useFormDraft("idea-settings", {categories:cfg.categories.join(", "),regions:cfg.region === "global" ? "" : cfg.region.join(", "),audience:cfg.audience});
+  const {categories,regions,audience}=textDraft;
+  const setCategories=(categories:string)=>setTextDraft((v)=>({...v,categories}));
+  const setRegions=(regions:string)=>setTextDraft((v)=>({...v,regions}));
+  const setAudience=(audience:string)=>setTextDraft((v)=>({...v,audience}));
   if (loading) return <Section id="ideas" title="Idea generation"><Loading /></Section>;
+  if (!cfgQuery.isSuccess) return <NotConfirmed q={cfgQuery} what="idea generation settings" />;
   return (
     <Section id="ideas" title="Idea generation" intro="What the AI Idea Generator researches and how it ranks ideas. Scoring weights are fixed: current trend evidence 70%, originality 10%, international relevance 10%, feasibility 5%, engagement 5%.">
+      {draft.message && <p role="status" className="mb-3 text-sm text-muted">{draft.message} <button className="underline" onClick={draft.reset}>Discard text edits</button></p>}
       <div className="grid max-w-3xl gap-4 sm:grid-cols-2">
         <label className="text-sm"><span className="text-muted">Ideas per batch</span>
           <input className="field mt-1" type="number" min={1} max={30} defaultValue={cfg.count}
@@ -153,13 +166,13 @@ function IdeaGeneration() {
             onBlur={(e) => { const n = Math.min(100, Math.max(0, Number(e.target.value) || 0)); if (n !== cfg.min_score) update({ min_score: n }); }} /></label>
         <label className="text-sm sm:col-span-2"><span className="text-muted">Regions (country codes like US, GB; empty = each channel's target countries)</span>
           <input className="field mt-1" value={regions ?? (cfg.region === "global" ? "" : cfg.region.join(", "))} onChange={(e) => setRegions(e.target.value)}
-            onBlur={() => regions !== null && update({ region: cleanRegions(regions) })} placeholder="Each channel's target countries" /></label>
+            onBlur={() => !draft.conflict && JSON.stringify(cleanRegions(regions))!==JSON.stringify(cfg.region) && update({ region: cleanRegions(regions) })} placeholder="Each channel's target countries" /></label>
         <label className="text-sm sm:col-span-2"><span className="text-muted">Categories and industries (comma separated)</span>
           <input className="field mt-1" value={categories ?? cfg.categories.join(", ")} onChange={(e) => setCategories(e.target.value)}
-            onBlur={() => categories !== null && update({ categories: cleanCategories(categories) })} placeholder="e.g. AI tools, personal finance, careers" /></label>
+            onBlur={() => !draft.conflict && JSON.stringify(cleanCategories(categories))!==JSON.stringify(cfg.categories) && update({ categories: cleanCategories(categories) })} placeholder="e.g. AI tools, personal finance, careers" /></label>
         <label className="text-sm sm:col-span-2"><span className="text-muted">Target audience (empty = each channel's audience)</span>
           <input className="field mt-1" maxLength={300} value={audience ?? cfg.audience} onChange={(e) => setAudience(e.target.value)}
-            onBlur={() => audience !== null && update({ audience: audience.trim() })} /></label>
+            onBlur={() => !draft.conflict && audience.trim()!==cfg.audience && update({ audience: audience.trim() })} /></label>
         <label className="text-sm"><span className="text-muted">Language</span>
           <select aria-label="Language" className="field mt-1" value={cfg.languages[0]} onChange={(e) => update({ languages: [e.target.value] })}>
             {[["en", "English"], ["fr", "French"], ["es", "Spanish"], ["pt", "Portuguese"], ["de", "German"], ["sw", "Swahili"]].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
@@ -184,11 +197,12 @@ function IdeaGeneration() {
 }
 
 function Automation() {
-  const [cfg, update, loading] = useIdeaConfig();
+  const [cfg, update, loading, cfgQuery] = useIdeaConfig();
   const runs = useIdeaRuns(5);
   const cleared = useCleared();
   const shownRuns = visibleAfterClear(runs.data ?? [], cleared.map, "idea_runs", (r) => r.started_at);
   if (loading) return <Section id="automation" title="Automation"><Loading /></Section>;
+  if (!cfgQuery.isSuccess) return <NotConfirmed q={cfgQuery} what="automation settings" />;
   return (
     <Section id="automation" title="Automation" intro="Who approves publishing, the publishing pause, fix attempts and scheduled idea batches.">
       <div className="mb-6 flex max-w-3xl flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-surface p-4">
@@ -337,7 +351,7 @@ function Writers() {
           </thead>
           <tbody className="divide-y divide-line">
             {(d?.providers ?? []).map((p) => {
-              const roles = [...new Set(d!.models.filter((m) => m.provider === p.name).flatMap((m) => m.roles))];
+              const roles = [...new Set(d!.models.filter((m) => m.provider === p.name && m.enabled).flatMap((m) => m.roles))];
               const today = d!.usage.filter((u) => u.provider === p.name);
               const resting = p.circuit_open_until && Date.parse(p.circuit_open_until) > Date.now();
               return (
@@ -345,7 +359,7 @@ function Writers() {
                   <td className="px-4 py-2.5 font-medium">{PROVIDER_NAME[p.name] ?? p.name}{!p.commercial_use_ok && <span className="block text-xs font-normal text-alert">Not for monetized use</span>}</td>
                   <td className="px-3 py-2.5 text-xs text-muted">{roles.map((r) => r.replace(/_/g, " ")).join(", ")}</td>
                   <td className="px-3 py-2.5 tabular">{today.length} calls</td>
-                  <td className="px-3 py-2.5 text-xs">{resting ? <span className="text-alert">Resting: {String(p.last_error ?? "").slice(0, 60)}</span> : p.last_success_at ? <span className="text-ok">Working</span> : <span className="text-muted">Not used yet</span>}</td>
+                  <td className="px-3 py-2.5 text-xs">{resting ? <span className="text-alert">Resting: {String(p.last_error ?? "").slice(0, 60)}</span> : p.last_success_at ? <span className="text-muted">Last success: {new Date(p.last_success_at).toLocaleString()}</span> : <span className="text-muted">Not used yet</span>}</td>
                   <td className="px-3 py-2.5">
                     <input type="checkbox" className="h-4 w-4 accent-current" checked={p.enabled} aria-label={`Use ${PROVIDER_NAME[p.name] ?? p.name}`} onChange={(e) => toggle.mutate({ name: p.name, enabled: e.target.checked })} />
                   </td>
@@ -375,14 +389,16 @@ function Voices() {
 }
 
 function VoiceForm({ channel, onSaved }: { channel: any; onSaved: () => void }) {
-  const [persona, setPersona] = useState<string>(channel.host_persona);
-  const [rules, setRules] = useState<string>((channel.voice_profile?.style_rules ?? []).join("\n"));
-  const [tone, setTone] = useState<string>((channel.voice_profile?.tone ?? []).join(", "));
+  const [form, setForm, draft] = useFormDraft(`voice:${channel.id}`, { persona: channel.host_persona as string, rules: (channel.voice_profile?.style_rules ?? []).join("\n") as string, tone: (channel.voice_profile?.tone ?? []).join(", ") as string });
+  const {persona, rules, tone} = form;
+  const setPersona = (persona: string) => setForm((v) => ({...v, persona}));
+  const setRules = (rules: string) => setForm((v) => ({...v, rules}));
+  const setTone = (tone: string) => setForm((v) => ({...v, tone}));
   const save = useMutation({
     mutationFn: async () => must(supabase.from("channel_profiles").update({
       host_persona: persona,
       voice_profile: { ...channel.voice_profile, tone: tone.split(",").map((t) => t.trim()).filter(Boolean), style_rules: rules.split("\n").map((r) => r.trim()).filter(Boolean) },
-    }).eq("id", channel.id)),
+    }).eq("id", channel.id).eq("host_persona",channel.host_persona).eq("voice_profile", JSON.stringify(channel.voice_profile)).select("id").single()),
     onSuccess: onSaved,
   });
   return (
@@ -394,29 +410,38 @@ function VoiceForm({ channel, onSaved }: { channel: any; onSaved: () => void }) 
         <input className="field mt-1" value={tone} onChange={(e) => setTone(e.target.value)} /></label>
       <label className="mt-3 block text-sm"><span className="text-muted">Writing rules (one per line)</span>
         <textarea className="field mt-1" rows={5} value={rules} onChange={(e) => setRules(e.target.value)} /></label>
-      <button className="btn-quiet mt-3" disabled={save.isPending}>Save voice</button>
+      {draft.message && <p role="status" className="mt-2 text-sm text-muted">{draft.message} <button type="button" className="underline" onClick={draft.reset}>Discard edits</button></p>}
+      <button className="btn-quiet mt-3" disabled={save.isPending || draft.conflict}>Save voice</button>
     </form>
   );
 }
 
 function Budget() {
+  const b = useQuery({ queryKey: ["budget"], queryFn: async () => ((await must(supabase.from("budgets").select("*").eq("service", "x_api"))) as any[])[0] });
+  if (!b.isSuccess) return <NotConfirmed q={b} what="the X budget" />;
+  if (!b.data) return <p>The X budget is not configured. Complete Getting started before changing it.</p>;
+  return <BudgetEditor budget={b.data} />;
+}
+function BudgetEditor({budget}: {budget: {monthly_cap_usd: number; enabled: boolean}}) {
   const qc = useQueryClient();
   const toast = useToast();
-  const b = useQuery({ queryKey: ["budget"], queryFn: async () => ((await must(supabase.from("budgets").select("*").eq("service", "x_api"))) as any[])[0] });
-  const [cap, setCap] = useState<string>("");
-  useEffect(() => { if (b.data) setCap(String(b.data.monthly_cap_usd)); }, [b.data?.monthly_cap_usd]);
+  const [cap, setCap, draft] = useFormDraft("budget:x",String(budget.monthly_cap_usd));
   const save = useMutation({
-    mutationFn: async () => must(supabase.from("budgets").update({ monthly_cap_usd: Number(cap), enabled: true }).eq("service", "x_api")),
+    mutationFn: async () => {
+      if (!cap.trim() || !Number.isFinite(Number(cap)) || Number(cap) < 0 || Number(cap) > 1) throw new Error("Enter a monthly limit between $0 and $1.");
+      return must(supabase.from("budgets").update({ monthly_cap_usd: Number(cap), enabled: true }).eq("service", "x_api").eq("monthly_cap_usd", budget.monthly_cap_usd).select("service").single());
+    },
     onSuccess: () => { qc.invalidateQueries(); toast("Budget saved"); },
-    onError: () => toast("The X budget can be at most $1.00 a month.", "bad"),
+    onError: (e) => toast((e as Error).message, "bad"),
   });
   return (
     <Section id="budget" title="Budget" intro="X is the only paid service. The studio stops posting to X the moment this monthly limit would be passed. Also set a spending limit inside your X developer account.">
       <form className="flex max-w-sm items-end gap-2" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
         <label className="flex-1 text-sm"><span className="text-muted">X monthly limit (USD, max 1.00)</span>
           <input className="field mt-1 tabular" type="number" min="0" max="1" step="0.05" value={cap} onChange={(e) => setCap(e.target.value)} /></label>
-        <button className="btn-quiet">Save</button>
+        <button className="btn-quiet" disabled={save.isPending || draft.conflict}>{save.isPending ? "Saving…" : "Save"}</button>
       </form>
+      {draft.message && <p role="status" className="mt-2 text-sm text-muted">{draft.message} <button className="underline" onClick={draft.reset}>Discard edits</button></p>}
     </Section>
   );
 }
@@ -424,16 +449,18 @@ function Budget() {
 const ZONES = ["Africa/Nairobi", "Africa/Lagos", "Africa/Johannesburg", "Europe/London", "America/New_York", "Asia/Dubai", "Asia/Kolkata", "UTC"];
 
 function Schedule() {
-  const tz = useSetting<string>("timezone", "Africa/Nairobi").data ?? "Africa/Nairobi";
+  const timezone = useSetting<string>("timezone", "Africa/Nairobi");
+  const tz = timezone.data;
   const save = useSaveSetting();
   const toast = useToast();
   return (
-    <Section id="timezone" title="Timezone" intro="Posting times are shown and planned in this timezone. Change the days and times per account in Posting schedule.">
+    <Section id="timezone" title="Timezone" intro="This changes displayed times and future planning. Existing posts keep their scheduled instant; use Posting schedule to deliberately move them.">
+      {!timezone.isSuccess ? <NotConfirmed q={timezone} what="the timezone" /> : <>
       <label className="block max-w-sm text-sm"><span className="text-muted">Timezone</span>
         <select aria-label="Timezone" className="field mt-1" value={tz} onChange={(e) => save.mutate({ key: "timezone", value: e.target.value }, { onSuccess: () => toast("Timezone saved") })}>
-          {[...new Set([tz, ...ZONES])].map((z) => <option key={z}>{z}</option>)}
+          {[...new Set([tz!, ...ZONES])].map((z) => <option key={z}>{z}</option>)}
         </select>
-      </label>
+      </label></>}
     </Section>
   );
 }

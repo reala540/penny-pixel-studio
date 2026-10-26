@@ -12,6 +12,7 @@ export type DraftState =
   | { state: "making"; jobStatus: string }                      // a package is queued or being made
   | { state: "failed"; error: string | null; projectId: string | null }
   | { state: "done"; projectId: string; projectStatus: string } // the package exists and is ready or decided
+  | { state: "cancelled" }
   | { state: "unknown" };                                       // couldn't check
 
 export interface DraftFacts {
@@ -32,6 +33,7 @@ export function draftState(d: CreateDraft, facts: DraftFacts | undefined): Draft
   const job = facts.jobs[d.ideaId];
   if (job && ["queued", "running"].includes(job.status)) return { state: "making", jobStatus: job.status };
   if (job?.status === "failed" || project?.status === "failed") return { state: "failed", error: job?.error_message ?? null, projectId: project?.id ?? job?.project_id ?? null };
+  if (job?.status === "cancelled") return { state: "cancelled" };
   if (project) return { state: "making", jobStatus: "running" };
   return { state: "draft" };
 }
@@ -42,7 +44,7 @@ export function draftUrl(d: CreateDraft, s: DraftState = { state: "draft" }): st
   const p = new URLSearchParams({ draft: d.id });
   let step = d.step;
   if (s.state === "missing") step = "idea";                     // choose another idea, keep the channel
-  if (s.state === "making" || s.state === "failed") step = "progress";
+  if (s.state === "making" || s.state === "failed" || s.state === "cancelled") step = "progress";
   p.set("step", step);
   if (d.channel) p.set("channel", d.channel);
   if (d.kind && d.ideaId && s.state !== "missing") { p.set("kind", d.kind); p.set("id", d.ideaId); }
@@ -55,6 +57,7 @@ export function draftLabel(d: CreateDraft, s: DraftState): string {
   switch (s.state) {
     case "missing": return `${what}: that idea no longer exists. Choose another one.`;
     case "making": return `${what}: ${s.jobStatus === "queued" ? "waiting to start" : "being made"}.`;
+    case "cancelled": return `${what}: cancelled. Saved work is kept; you can resume it.`;
     case "failed": return `${what}: a step didn't work.`;
     case "done": return `${what}: the package is made.`;
     case "unknown": return `${what}: ${where} (couldn't check its current state).`;

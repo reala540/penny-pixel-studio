@@ -15,7 +15,7 @@ export const OWNER = { id: "00000000-0000-4000-8000-000000000001", email: "owner
 
 /** Start the dashboard dev server pointed at the simulated services. */
 export async function startServer() {
-  const child = spawn("npx", ["vite", "--port", String(PORT), "--strictPort", "--host", "127.0.0.1"], {
+  const child = spawn(process.execPath, [new URL("../node_modules/vite/bin/vite.js", import.meta.url).pathname, "--port", String(PORT), "--strictPort", "--host", "127.0.0.1"], {
     cwd: new URL("..", import.meta.url).pathname,
     env: { ...process.env, VITE_SUPABASE_URL: SUPABASE, VITE_SUPABASE_ANON_KEY: "test-anon-key", VITE_WORKER_URL: WORKER },
     stdio: ["ignore", "pipe", "pipe"],
@@ -66,6 +66,9 @@ function answer(db, table, url) {
     const [op, ...rest] = v.split(".");
     const val = rest.join(".");
     const get = (r) => (k.includes("->>") ? k.split("->>").reduce((o, part) => o?.[part.replace(/^->/, "")], r) : r[k]);
+    if (op === "gte") rows = rows.filter((r) => String(get(r)) >= val);
+    if (op === "lte") rows = rows.filter((r) => String(get(r)) <= val);
+    if (op === "lt") rows = rows.filter((r) => String(get(r)) < val);
     if (op === "eq") rows = rows.filter((r) => String(get(r)) === val);
     if (op === "in") { const set = val.replace(/^\(|\)$/g, "").split(",").map((x) => x.replace(/"/g, "")); rows = rows.filter((r) => set.includes(String(get(r)))); }
     if (op === "is" && val === "null") rows = rows.filter((r) => get(r) == null);
@@ -73,7 +76,8 @@ function answer(db, table, url) {
   const order = url.searchParams.get("order");
   if (order) { const [col, dir] = order.split("."); rows = [...rows].sort((a, b) => String(a[col]).localeCompare(String(b[col])) * (dir === "desc" ? -1 : 1)); }
   const limit = Number(url.searchParams.get("limit") || 0);
-  return limit ? rows.slice(0, limit) : rows;
+  const offset=Number(url.searchParams.get("offset")||0);
+  return limit ? rows.slice(offset,offset+limit) : rows.slice(offset);
 }
 
 /**
@@ -108,7 +112,29 @@ export async function openStudio(browser, path = "/", opts = {}) {
     if (rpc) {
       const status = fail[`rpc:${rpc[1]}`];
       if (status) return route.fulfill({ status, headers: cors, body: JSON.stringify({ message: "simulated failure" }) });
-      const out = rpc[1] === "claim_ownership" ? (opts.owner === false ? false : true) : null;
+      const data = JSON.parse(req.postData() || "{}");
+      let out = rpc[1] === "claim_ownership" ? (opts.owner === false ? false : true) : null;
+      if (rpc[1] === "enqueue_owner_job") {
+        let existing = db.generation_jobs.find((j) => j.job_type === data.p_job_type && ["queued","running","retrying"].includes(j.status) && JSON.stringify(j.input ?? {}) === JSON.stringify(data.p_input));
+        if (!existing) { existing = {id: `job-${Math.random()}`,job_type:data.p_job_type,status:"queued",project_id:data.p_project_id,input:data.p_input,requested_by:"owner",created_at:new Date().toISOString()}; db.generation_jobs.push(existing); }
+        out = existing.id;
+      }
+      if (rpc[1] === "patch_studio_setting") {
+        db.settings[data.p_key] = {...(db.settings[data.p_key] ?? {}), ...data.p_patch}; out = db.settings[data.p_key];
+      }
+      if (rpc[1] === "save_studio_draft") {
+        const rows=db.studio_drafts??(db.studio_drafts=[]);
+        let current=rows.find(x=>x.id===data.p_id);
+        if((current?.revision??0)!==data.p_expected) out={conflict:true,revision:current?.revision};
+        else {
+          if(!current){current={id:data.p_id,owner_id:OWNER.id,revision:0};rows.push(current);}
+          current.payload=data.p_payload;current.revision++;current.updated_at=new Date().toISOString();out={revision:current.revision};
+        }
+      }
+      if (rpc[1] === "cancel_owner_job") {
+        const j = db.generation_jobs.find((x) => x.id === data.p_job_id);
+        if (j) { j.cancel_requested_at=new Date().toISOString(); if (j.status === "queued") j.status="cancelled"; out=j.status === "running" ? "stopping" : j.status; }
+      }
       return route.fulfill({ status: 200, headers: cors, body: JSON.stringify(out) });
     }
     const table = path.match(/^\/rest\/v1\/([a-z_]+)/)?.[1];
@@ -159,6 +185,6 @@ export async function newTab(context, path) {
 }
 
 export async function withBrowser(fn) {
-  const browser = await chromium.launch();
+  const browser = await chromium.launch(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE, args: ["--no-sandbox"] } : {});
   try { return await fn(browser); } finally { await browser.close(); }
 }

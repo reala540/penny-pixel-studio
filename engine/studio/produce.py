@@ -653,7 +653,7 @@ def produce_idea(conn, router: Router, storage, *, content_idea_id=None, generat
             # the owner asked again: steps that didn't work may run now (finished steps are kept)
             db.run(conn, """update generation_jobs set status='pending', attempts=0, next_attempt_at=null
                             where project_id = any(%s) and job_type = any(%s)
-                              and status in ('failed','retrying','blocked','needs_review')""", (family, list(STAGES)))
+                              and status in ('failed','retrying','blocked','needs_review','cancelled')""", (family, list(STAGES)))
             db.run(conn, "update content_ideas set status='selected' where id=%s and status <> 'produced'", (idea["id"],))
             out = produce_project(conn, router, storage, idea, week, project=project,
                                   stage=lambda label, n, total: jobs.progress(conn, label, n, total))

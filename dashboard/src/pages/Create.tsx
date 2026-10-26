@@ -426,7 +426,7 @@ function ProgressStep({ kind, id, channel }: { kind: Kind; id: string; channel: 
   if (job.isLoading || sel.isLoading) return <Loading label="Loading progress" />;
   const status = job.data?.status as string | undefined;
   const p = project.data;
-  const ready = p && ["ready_for_review", "needs_attention"].includes(p.status);
+  const ready = p && ["ready_for_review", "needs_attention", "approved", "scheduled", "published"].includes(p.status);
   return (
     <section aria-labelledby="pg-title">
       <h2 id="pg-title" className="section-title mb-1">Step 5 · Being made</h2>
@@ -447,11 +447,11 @@ function ProgressStep({ kind, id, channel }: { kind: Kind; id: string; channel: 
           ))}
         </ol>
       )}
-      {status === "failed" && (
+      {(status === "failed" || status === "cancelled") && (
         <div className="mt-4 rounded-lg bg-alert-soft px-3 py-2 text-sm text-alert">
-          <p><strong>This didn't work:</strong> {String(job.data?.error_message ?? "").slice(0, 400)}</p>
+          <p><strong>{status === "cancelled" ? "Cancelled; completed work was kept:" : "This didn't work:"}</strong> {String(job.data?.error_message ?? "").slice(0, 400)}</p>
           <div className="mt-2 flex flex-wrap gap-2">
-            <button className="btn-quiet" disabled={retry.isPending} onClick={() => retry.mutate()}>Try again from this step</button>
+            <button className="btn-quiet" disabled={retry.isPending} onClick={() => retry.mutate()}>{status === "cancelled" ? "Resume from checkpoint" : "Try again from this step"}</button>
             {/AI|provider|research_summarizer|role/i.test(job.data?.error_message ?? "") && <Link to="/settings/ai" className="btn-quiet">Check AI services</Link>}
           </div>
           <p className="mt-2 text-xs">Steps that already finished aren't redone.</p>
@@ -459,7 +459,7 @@ function ProgressStep({ kind, id, channel }: { kind: Kind; id: string; channel: 
       )}
       {ready && (
         <div className="mt-5 flex flex-wrap gap-2">
-          <Link to={projectPath(p.id)} className="btn-primary">Step 6 · Review the package</Link>
+          <Link to={projectPath(p.id)} className="btn-primary">{p.status === "ready_for_review" || p.status === "needs_attention" ? "Step 6 · Review the package" : "Open the completed package"}</Link>
           <Link to={projectPath(p.id, "posts")} className="btn-quiet">Step 7 · Check the schedule</Link>
         </div>
       )}

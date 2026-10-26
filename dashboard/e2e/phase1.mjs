@@ -3,7 +3,7 @@
 import { mkdirSync } from "node:fs";
 import { openStudio, startServer, withBrowser } from "./harness.mjs";
 
-const OUT = new URL("./screenshots/phase1/", import.meta.url).pathname;
+const OUT = (process.env.E2E_SCREENSHOT_DIR || new URL("./screenshots/phase1/", import.meta.url).pathname).replace(/\/?$/, "/");
 mkdirSync(OUT, { recursive: true });
 const PHONE = { width: 390, height: 844 };
 const results = [];

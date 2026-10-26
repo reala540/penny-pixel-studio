@@ -448,7 +448,7 @@ function PausedNote({ m, onChange, toast }: { m: Model; onChange: () => void; to
 function ModelRoles({ models, supported, onChange, toast }: { models: Model[]; supported: string[]; onChange: () => void; toast: ReturnType<typeof useToast> }) {
   const save = useMutation({
     mutationFn: async ({ m, roles }: { m: Model; roles: string[] }) =>
-      must(supabase.from("ai_model_configs").update({ roles, roles_custom: true }).eq("provider", m.provider).eq("model", m.model)),
+      must(supabase.from("ai_model_configs").update({ roles, roles_custom: true }).eq("provider", m.provider).eq("model", m.model).eq("roles", `{${m.roles.join(",")}}`).select("model").single()),
     onSuccess: () => { toast("Model jobs updated"); onChange(); },
     onError: (e) => toast((e as Error).message, "bad"),
   });

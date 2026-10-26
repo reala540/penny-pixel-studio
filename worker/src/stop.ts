@@ -32,7 +32,7 @@ export async function cancelRuns(env: Env): Promise<number> {
     for (const run of runs) {
       if (!STOPPABLE.some((f) => run.path?.endsWith(f))) continue;
       const c = await gh(env, `/actions/runs/${run.id}/cancel`, "POST");
-      if (c.status === 202 || c.status === 409) n += 1; // 409: it had already finished
+      if (c.status === 202) n += 1; // accepted requests only; 409 means it already finished
     }
   }
   return n;

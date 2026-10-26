@@ -34,7 +34,12 @@ export function useTimezone(): string {
 export function useSaveSetting() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ key, value }: { key: string; value: unknown }) => {
+    mutationFn: async ({ key, value, patch }: { key: string; value: unknown; patch?: boolean }) => {
+      if (patch) {
+        const saved = await patchSetting(key, value as Record<string, unknown>);
+        qc.setQueryData(["setting", key], saved);
+        return;
+      }
       await must(supabase.from("settings").upsert({ key, value }));
       await supabase.from("audit_logs").insert({ actor: "owner", action: "setting_changed", target_type: "setting", target_id: key, details: { value } });
     },
@@ -57,16 +62,20 @@ export function useAccounts() {
 
 /** Ask the engine to do something. The Worker starts the GitHub job right away (or the 15-minute cron picks it up). */
 export async function queueJob(jobType: string, opts: { projectId?: string; input?: Record<string, unknown> } = {}): Promise<{ startsSoon: boolean }> {
-  await must(
-    supabase.from("generation_jobs").insert({
-      job_type: jobType,
-      project_id: opts.projectId ?? null,
-      idempotency_key: `owner:${jobType}:${opts.projectId ?? "all"}:${crypto.randomUUID()}`,
-      status: "queued",
-      requested_by: "owner",
-      input: opts.input ?? {},
-    }),
-  );
+  const queued = await supabase.rpc("enqueue_owner_job", {
+    p_job_type: jobType, p_project_id: opts.projectId ?? null, p_input: opts.input ?? {},
+  });
+  if (queued.error) {
+    if (!missingFunction(queued.error)) throw new Error(friendlyError(queued.error.message));
+    // Old schema: preserve existing functionality during the database rollout.
+    let activeQuery = supabase.from("generation_jobs").select("id").eq("job_type", jobType)
+      .in("status", ["queued", "running", "retrying"]).eq("input", JSON.stringify(opts.input ?? {}));
+    activeQuery = opts.projectId ? activeQuery.eq("project_id",opts.projectId) : activeQuery.is("project_id",null);
+    const active = await must(activeQuery.limit(1));
+    if (!(active as unknown[]).length) await must(supabase.from("generation_jobs").insert({ job_type: jobType,
+      project_id: opts.projectId ?? null, input: opts.input ?? {}, requested_by: "owner", status: "queued",
+      idempotency_key: `owner:${jobType}:${opts.projectId ?? "all"}:${crypto.randomUUID()}` }));
+  }
   announceChange();
   try {
     await callWorker("/api/dispatch", { workflow: "queue" });
@@ -87,4 +96,29 @@ export type StopResult = { stopped: boolean; reason?: string; runs_cancelled: nu
 /** Stop & clear: stops everything that is making content and erases what it made (never anything published). */
 export async function stopAndClear(): Promise<StopResult> {
   return callWorker<StopResult>("/api/stop-clear", {});
+}
+
+/** Compatible rolling deployment: only fall back when PostgREST confirms the new function is absent. */
+export function missingFunction(error: { code?: string; message?: string } | null): boolean {
+  return error?.code === "PGRST202" || error?.code === "42883";
+}
+export async function patchSetting(key: string, patch: Record<string, unknown>, expected?: Record<string, unknown>) {
+  const res = await supabase.rpc("patch_studio_setting", { p_key: key, p_patch: patch, p_expected: expected ?? null });
+  if (!res.error) return res.data;
+  if (!missingFunction(res.error)) throw new Error(friendlyError(res.error.message));
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const row = await must(supabase.from("settings").select("value").eq("key", key).maybeSingle()) as {value: Record<string, unknown>} | null;
+    const current = row?.value ?? {};
+    if (expected && Object.entries(expected).some(([k,v]) => current[k] !== v)) throw new Error("This setting changed elsewhere. Reload before trying again.");
+    const next = { ...current, ...patch };
+    if (row) {
+      const updated = await must(supabase.from("settings").update({ value: next }).eq("key", key).eq("value", JSON.stringify(current)).select("key"));
+      if ((updated as unknown[]).length) return next;
+    } else {
+      const insert = await supabase.from("settings").insert({ key, value: next });
+      if (!insert.error) return next;
+      if (insert.error.code !== "23505") throw new Error(friendlyError(insert.error.message));
+    }
+  }
+  throw new Error("This setting keeps changing in another tab. Try again after those changes finish.");
 }

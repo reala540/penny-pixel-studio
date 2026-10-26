@@ -20,7 +20,7 @@ export interface CreateDraft {
   depth?: number;
 }
 
-export const MAX_DRAFTS = 10;
+export const MAX_DRAFTS = 100;
 export const DRAFT_DAYS = 30;
 const PREFIX = "studio-create-drafts:";
 
@@ -103,6 +103,11 @@ export function saveDraft(owner: string, draft: Omit<CreateDraft, "rev" | "updat
 
 export function removeDraft(owner: string | null, id: string): void {
   if (!owner) return;
+  try {
+    const key=`studio-draft-removed:${owner}`;
+    const removed: string[]=JSON.parse(localStorage.getItem(key)??"[]");
+    localStorage.setItem(key,JSON.stringify([...new Set([...removed,id])]));
+  } catch { /* device copy still removed */ }
   write(owner, read(owner).filter((d) => d.id !== id));
 }
 
@@ -134,4 +139,11 @@ export function useDrafts(): CreateDraft[] {
 /** Re-read drafts when something outside this module changed storage (e.g. a test or another tab). */
 export function useRefreshDrafts(): () => void {
   return useCallback(() => notify(), []);
+}
+
+/** Merge downloaded bookmarks without dropping a newer local edit. */
+export function mergeCloudDrafts(owner: string, drafts: CreateDraft[]): void {
+  const current = read(owner);
+  const next = [...drafts].sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt));
+  if(JSON.stringify(current)!==JSON.stringify(next)) write(owner,next);
 }

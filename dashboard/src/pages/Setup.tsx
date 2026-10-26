@@ -176,7 +176,8 @@ function SecretField({ name, label, help, state, secret = true, placeholder }: {
     onSuccess: (r) => {
       setValue("");
       setTest(r.telegram && !r.telegram.ok ? { ok: false, detail: r.telegram.problem ?? "Telegram couldn't be linked." } : r.test);
-      toast(`${label} saved`);
+      const failed=r.test.ok === false || Boolean(r.telegram && !r.telegram.ok);
+      toast(failed ? `${label} saved, but the connection test failed. See the result below.` : `${label} saved`, failed ? "bad" : "good");
       qc.invalidateQueries({ queryKey: ["setup-status"] });
     },
     onError: (e) => setTest({ ok: false, detail: (e as Error).message }),
@@ -208,7 +209,7 @@ function SecretField({ name, label, help, state, secret = true, placeholder }: {
         </div>
         <button className="btn-primary" disabled={!value.trim() || save.isPending}>{save.isPending ? "Saving…" : "Save & test"}</button>
         {(state?.dashboard || state?.github) && <button type="button" className="btn-quiet" onClick={() => check.mutate()} disabled={check.isPending}>{check.isPending ? "Testing…" : "Test"}</button>}
-        {state?.dashboard && <button type="button" className="btn-quiet" onClick={() => remove.mutate()} disabled={remove.isPending}>Remove</button>}
+        {state?.dashboard && <button type="button" className="btn-quiet" onClick={() => { if (window.confirm(`Remove ${label}? A saved GitHub value will take over if available; otherwise this connection may stop working.`)) remove.mutate(); }} disabled={remove.isPending}>Remove</button>}
       </form>
       <div className="mt-2"><TestLine test={test} /></div>
     </div>

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { decryptJson, encryptJson } from "../src/crypto";
-import { dueIdeaSlot, handleCron, handleFetch, handleTelegram, localParts } from "../src/index";
+import { setAutoPost, dueIdeaSlot, handleCron, handleFetch, handleTelegram, localParts } from "../src/index";
 import { clearSecretCache } from "../src/setup";
 import type { Env } from "../src/supabase";
 
@@ -38,6 +38,7 @@ beforeEach(() => {
       const res = r(url, init);
       if (res) return res;
     }
+    if (url.includes("api.telegram.org") && url.includes("/sendMessage")) return new Response(JSON.stringify({ok:true}),{status:200});
     return new Response("[]", { status: 200 });
   });
 });
@@ -616,5 +617,16 @@ describe("held packages", () => {
     expect((await handleCron(env())).queue).toBe(true);
     routes.unshift((u) => (u.includes("key=eq.last_queue_dispatch") ? ok([{ value: new Date().toISOString() }]) : undefined));
     expect((await handleCron(env())).queue).toBeUndefined();
+  });
+});
+
+
+describe("delivery acknowledgement",()=>{
+  it("persists an approval-mode alert when Telegram rejects delivery",async()=>{
+    routes.push((u)=>u.includes("rpc/set_auto_review_post") ? ok({on:false,was:true,reverted_posts:0}) : u.includes("key=eq.telegram_chat_id") ? ok([{value:"55"}]) : u.includes("api.telegram.org") ? ok({ok:false},429) : undefined);
+    const result=await setAutoPost(env(),false,"owner");
+    expect(result.notified).toBe(false);
+    const saved=calls.find(c=>c.url.endsWith("/rest/v1/notifications") && c.init?.method === "POST");
+    expect(saved).toBeDefined();expect(JSON.parse(String(saved!.init!.body)).kind).toBe("approval_mode");
   });
 });

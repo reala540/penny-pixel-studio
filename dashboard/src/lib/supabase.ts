@@ -28,13 +28,14 @@ export async function callWorker<T>(path: string, body: unknown): Promise<T> {
   }
   const json = (await res.json().catch(() => ({}))) as T & { error?: string };
   if (res.status === 401) throw new Error(data.session ? "Your sign-in has expired. Sign in again: you'll come back to this page." : "Sign in first.");
-  if (!res.ok) throw new Error(friendlyError(json.error || `The studio's server answered ${res.status}. Nothing was changed; try again.`));
+  if (!res.ok) throw new Error(friendlyError(json.error || `The studio's server answered ${res.status}. Check the current state before retrying.`));
   return json;
 }
 
 export async function signedUrl(key: string | null | undefined, seconds = 3600): Promise<string | null> {
   if (!key) return null;
-  const { data } = await supabase.storage.from("studio").createSignedUrl(key, seconds);
+  const { data, error } = await supabase.storage.from("studio").createSignedUrl(key, seconds);
+  if (error) throw new Error(friendlyError(error.message));
   return data?.signedUrl ?? null;
 }
 

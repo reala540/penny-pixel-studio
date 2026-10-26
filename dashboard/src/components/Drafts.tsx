@@ -17,6 +17,7 @@ export default function DraftList({ title = "Continue where you left off", exclu
   useEffect(() => { if (doneIds) doneIds.split(",").forEach((id) => removeDraft(owner, id)); }, [doneIds, owner]);
 
   const discard = (d: CreateDraft) => {
+    if (!window.confirm("Clear this draft bookmark? This does not cancel work or delete a saved project.")) return;
     removeDraft(owner, d.id);
     toast("Draft removed", "good", { label: "Undo", run: () => { if (owner) saveDraft(owner, d, null, true); } });
   };
@@ -35,7 +36,7 @@ export default function DraftList({ title = "Continue where you left off", exclu
             <span className="flex gap-2">
               <Link className={s.state === "failed" ? "btn-primary" : "btn-quiet"} to={draftUrl(d, s)}>
                 {s.state === "failed" ? "Fix problem" : s.state === "making" ? "View progress" : "Continue"}</Link>
-              {s.state !== "making" && <button type="button" className="btn-quiet" onClick={() => discard(d)} aria-label={`Remove draft ${d.ideaTitle ?? ""}`.trim()}>Remove</button>}
+              {s.state !== "making" && <button type="button" className="btn-quiet" onClick={() => discard(d)} aria-label={`Remove draft ${d.ideaTitle ?? ""}`.trim()}>Clear draft</button>}
             </span>
           </li>
         ))}
