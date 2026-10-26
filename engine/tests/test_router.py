@@ -118,8 +118,12 @@ def test_payment_required_is_never_retried_as_paid():
         return reply("ok")
 
     usage = MemoryUsageStore()
-    res = make(handler, usage).complete("critic", "hi")
-    assert res.provider == "second" and usage.circuit_open("first")
+    router = make(handler, usage)
+    res = router.complete("critic", "hi")
+    assert res.provider == "second"
+    # only that model pauses (it isn't free on this plan); the key and the provider's other models stay usable
+    assert usage.overrides()["first"]["models"]["f1"] == {"pause_reason": "payment"} and not usage.circuit_open("first")
+    assert [c.model for c in router.candidates("critic")] == ["s1"]
 
 
 def test_active_job_is_attributed_and_context_is_reset():
@@ -182,7 +186,7 @@ def test_a_retired_model_is_switched_off_not_retried():
     assert r.complete("critic", "x").provider == "second"   # the next model takes over at once
     assert calls == ["f1", "s1"]                              # tried once, not on every key and retry
     assert [c.model for c in r.candidates("critic")] == ["s1"]
-    assert store.overrides()["first"]["models"]["f1"]["enabled"] is False
+    assert store.overrides()["first"]["models"]["f1"]["pause_reason"] == "retired"
     r.complete("critic", "y")
     assert calls == ["f1", "s1", "s1"]                        # and never again
 

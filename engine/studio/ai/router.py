@@ -184,7 +184,7 @@ class Router:
                 if role not in roles or m.get("kind", "chat") != kind:
                     continue
                 mov = (ov.get("models") or {}).get(m["id"], {})
-                if mov and mov.get("enabled") is False:
+                if mov and (mov.get("enabled") is False or mov.get("pause_reason")):
                     continue
                 model_id = m["id"]
                 if (name, model_id) in self._retired:
@@ -251,9 +251,12 @@ class Router:
                         continue
                     if kind == "permanent":
                         raise PermanentError(result[1])
-                    if kind == "retired":  # the model is gone for every key: switch it off, don't try the others
-                        self.retire(cand, result[1])
+                    if kind == "retired":  # the model is gone for every key: pause it, don't try the others
+                        self.pause(cand, "retired", result[1])
                         raise PermanentError(f"{cand.provider}/{cand.model}: retired by the provider ({result[1][:160]})")
+                    if kind == "payment":
+                        self.pause(cand, "payment", result[1])
+                        raise QuotaError(f"{cand.provider}/{cand.model}: requires payment on this plan; paused and re-tested daily")
                     if kind in ("rate_limited", "payment"):
                         spent_groups.add(cred.quota_group)
                     break
@@ -269,13 +272,13 @@ class Router:
             self.usage.open_circuit(cand.provider, 120, "network or server errors")
         raise TransientError(f"{cand.provider}: failed after {len(outcomes)} attempt(s): {', '.join(outcomes)}")
 
-    def retire(self, cand: Candidate, reason: str) -> None:
-        """Stop using a model the provider has retired: now, and (with the database) for good, with a notice."""
+    def pause(self, cand: Candidate, why: str, detail: str) -> None:
+        """Stop using a model that is retired or not free: now, and (with the database) until a re-test passes."""
         self._retired.add((cand.provider, cand.model))
-        retire = getattr(self.usage, "retire_model", None)
-        if retire:
+        pause = getattr(self.usage, "pause_model", None)
+        if pause:
             try:
-                for provider in retire(cand.provider, cand.model, reason) or []:
+                for provider in pause(cand.provider, cand.model, why, detail) or []:
                     self._retired.add((provider, cand.model))
             except Exception:  # never let the bookkeeping break the request flow
                 pass
@@ -306,10 +309,9 @@ class Router:
             self._record(cand, role, False, 0, 0, started, f"{code} auth", cred)
             self.pool.report(cred, "auth", error=f"key rejected ({code})")
             return ("auth", None)
-        if code == 402:
+        if code == 402:  # this model isn't free on this plan: the key itself is fine for the provider's other models
             self._record(cand, role, False, 0, 0, started, "402 payment required", cred)
-            self.pool.report(cred, "payment", error="provider asked for payment")
-            return ("payment", None)
+            return ("payment", f"402: {resp.text[:300]}")
         if code >= 500 or code == 408:
             self._record(cand, role, False, 0, 0, started, f"{code} server error", cred)
             self.pool.report(cred, "transient", error=f"server error {code}")

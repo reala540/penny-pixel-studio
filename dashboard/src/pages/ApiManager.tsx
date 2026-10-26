@@ -21,7 +21,8 @@ type Cred = {
   last_success_at: string | null; last_error: string | null; last_error_at: string | null; last_tested_at: string | null;
   last_test_result: string | null; models: string[];
 };
-type Model = { provider: string; model: string; roles: string[]; enabled: boolean; priority: number; roles_custom: boolean };
+type Model = { provider: string; model: string; roles: string[]; enabled: boolean; priority: number; roles_custom: boolean;
+  pause_reason?: "retired" | "payment" | null; next_check_at?: string | null; checks?: number; pause_detail?: string | null };
 type Use = { provider: string; credential_id: string | null; success: boolean; error: string | null; latency_ms: number | null;
   input_tokens: number; output_tokens: number; cost_usd: number; cost_source: string; created_at: string };
 type Stats = { today: number; month: number; failed: number; limited: number; latency: number | null; tokens: number; cost: number; estimated: boolean };
@@ -88,7 +89,7 @@ export default function ApiManager() {
       const [providers, creds, models, usage] = await Promise.all([
         must(supabase.from("ai_providers").select("*").order("name")),
         must(supabase.from("ai_credentials").select("id,provider,label,owner_name,authorized_use,key_hint,enabled,priority,weight,quota_group,separate_account_attested,daily_request_cap,daily_token_cap,monthly_spend_cap_usd,input_usd_per_mtok,output_usd_per_mtok,max_concurrency,health,circuit_open_until,last_success_at,last_error,last_error_at,last_tested_at,last_test_result,models").order("priority")),
-        must(supabase.from("ai_model_configs").select("provider,model,roles,enabled,priority,roles_custom").order("priority")),
+        must(supabase.from("ai_model_configs").select("provider,model,roles,enabled,priority,roles_custom,pause_reason,next_check_at,checks,pause_detail").order("priority")),
         must(supabase.from("provider_usage").select("provider,credential_id,success,error,latency_ms,input_tokens,output_tokens,cost_usd,cost_source,created_at").eq("service", "llm").gte("created_at", since).order("created_at", { ascending: false }).limit(5000)),
       ]);
       return { providers: providers as Provider[], creds: creds as Cred[], models: models as Model[], usage: usage as Use[] };
@@ -425,6 +426,25 @@ function CredRow({ c, strategy, usage, onChange, toast }: { c: Cred; strategy: s
   );
 }
 
+const PAUSE_WHY = { retired: "the provider says it reached its end of life", payment: "it isn't free on your plan" };
+
+/** A model that paused itself: why, when it's re-tested, and a way to try it now. */
+function PausedNote({ m, onChange, toast }: { m: Model; onChange: () => void; toast: ReturnType<typeof useToast> }) {
+  const retest = useMutation({
+    mutationFn: async () => must(supabase.from("ai_model_configs").update({ next_check_at: new Date().toISOString() }).eq("provider", m.provider).eq("model", m.model)),
+    onSuccess: () => { toast("It will be re-tested on the next engine run (within about 15 minutes when work is queued, or tonight)."); onChange(); },
+    onError: (e) => toast((e as Error).message, "bad"),
+  });
+  return (
+    <p className="mb-2 rounded-md bg-gold/15 px-2 py-1.5 text-xs text-ink">
+      <strong>Paused by itself:</strong> {PAUSE_WHY[m.pause_reason!]}. {m.next_check_at
+        ? <>Re-tested {new Date(m.next_check_at).toLocaleString()} ({m.checks ?? 0} re-test{m.checks === 1 ? "" : "s"} so far); it comes back by itself when it works.</>
+        : <>Re-tests finished without success ({m.checks} tries): switch it off, remove it, or replace the key.</>}
+      {" "}<button type="button" className="underline" onClick={() => retest.mutate()} disabled={retest.isPending}>Re-test soon</button>
+    </p>
+  );
+}
+
 function ModelRoles({ models, supported, onChange, toast }: { models: Model[]; supported: string[]; onChange: () => void; toast: ReturnType<typeof useToast> }) {
   const save = useMutation({
     mutationFn: async ({ m, roles }: { m: Model; roles: string[] }) =>
@@ -437,6 +457,7 @@ function ModelRoles({ models, supported, onChange, toast }: { models: Model[]; s
       {models.map((m) => (
         <fieldset key={m.model} className="rounded-lg border border-line p-3">
           <legend className="px-1 font-mono text-xs text-ink">{m.model}{m.roles_custom ? " · customised" : ""}</legend>
+          {m.pause_reason && <PausedNote m={m} onChange={onChange} toast={toast} />}
           <div className="flex flex-wrap gap-x-4 gap-y-1">
             {Object.entries(ROLE_LABEL).map(([r, label]) => (
               <label key={r} className="flex items-center gap-1.5 text-xs">
