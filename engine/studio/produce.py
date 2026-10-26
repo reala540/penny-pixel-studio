@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from pathlib import Path
 
-from . import budget, capacity, config, db, jobs, notify, schedule, similarity
+from . import budget, capacity, config, db, jobs, links, notify, schedule, similarity
 from .ai.router import Router
 from .errors import NeedsReview
 from .media import render as rendering
@@ -463,7 +463,7 @@ def _produce_batch(conn, router: Router, storage, week: date, *, channel: str | 
     scope = f"{selected_channel} mission" if selected_channel else "week"
     notify.send(conn, "week_ready", f"Your {scope} is ready for review ({week:%d %b})",
                 f"{ready['ready']} ready, {ready['attention']} need attention, {ready['failed']} failed.",
-                link=f"{config.runtime().dashboard_url}/review", dedupe_key=f"week_ready:{week}:{selected_channel or 'all'}")
+                link=links.needs_you(), dedupe_key=f"week_ready:{week}:{selected_channel or 'all'}")
     return {"projects": results, "summary": ready, "capacity": plan, "auto_review": auto_results}
 
 
@@ -626,7 +626,7 @@ def idea_for_production(conn, *, content_idea_id=None, generated_idea_id=None, c
 
 
 def produce_idea(conn, router: Router, storage, *, content_idea_id=None, generated_idea_id=None,
-                 channel: str | None = None) -> dict:
+                 channel: str | None = None, fresh_attempts: bool = True) -> dict:
     """Make exactly the selected idea's package. Only this package is planned and (if Auto Review & Post is ON)
     reviewed. Running it again resumes from the step that didn't work; nothing is made or planned twice.
     The publishing pause doesn't apply: this only makes content and posts wait for approval."""
@@ -650,10 +650,12 @@ def produce_idea(conn, router: Router, storage, *, content_idea_id=None, generat
         if project["status"] not in ("ready_for_review", "needs_attention"):
             family = [r["id"] for r in db.all_(conn, "select id from content_projects where id=%s or parent_project_id=%s",
                                                 (project["id"], project["id"]))]
-            # the owner asked again: steps that didn't work may run now (finished steps are kept)
-            db.run(conn, """update generation_jobs set status='pending', attempts=0, next_attempt_at=null
-                            where project_id = any(%s) and job_type = any(%s)
-                              and status in ('failed','retrying','blocked','needs_review','cancelled')""", (family, list(STAGES)))
+            # the owner asked again: steps that didn't work may run now (finished steps are kept).
+            # An automatic retry (fresh_attempts=False) keeps each step's remaining attempts instead.
+            if fresh_attempts:
+                db.run(conn, """update generation_jobs set status='pending', attempts=0, next_attempt_at=null
+                                where project_id = any(%s) and job_type = any(%s)
+                                  and status in ('failed','retrying','blocked','needs_review','cancelled')""", (family, list(STAGES)))
             db.run(conn, "update content_ideas set status='selected' where id=%s and status <> 'produced'", (idea["id"],))
             out = produce_project(conn, router, storage, idea, week, project=project,
                                   stage=lambda label, n, total: jobs.progress(conn, label, n, total))
@@ -671,8 +673,38 @@ def produce_idea(conn, router: Router, storage, *, content_idea_id=None, generat
         if head["status"] in ("ready_for_review", "needs_attention"):
             notify.send(conn, "package_ready", f"Ready for review: {head['title']}",
                         "Passed every check." if head["status"] == "ready_for_review" else "Something needs a look before approval.",
-                        link=f"{config.runtime().dashboard_url}/review/{head['id']}", dedupe_key=f"package_ready:{head['id']}")
+                        link=links.project(head["id"]), dedupe_key=f"package_ready:{head['id']}")
         return {"project_id": str(head["id"]), "status": head["status"], "posts_planned": posts, "auto_review": reviewed}
+
+
+def resume_due_retries(conn, router: Router, storage, limit: int = 1) -> list[dict]:
+    """A step waiting to retry (a busy or rate-limited service) really runs again when its time comes, with only the
+    attempts it has left: finished steps are kept and nothing is made twice. A package the owner is working on
+    (a request queued or running) or has already decided is left alone. When the last attempt fails, the owner
+    is told once."""
+    due = db.all_(conn, """
+        select distinct h.id, h.idea_id, h.title from generation_jobs j
+          join content_projects p on p.id = j.project_id
+          join content_projects h on h.id = coalesce(p.parent_project_id, p.id)
+         where j.status = 'retrying' and coalesce(j.next_attempt_at, now()) <= now() and j.attempts < j.max_attempts
+           and j.job_type = any(%s) and h.idea_id is not null and h.status <> all(%s)
+           and not exists (select 1 from generation_jobs o where o.requested_by = 'owner'
+                            and o.status in ('queued', 'running', 'retrying') and o.project_id = h.id)
+         limit %s""", (list(STAGES), list(DECIDED), limit))
+    out = []
+    for h in due:
+        try:
+            res = produce_idea(conn, router, storage, content_idea_id=h["idea_id"], fresh_attempts=False)
+            out.append({"project_id": str(h["id"]), "status": res.get("status")})
+        except Exception as exc:  # noqa: BLE001 - recorded on the step itself; the owner hears when retries end
+            out.append({"project_id": str(h["id"]), "status": "retrying", "error": str(exc)[:200]})
+            left = db.one(conn, """select count(*) n from generation_jobs j join content_projects p on p.id = j.project_id
+                                    where coalesce(p.parent_project_id, p.id) = %s and j.status = 'retrying'""", (h["id"],))["n"]
+            if not left:
+                notify.send(conn, "job_failed", f"Stopped retrying: {h['title']}",
+                            f"A step still didn't work after its last automatic attempt: {str(exc)[:200]}. Open the package to try again.",
+                            link=links.project(h["id"]), dedupe_key=f"retries_exhausted:{h['id']}")
+    return out
 
 
 def plan_project_distribution(conn, project_id, now: datetime | None = None) -> int:

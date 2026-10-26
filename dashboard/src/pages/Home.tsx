@@ -11,11 +11,11 @@ import { Confirm, ErrorNote, HostTag, Loading, NotConfirmed, PageHeader, StatusB
 import { must, useAccounts, useSaveSetting, useSetting, useTimezone } from "../lib/api";
 import { useCleared, visibleAfterClear } from "../lib/clear";
 import { fixFor } from "../lib/labels";
-import { jobTitle, stillFailing, useRunningJobs } from "../lib/activity";
+import { jobStateText, jobTitle, stillFailing, useRunningJobs } from "../lib/activity";
 import { fmtDateTime, localDay, statusText, weekDays } from "../lib/format";
 import { useKeyCheck, useReadiness } from "../lib/readiness";
 import { projectPath } from "../lib/routes";
-import { signedUrl, supabase } from "../lib/supabase";
+import { MissingFileError, signedUrl, supabase } from "../lib/supabase";
 import type { Post, Project } from "../lib/types";
 
 export const POST_SELECT =
@@ -200,7 +200,7 @@ function BeingMade() {
           {jobs.slice(0, 4).map((j) => (
             <li key={j.id} className="rounded-xl border border-line bg-surface px-4 py-3 text-sm">
               <p className="font-medium">{jobTitle(j)}</p><JobActions job={j} />
-              <p className="text-muted">{j.status === "queued" ? "Waiting to start (within 15 minutes)" : j.progress?.label ?? "Working…"}</p>
+              <p className="text-muted">{jobStateText(j)}</p>
             </li>
           ))}
         </ul>
@@ -326,9 +326,10 @@ function DownloadButton({ storageKey }: { storageKey: string }) {
     <button className="btn-quiet" onClick={async () => {
       try {
         const url = await signedUrl(storageKey, 600);
-        if (url) window.location.href = url; else toast("That file has expired. Ask for a new render from Review Studio.", "bad");
+        if (url) window.location.href = url; else toast("That file is no longer stored. Open the package and rebuild the preview to get a new file.", "bad");
       } catch (e) {
-        toast(`Couldn't get the download link: ${(e as Error).message}`, "bad");
+        toast(e instanceof MissingFileError ? "That file is no longer stored (its 14-day storage period ended). Open the package and rebuild the preview to get a new file."
+          : `Couldn't get the download link: ${(e as Error).message} Try again in a moment.`, "bad");
       }
     }}>Download video</button>
   );

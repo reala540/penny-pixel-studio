@@ -4,13 +4,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { ApprovalModeNotice } from "../components/AutoPostToggle";
 import DraftList from "../components/Drafts";
+import JobActions from "../components/JobActions";
 import IdeaCard from "../components/IdeaCard";
 import ResearchIdeaCard from "../components/ResearchIdeaCard";
 import { Empty, ErrorNote, Loading, NotConfirmed, PageHeader, useToast } from "../components/ui";
 import { must, queueJob } from "../lib/api";
 import { stageRows, useStageJobs } from "../lib/content";
 import { safeUrl } from "../lib/format";
-import { getDraft, newDraftId, saveDraft, useOwnerId, type CreateDraft } from "../lib/drafts";
+import { getDraft, newDraftId, removeDraft, saveDraft, useOwnerId, type CreateDraft } from "../lib/drafts";
 import { draftUrl } from "../lib/draftStatus";
 import { buildObjective } from "../lib/ideas";
 import { useActiveIdeaJob, useIdeaActions } from "../lib/ideasApi";
@@ -35,6 +36,7 @@ const visitDraftId = (key: string) => { if (!visitDraftIds.has(key)) visitDraftI
 export default function Create() {
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
+  const toast = useToast();
   const owner = useOwnerId();
   const step = (params.get("step") as Step) || "channel";
   const channel = params.get("channel") as Channel | null;
@@ -147,7 +149,8 @@ export default function Create() {
         {step === "research" && kind && id && <ResearchStep channel={channel} kind={kind} id={id}
           onContinue={(c) => go({ step: "package", channel: c })} onChooseAnother={() => go({ step: "idea", kind: null, id: null })} />}
         {step === "package" && kind && id && channel && channel !== "both" && <PackageStep channel={channel} kind={kind} id={id} onStarted={() => go({ step: "progress" })} />}
-        {step === "progress" && kind && id && <ProgressStep kind={kind} id={id} channel={channel} />}
+        {step === "progress" && kind && id && <ProgressStep kind={kind} id={id} channel={channel}
+          onClearDraft={draftId ? () => { removeDraft(owner, draftId); navigate("/create"); toast("Draft cleared. The package itself is unchanged.", "good", { label: "Undo", run: () => { if (owner && saved) saveDraft(owner, saved, null, true); } }); } : undefined} />}
         {((step !== "channel" && !channel && step === "idea") || ((step === "research" || step === "package" || step === "progress") && (!kind || !id))) && (
           <Empty title="Start from the beginning">Choose a channel first. <button className="text-pixel underline" onClick={() => go({ step: "channel", kind: null, id: null })}>Choose a channel</button></Empty>
         )}
@@ -352,7 +355,7 @@ function useIdeaJob(kind: Kind, id: string) {
   return useQuery({
     queryKey: ["produce-idea-job", kind, id],
     refetchInterval: (q) => (q.state.data && ["queued", "running"].includes(q.state.data.status) ? 5000 : 15_000),
-    queryFn: async () => ((await must(supabase.from("generation_jobs").select("id, status, error_message, project_id, progress, created_at, updated_at, output")
+    queryFn: async () => ((await must(supabase.from("generation_jobs").select("*")
       .eq("job_type", "produce_idea").eq(kind === "generated" ? "input->>generated_idea_id" : "input->>content_idea_id", id)
       .order("created_at", { ascending: false }).limit(1))) as any[])[0] ?? null,
   });
@@ -400,7 +403,7 @@ function PackageStep({ channel, kind, id, onStarted }: { channel: "ai" | "money"
 
 // ------------------------------------------------------------------ 5 progress (only what the engine reports)
 
-function ProgressStep({ kind, id, channel }: { kind: Kind; id: string; channel: Channel | null }) {
+function ProgressStep({ kind, id, channel, onClearDraft }: { kind: Kind; id: string; channel: Channel | null; onClearDraft?: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
   const sel = useSelected(kind, id);
@@ -431,6 +434,13 @@ function ProgressStep({ kind, id, channel }: { kind: Kind; id: string; channel: 
     <section aria-labelledby="pg-title">
       <h2 id="pg-title" className="section-title mb-1">Step 5 · Being made</h2>
       <p className="font-display text-lg font-semibold">{sel.data?.title}</p>
+      {(job.data || onClearDraft) && (
+        <div className="mt-2 flex flex-wrap items-center gap-3 text-sm">
+          {job.data && <JobActions job={job.data} here />}
+          {onClearDraft && <button type="button" className="text-muted underline-offset-2 hover:text-ink hover:underline" onClick={onClearDraft}
+            title="Removes only your bookmark for this package. The work and the package carry on.">Clear draft</button>}
+        </div>
+      )}
       {!job.data && !p && <p className="mt-3 text-sm text-muted">Nothing has been started for this idea yet.</p>}
       {status === "queued" && <p role="status" className="mt-3 rounded-lg bg-pixel-soft px-3 py-2 text-sm text-pixel">Waiting to start. The engine picks it up within 15 minutes.</p>}
       {status === "running" && job.data?.progress?.label && <p role="status" className="mt-3 rounded-lg bg-pixel-soft px-3 py-2 text-sm text-pixel"><LoaderCircle size={14} className="mr-1 inline animate-spin" aria-hidden />Now: {job.data.progress.label}</p>}

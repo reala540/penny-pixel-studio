@@ -61,3 +61,19 @@ describe("problems that were fixed", () => {
     expect(stillFailing(failed, done).map((f) => f.id)).toEqual(["b", "c"]);
   });
 });
+
+import { jobStateText } from "./activity";
+
+describe("job states in plain words", () => {
+  const j = (status: string, extra: Record<string, unknown> = {}) => ({ status, progress: null, error_message: null, cancel_requested_at: null, ...extra });
+  it("names every state truthfully", () => {
+    expect(jobStateText(j("queued"))).toContain("Waiting to start");
+    expect(jobStateText(j("queued", { error_message: "Runner stopped unexpectedly; resuming" }))).toContain("Interrupted");
+    expect(jobStateText(j("running", { progress: { label: "Writing the script" } }))).toBe("Writing the script");
+    expect(jobStateText(j("running", { cancel_requested_at: "2026-10-26T08:00:00Z" }))).toContain("Stopping");
+    expect(jobStateText(j("retrying", { error_kind: "quota", next_attempt_at: "2026-10-26T09:00:00Z" }), () => "09:00")).toBe("Waiting for the AI service's free quota: tries again 09:00");
+    expect(jobStateText(j("retrying"))).toBe("Retry scheduled");
+    expect(jobStateText(j("cancelled"))).toContain("finished steps were kept");
+    expect(jobStateText(j("completed"))).toBe("Done");
+  });
+});
