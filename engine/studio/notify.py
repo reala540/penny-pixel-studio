@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import html
+import re
 from functools import lru_cache
 
 import httpx
@@ -10,11 +11,43 @@ from . import config, db
 
 MAX_ATTEMPTS = 5
 
+# Updates that don't need the owner. With the "important" preference they stay in the app only; problems and
+# anything that needs a decision always go to Telegram.
+ROUTINE = {"ideas_ready", "research_ready", "published", "auto_approved", "auto_fixing", "provider_check_ready",
+           "ai_model_back", "job_cancelled", "auto_replace"}
+GROUPED = {"job_failed", "publish_blocked", "ai_key_rejected"}   # identical repeats within 30 minutes are sent once
+
+_SECRETS = [
+    (re.compile(r"(?i)\b(api[_-]?key|key|token|access_token|refresh_token|secret|password|passwd|client_secret|sig|signature)=([^&\s'\"]+)"), r"\1=[hidden]"),
+    (re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}"), r"\1 [hidden]"),
+    (re.compile(r"\bbot\d{5,}:[A-Za-z0-9_-]{20,}"), "bot[hidden]"),
+    (re.compile(r"\b(sk|pk|rk|gsk|xai|hf|ghp|gho|github_pat|sb_secret)[-_][A-Za-z0-9_-]{12,}"), "[hidden key]"),
+    (re.compile(r"\bAIza[0-9A-Za-z_-]{20,}"), "[hidden key]"),
+    (re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}"), "[hidden token]"),
+]
+
+
+def scrub(text: str | None) -> str:
+    """Remove anything that looks like a key, token or password before it's stored or sent."""
+    out = text or ""
+    for pattern, repl in _SECRETS:
+        out = pattern.sub(repl, out)
+    return out
+
 
 @lru_cache(maxsize=64)
 def _supported(conn) -> bool:
     return bool(db.one(conn, """select 1 from information_schema.columns where table_schema='public'
                                and table_name='notifications' and column_name='delivery_attempts'"""))
+
+
+def _hold(conn, row: dict, reason: str) -> bool:
+    """Kept in the app, deliberately not sent to Telegram (never retried)."""
+    if _supported(conn):
+        db.run(conn, "update notifications set error=%s, delivery_attempts=%s where id=%s", (reason, MAX_ATTEMPTS, row["id"]))
+    else:
+        db.run(conn, "update notifications set error=%s where id=%s", (reason, row["id"]))
+    return False
 
 
 def _deliver(conn, row: dict, client=None) -> bool:
@@ -23,6 +56,8 @@ def _deliver(conn, row: dict, client=None) -> bool:
     if not rt.telegram_token or not chat:
         db.run(conn, "update notifications set error='telegram not configured' where id=%s", (row["id"],))
         return False
+    if row["kind"] in ROUTINE and db.get_setting(conn, "telegram_alerts", "all") == "important":
+        return _hold(conn, row, "Not sent to Telegram: routine updates are off (Settings → Notifications)")
     supported = _supported(conn)
     if supported:
         row = db.one(conn, """update notifications set delivery_attempts=delivery_attempts+1,
@@ -76,10 +111,16 @@ def _deliver(conn, row: dict, client=None) -> bool:
 
 def send(conn, kind: str, title: str, body: str = "", link: str | None = None,
          dedupe_key: str | None = None, client=None) -> bool:
+    """Record the event (once per dedupe_key) and try to deliver it. Delivery failures never undo the work."""
+    title, body = scrub(title)[:300], scrub(body)
     row = db.one(conn, """insert into notifications(kind,title,body,link,dedupe_key) values(%s,%s,%s,%s,%s)
                        on conflict(dedupe_key) do nothing returning *""", (kind, title, body, link, dedupe_key))
     if row is None and dedupe_key:
         row = db.one(conn, "select * from notifications where dedupe_key=%s and sent_at is null", (dedupe_key,))
+    elif row is not None and kind in GROUPED and db.one(conn, """
+            select 1 from notifications where kind=%s and body=%s and id<>%s and sent_at > now() - interval '30 minutes'
+            limit 1""", (kind, body, row["id"])):
+        return _hold(conn, row, "Not sent to Telegram again: the same problem was reported in the last 30 minutes")
     return _deliver(conn, row, client) if row else False
 
 
