@@ -8,15 +8,35 @@ runs:
         python-version: "3.12"
         cache: pip
         cache-dependency-path: engine/pyproject.toml
+    # The packages are kept between runs (one copy per runner image), so a slow package mirror is only needed
+    # when GitHub updates the image.
+    - name: Runner image
+      id: image
+      shell: bash
+      run: echo "key=studio-debs-${ImageOS:-ubuntu}-${ImageVersion:-unknown}-${{ runner.arch }}-v1" >> "$GITHUB_OUTPUT"
+    - name: Cache system packages
+      uses: actions/cache@v5
+      with:
+        path: ~/.cache/studio-debs
+        key: ${{ steps.image.outputs.key }}
     - name: System packages (FFmpeg, Inter font)
       shell: bash
       run: |
+        debs="$HOME/.cache/studio-debs"
+        ready() { command -v ffmpeg > /dev/null && fc-list | grep -qi "inter"; }
+        if ls "$debs"/*.deb > /dev/null 2>&1; then
+          if sudo dpkg -i "$debs"/*.deb > /dev/null 2>&1 && ready; then echo "Installed from the saved copy"; exit 0; fi
+          echo "The saved copy didn't install; downloading instead"
+          sudo dpkg --configure -a > /dev/null 2>&1 || true
+        fi
         # A slow package mirror must not hang the run, and a try that was cut off must not block the next one:
         # each try is time-limited, waits for (or clears) the package lock, and is tried three times (about 12 minutes at most).
-        apt="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o DPkg::Lock::Timeout=60"
+        apt="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o DPkg::Lock::Timeout=60 -o APT::Keep-Downloaded-Packages=true"
         for try in 1 2 3; do
           if timeout 90 sudo apt-get $apt update -qq && \
              timeout 150 sudo apt-get $apt install -y -qq ffmpeg fonts-inter fonts-dejavu-core > /dev/null; then
+            mkdir -p "$debs" && rm -f "$debs"/*.deb
+            cp /var/cache/apt/archives/*.deb "$debs"/ 2> /dev/null || true
             exit 0
           fi
           echo "Package download try $try didn't finish; clearing it and trying again"
