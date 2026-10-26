@@ -37,6 +37,19 @@ platform publishing safeguards, immutable records, and budgets. It does not publ
 - Global Stop & clear remains a separate destructive operation. Cancellation acceptance is not described as proof
   that an external request has already stopped; already-finished GitHub runs are not counted as cancellation requests.
 
+## Audit fixes (migration 14) — 26 Oct
+
+Live check: the dashboard and Worker run `fce9fe2`, the database is still on migration 12. Migration 14
+(`20261031000014_audit_fixes.sql`) is independent of 13 and was tested applying both before and after it:
+
+- Stop & clear can no longer be run by any signed-in account (critical: its guard used `current_user`).
+- Approval is tied to the reviewed script version; a new script withdraws an approval; published text is locked.
+- Owner scheduling rules (future time, 30-minute clash) hold on direct table changes too.
+- TRUNCATE/TRIGGER/REFERENCES removed from the API roles.
+
+Until migration 14 is applied the new dashboard checks the version itself before using the older approval function,
+and rejects past/clashing times in the browser. The database guarantees need the migration.
+
 ## Required database rollout
 
 **Production schema/application state has not been inspected through Vercel/Supabase connectors: those tools were
@@ -44,8 +57,8 @@ not available in this session. Do not infer that pushing code applied a migratio
 
 1. Back up the database using the normal Supabase process. Confirm migrations 1–12 are recorded in
    `studio_meta.migrations`. If not, inspect the discrepancy rather than guessing which SQL has run.
-2. Apply `supabase/migrations/20261030000013_reliability.sql` in one transaction, using the normal `studio migrate`
-   mechanism when its migration ledger is correct. It adds columns, a draft table, and owner-only functions;
+2. Apply `supabase/migrations/20261030000013_reliability.sql` and then `20261031000014_audit_fixes.sql`, each in
+   one transaction, using the normal `studio migrate` mechanism (or First-time setup) when its migration ledger is correct. It adds columns, a draft table, and owner-only functions;
    it does not delete projects, alter existing credentials, or change approval defaults.
 3. Refresh PostgREST's schema cache if the new functions are not discovered after application:
    `NOTIFY pgrst, 'reload schema';`.
