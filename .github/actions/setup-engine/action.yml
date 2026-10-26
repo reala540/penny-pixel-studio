@@ -11,14 +11,18 @@ runs:
     - name: System packages (FFmpeg, Inter font)
       shell: bash
       run: |
-        # a slow or broken package mirror must not hang the run: each try is limited, and tried three times
-        apt="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+        # A slow package mirror must not hang the run, and a try that was cut off must not block the next one:
+        # each try is time-limited, waits for (or clears) the package lock, and is tried three times (about 12 minutes at most).
+        apt="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o DPkg::Lock::Timeout=60"
         for try in 1 2 3; do
-          if timeout 150 sudo apt-get $apt update -qq && \
-             timeout 240 sudo apt-get $apt install -y -qq ffmpeg fonts-inter fonts-dejavu-core > /dev/null; then
+          if timeout 90 sudo apt-get $apt update -qq && \
+             timeout 150 sudo apt-get $apt install -y -qq ffmpeg fonts-inter fonts-dejavu-core > /dev/null; then
             exit 0
           fi
-          echo "Package download try $try didn't finish; trying again"; sleep 10
+          echo "Package download try $try didn't finish; clearing it and trying again"
+          sudo killall -q apt-get dpkg 2>/dev/null || true
+          sudo dpkg --configure -a > /dev/null 2>&1 || true
+          sleep 10
         done
         exit 1
     - name: Cache voice models and rendered scenes
