@@ -105,6 +105,24 @@ coding assistant. Tick items off by editing this file.
     - Also consider short real-world stock video clips (b-roll) from Pexels and Pixabay, which the studio already
       has keys for (it uses them for photos today), with the same licence records as photos.
 
+22c. [ ] **More free visual sources, used automatically** (later, together with 22b). The studio searches these by
+    itself for each scene; you only add the free API keys in Setup. Every download keeps a licence record, and
+    anything without a clear licence for commercial use is skipped.
+    - Already connected (keys in place, photos only today): **Pexels** and **Pixabay**. Add their free **video**
+      search for real b-roll clips.
+    - Already connected (no key): **Openverse** (openly licensed images; licence checked per image).
+    - New, free key: **Unsplash** (high-quality photos; must credit the photographer and follow Unsplash's API rules).
+    - New, free key: **Coverr** (free stock video clips).
+    - New, free key: **Freesound** (sound effects such as coins, clicks, whooshes; use only CC0 or CC-BY sounds and
+      credit CC-BY ones).
+    - New, free key from api.data.gov: **Smithsonian Open Access** (millions of public-domain images, CC0).
+    - New, no key: **NASA Image and Video Library** (public-domain space and science images and video).
+    - New, no key: **Wikimedia Commons** (real photos of places, companies' products and events; licence and credit
+      per file, and skip share-alike files where the licence can't be followed).
+    - New, no key: **Iconify** (open-source icon sets for the animated scenes, coloured in Penny's or Pixel's colours).
+    - Not automatic (no API, so left out): Mixkit, LottieFiles' marketplace, YouTube Audio Library.
+    - Never: paid stock sites, trial credits, or other creators' videos.
+
 ## E. Review after about a month of posting
 
 Until the Performance page exists, do this by hand in each platform's own stats (YouTube Studio → Analytics,
