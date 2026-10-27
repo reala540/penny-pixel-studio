@@ -130,8 +130,12 @@ class Facebook:
             pid = r.json().get("id")
             return PublishResult(pid, f"https://www.facebook.com/{pid}" if pid else None, "public", "api")
         if video is None:
-            raise PermanentError("facebook: reel needs a video")
-        start = self.client.post(f"{g}/{page_id}/video_reels", data={"upload_phase": "start", "access_token": token})
+            raise PermanentError(f"facebook: a {variant['kind'].replace('_', ' ')} needs a video")
+        if variant["kind"] == "long_video":
+            return self._long_video(g, page_id, variant, video, token)
+        # Reels and Stories: start, upload the file to Facebook's upload host, then finish
+        edge = "video_stories" if variant["kind"] == "story" else "video_reels"
+        start = self.client.post(f"{g}/{page_id}/{edge}", data={"upload_phase": "start", "access_token": token})
         _raise_for(start, "facebook")
         vid = start.json().get("video_id")
         upload_url = start.json().get("upload_url") or f"https://rupload.facebook.com/video-upload/{self.ver}/{vid}"
@@ -142,6 +146,15 @@ class Facebook:
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             raise TransientError("facebook: upload dropped before finishing (nothing published yet)") from exc
         _raise_for(up, "facebook")
+        if variant["kind"] == "story":  # a Story has no caption
+            fin = self.client.post(f"{g}/{page_id}/video_stories",
+                                   data={"upload_phase": "finish", "video_id": vid, "access_token": token})
+            _raise_for(fin, "facebook", after_upload=True)
+            body = fin.json()
+            if not body.get("success", False):
+                raise AmbiguousPublish("facebook: story finish phase did not confirm success")
+            post_id = body.get("post_id") or vid
+            return PublishResult(str(post_id), f"https://www.facebook.com/{post_id}", "public", "api")
         caption = (variant.get("body") or "") + ("\n" + " ".join(f"#{h.lstrip('#')}" for h in variant.get("hashtags") or []))
         fin = self.client.post(f"{g}/{page_id}/video_reels",
                                data={"upload_phase": "finish", "video_id": vid, "video_state": "PUBLISHED",
@@ -150,6 +163,44 @@ class Facebook:
         if not fin.json().get("success", True):
             raise AmbiguousPublish("facebook: finish phase did not confirm success")
         return PublishResult(vid, f"https://www.facebook.com/reel/{vid}", "public", "api")
+
+    CHUNK_LIMIT = 200  # a long video is sent in pieces; this many pieces means something is wrong
+
+    def _long_video(self, g: str, page_id: str, variant: dict, video: Path, token: str) -> PublishResult:
+        """A long video on the Page, sent in pieces (resumable upload) so a big file never needs one huge request."""
+        gv = g.replace("https://graph.facebook.com", "https://graph-video.facebook.com")
+        size = video.stat().st_size
+        start = self.client.post(f"{gv}/{page_id}/videos",
+                                 data={"upload_phase": "start", "file_size": str(size), "access_token": token})
+        _raise_for(start, "facebook")
+        s = start.json()
+        session, vid = s.get("upload_session_id"), s.get("video_id")
+        lo, hi = int(s.get("start_offset", 0)), int(s.get("end_offset", 0))
+        try:
+            with video.open("rb") as fh:
+                for _ in range(self.CHUNK_LIMIT):
+                    if lo >= hi:
+                        break
+                    fh.seek(lo)
+                    piece = fh.read(hi - lo)
+                    r = self.client.post(f"{gv}/{page_id}/videos",
+                                         data={"upload_phase": "transfer", "upload_session_id": session,
+                                               "start_offset": str(lo), "access_token": token},
+                                         files={"video_file_chunk": ("chunk", piece, "application/octet-stream")})
+                    _raise_for(r, "facebook")
+                    lo, hi = int(r.json().get("start_offset", hi)), int(r.json().get("end_offset", hi))
+                else:
+                    raise PermanentError("facebook: the video upload didn't finish after many pieces")
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            raise TransientError("facebook: upload dropped before finishing (nothing published yet)") from exc
+        fin = self.client.post(f"{gv}/{page_id}/videos",
+                               data={"upload_phase": "finish", "upload_session_id": session,
+                                     "title": (variant.get("title") or "")[:255],
+                                     "description": (variant.get("body") or "")[:5000], "access_token": token})
+        _raise_for(fin, "facebook", after_upload=True)
+        if not fin.json().get("success", False):
+            raise AmbiguousPublish("facebook: video finish phase did not confirm success")
+        return PublishResult(str(vid), f"https://www.facebook.com/{page_id}/videos/{vid}", "public", "api")
 
 
 # ------------------------------------------------------------------------------------------ TikTok

@@ -85,11 +85,13 @@ function AccountSchedule({ account }: { account: Account }) {
   const changed = JSON.stringify(d) !== JSON.stringify(initial);
   const save = useMutation({
     mutationFn: async () => {
-      const args = { p_account_id: account.id, p_schedule: payload(account.platform, d), p_move: move };
+      const args = { p_account_id: account.id, p_schedule: payload(account.platform, d, account.weekly_targets ?? {}), p_move: move };
       let response = await supabase.rpc("save_posting_schedule", { ...args, p_expected: { weekly_targets: account.weekly_targets, enabled: account.enabled } });
       if (missingFunction(response.error)) response = await supabase.rpc("set_posting_schedule", args);
       const {data,error} = response;
-      if (error) throw new Error(error.message);
+      if (error) throw new Error(/is not a post type for facebook/i.test(error.message)
+        ? "Facebook Stories and long videos need the latest database update. Run GitHub → Actions → First-time setup (keys only), then save again."
+        : error.message);
       return data as { moved_posts: number };
     },
     onSuccess: (r) => {

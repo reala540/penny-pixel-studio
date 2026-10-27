@@ -140,9 +140,11 @@ def final_media(conn, storage, ctx: dict) -> tuple[Path | None, Path | None]:
 
 
 def fingerprint(ctx: dict, video: Path | None) -> str:
-    """SHA-256 of what would be posted: the video file's bytes, or the normalised text for text-only posts."""
+    """SHA-256 of what would be posted: the video file's bytes (marked for Stories), or the normalised text for text-only posts."""
     h = hashlib.sha256()
     if video is not None:
+        if ctx.get("kind") == "story":  # a Story reuses its Reel's video: it's a different place, not a repeat
+            h.update(b"story\0")
         with open(video, "rb") as f:
             for chunk in iter(lambda: f.read(1 << 20), b""):
                 h.update(chunk)

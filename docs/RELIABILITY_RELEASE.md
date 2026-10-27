@@ -124,3 +124,17 @@ Local editor drafts remain device-specific; only creation bookmarks sync between
 is shown honestly. A power loss before the browser commits a keystroke or before cloud sync completes cannot be
 promised recoverable. An ambiguous Telegram timeout may already have delivered the message; retries can produce
 a duplicate. An external model request cannot be recalled once submitted, and cancellation does not refund tokens.
+
+## Facebook Stories and long videos (migration 16)
+
+Migration `20261102000016_facebook_stories_long_videos.sql` lets a post be a `story` and lets the Facebook Page's
+posting schedule hold Stories and long videos. Apply it with **GitHub → Actions → First-time setup (keys only)**.
+Until then, Facebook schedules still save; asking for Stories or long videos shows a message to run the update.
+
+- **Stories:** each Story reuses one of the week's Reels and goes up 3 hours after it. It takes no posting slot,
+  has no caption, and is never blocked as a repeat of its Reel (its fingerprint is marked as a Story; two identical
+  Stories are still stopped).
+- **Long videos:** the YouTube title and description (with its disclaimer) go to the Page as a video, uploaded in
+  pieces. They take a posting slot after the Reels and text posts, so add a posting day or time if the week is full.
+- Nothing changes until the owner sets **Stories per week** and **Long videos per week** for the Facebook Page in
+  Settings → Posting schedule. Ads are not part of the studio.

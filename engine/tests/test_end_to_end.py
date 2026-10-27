@@ -161,6 +161,21 @@ class Platform:
             return httpx.Response(200, json={"id": "yt123"})
         if "thumbnails/set" in u:
             return httpx.Response(200, json={})
+        if "video_stories" in u:
+            if "upload_phase=start" in req.content.decode():
+                return httpx.Response(200, json={"video_id": "fbs1", "upload_url": "https://rupload.example/fbs1"})
+            return httpx.Response(200, json={"success": True, "post_id": "page_story1"})
+        if "graph-video.facebook.com" in u and u.endswith("/videos"):
+            body = req.content.decode("latin-1")
+            if "upload_phase=start" in body:
+                self.video_size = int(body.split("file_size=")[1].split("&")[0])
+                return httpx.Response(200, json={"upload_session_id": "sess1", "video_id": "fbv1", "start_offset": "0",
+                                                 "end_offset": str(min(self.video_size, 1 << 20))})
+            if 'name="upload_phase"\r\n\r\ntransfer' in body:
+                start = int(body.split('name="start_offset"\r\n\r\n')[1].split("\r\n")[0])
+                nxt = min(self.video_size, start + (1 << 20))
+                return httpx.Response(200, json={"start_offset": str(nxt), "end_offset": str(min(self.video_size, nxt + (1 << 20)))})
+            return httpx.Response(200, json={"success": True})
         if "video_reels" in u:
             body = req.content.decode()
             if "upload_phase=start" in body:

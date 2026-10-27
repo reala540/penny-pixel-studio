@@ -50,4 +50,25 @@ describe("posting schedule", () => {
     expect(d.posting_times).toEqual(["08:30"]);
     expect(d.targets.text_post).toBe(3);
   });
+
+  it("Facebook Stories follow their Reels three hours later; long videos take a slot", () => {
+    const fb = draftFrom("facebook", true, { reel: 2, story: 2, text_post: 1, long_video: 1,
+      posting_days: ["mon", "wed", "fri", "sat"], posting_times: ["19:00", "22:30"] });
+    const week = weekPreview("facebook", fb);
+    expect(week.mon).toEqual([{ time: "19:00", label: "Reels" }, { time: "22:00", label: "Story" }, { time: "22:30", label: "Reels" }]);
+    expect(week.tue).toEqual([{ time: "01:30", label: "Story" }]);           // past midnight: the next day
+    expect(week.wed).toEqual([{ time: "19:00", label: "Text posts" }, { time: "22:30", label: "Long videos" }]);
+    expect(totalPerWeek("facebook", fb)).toBe(6);
+    expect(warnings("facebook", fb)).toEqual([]);
+    const more = draftFrom("facebook", true, { reel: 1, story: 3, posting_days: ["mon"], posting_times: ["19:00"] });
+    expect(warnings("facebook", more).join(" ")).toContain("only 1 Story will be posted");
+  });
+
+  it("a never-saved post type left at 0 isn't sent, so older databases still save", () => {
+    const saved = { reel: 3, text_post: 2, posting_days: ["mon"], posting_times: ["19:00"] };
+    const fb = draftFrom("facebook", true, saved);
+    expect(payload("facebook", fb, saved).targets).toEqual({ reel: 3, text_post: 2 });
+    expect(payload("facebook", { ...fb, targets: { ...fb.targets, story: 2 } }, saved).targets).toEqual({ reel: 3, text_post: 2, story: 2 });
+    expect(payload("facebook", { ...fb, targets: { ...fb.targets, reel: 0 } }, saved).targets).toEqual({ reel: 0, text_post: 2 });
+  });
 });

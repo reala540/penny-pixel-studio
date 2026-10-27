@@ -14,12 +14,20 @@ export interface ScheduleDraft {
   targets: Record<string, number>;
 }
 
-/** Post types and which slot group they use. Facebook reels and text posts share the same slots. */
-export const KINDS: Record<Platform, { kind: string; label: string; group: "posting" | "shorts" }[]> = {
+/** Post types and which slot group they use. Facebook Reels, text posts and long videos share the same slots, in that
+ *  order; a Story takes no slot of its own: it goes up STORY_DELAY_HOURS after its Reel. */
+export const KINDS: Record<Platform, { kind: string; label: string; group: "posting" | "shorts" | "after_reel" }[]> = {
   youtube: [{ kind: "long_video", label: "Long videos", group: "posting" }, { kind: "short_video", label: "Shorts", group: "shorts" }],
-  facebook: [{ kind: "reel", label: "Reels", group: "posting" }, { kind: "text_post", label: "Text posts", group: "posting" }],
+  facebook: [{ kind: "reel", label: "Reels", group: "posting" }, { kind: "text_post", label: "Text posts", group: "posting" },
+    { kind: "long_video", label: "Long videos", group: "posting" }, { kind: "story", label: "Stories", group: "after_reel" }],
   tiktok: [{ kind: "short_video", label: "Videos", group: "posting" }],
   x: [{ kind: "text_post", label: "Posts", group: "posting" }],
+};
+
+export const STORY_DELAY_HOURS = 3;
+const laterBy = (time: string, hours: number) => {
+  const m = (minutes(time) + hours * 60) % (24 * 60);
+  return { time: `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`, nextDay: minutes(time) + hours * 60 >= 24 * 60 };
 };
 
 /** Roughly what YouTube's free API quota allows per day (10,000 units, about 1,600 per upload). */
@@ -38,8 +46,11 @@ export function draftFrom(platform: Platform, enabled: boolean, wt: Record<strin
   };
 }
 
-export function payload(platform: Platform, d: ScheduleDraft): Record<string, unknown> {
-  const out: Record<string, unknown> = { enabled: d.enabled, posting_days: d.posting_days, posting_times: d.posting_times, targets: d.targets };
+/** What to save. A post type that was never saved and is still 0 is left out, so a schedule still saves on a database
+ *  that doesn't know that type yet (for example Facebook Stories before migration 16). */
+export function payload(platform: Platform, d: ScheduleDraft, saved: Record<string, unknown> = {}): Record<string, unknown> {
+  const targets = Object.fromEntries(Object.entries(d.targets).filter(([k, n]) => n > 0 || k in saved));
+  const out: Record<string, unknown> = { enabled: d.enabled, posting_days: d.posting_days, posting_times: d.posting_times, targets };
   if (platform === "youtube") Object.assign(out, { shorts_days: d.shorts_days, shorts_times: d.shorts_times });
   return out;
 }
@@ -62,7 +73,14 @@ export function weekPreview(platform: Platform, d: ScheduleDraft): Record<Day, {
     const slots = DAYS.filter((day) => days.includes(day)).flatMap((day) => [...times].sort().map((time) => ({ day, time })));
     let i = 0;
     for (const k of kinds) {
-      for (let n = 0; n < (d.targets[k.kind] ?? 0) && i < slots.length; n++, i++) out[slots[i].day].push({ time: slots[i].time, label: k.label });
+      for (let n = 0; n < (d.targets[k.kind] ?? 0) && i < slots.length; n++, i++) {
+        out[slots[i].day].push({ time: slots[i].time, label: k.label });
+        if (k.kind === "reel" && n < (d.targets.story ?? 0)) {  // its Story, a few hours later
+          const later = laterBy(slots[i].time, STORY_DELAY_HOURS);
+          const day = later.nextDay ? DAYS[(DAYS.indexOf(slots[i].day) + 1) % 7] : slots[i].day;
+          out[day].push({ time: later.time, label: "Story" });
+        }
+      }
     }
   }
   for (const day of DAYS) out[day].sort((a, b) => a.time.localeCompare(b.time));
@@ -89,6 +107,8 @@ export function warnings(platform: Platform, d: ScheduleDraft): string[] {
       if (minutes(times[i]) - minutes(times[i - 1]) < 60) w.push(`${times[i - 1]} and ${times[i]} are less than an hour apart. Posts that close together usually reach fewer people.`);
     }
   }
+  if (platform === "facebook" && (d.targets.story ?? 0) > (d.targets.reel ?? 0))
+    w.push(`Each Story is one of your Reels shown again ${STORY_DELAY_HOURS} hours later, so only ${d.targets.reel ?? 0} Stor${(d.targets.reel ?? 0) === 1 ? "y" : "ies"} will be posted.`);
   if (platform === "youtube") {
     const busiest = Math.max(...Object.values(weekPreview(platform, d)).map((x) => x.length));
     if (busiest > YOUTUBE_UPLOADS_PER_DAY) w.push(`One day has ${busiest} uploads. YouTube's free API allows about ${YOUTUBE_UPLOADS_PER_DAY} a day per channel project; the rest would wait.`);

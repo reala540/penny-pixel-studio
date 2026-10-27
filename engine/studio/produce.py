@@ -501,9 +501,12 @@ def plan_distribution(conn, week: date, *, channel: str | None = None) -> int:
         elif acc["platform"] == "facebook":
             pick = schedule.balance_by_mix([{**p, "topic": p["channel_slug"]} for p in shorts[::-1]], mix, t.get("reel", 3))
             texts = schedule.balance_by_mix([{**p, "topic": p["channel_slug"]} for p in longs], mix, t.get("text_post", 2))
-            sl = slots_for(t, "posting", post_week, tz, now)
-            created += _assign(conn, acc, pick, "reel", sl[: len(pick)])
-            created += _assign(conn, acc, texts, "text_post", sl[len(pick):])
+            videos = schedule.balance_by_mix([{**p, "topic": p["channel_slug"]} for p in longs], mix, t.get("long_video", 0))
+            free = slots_for(t, "posting", post_week, tz, now)  # each type takes the next free slots
+            created += _assign(conn, acc, pick, "reel", free)
+            created += _assign(conn, acc, texts, "text_post", free)
+            created += _assign(conn, acc, videos, "long_video", free)
+            created += _add_stories(conn, acc, [p["id"] for p in pick][: t.get("story", 0)])
         elif acc["platform"] == "x":
             pick = schedule.balance_by_mix([{**p, "topic": p["channel_slug"]} for p in longs], mix, t.get("text_post", 3))
             created += _assign(conn, acc, pick, "text_post", slots_for(t, "posting", post_week, tz, now))
@@ -525,6 +528,8 @@ def variant_text(project: dict, acc: dict, kind: str) -> tuple[str | None, str, 
         title = project["title"]
         return title, "", [], []
     if kind == "long_video":
+        if acc["platform"] == "facebook":  # same title and description (with its disclaimer) as YouTube; no tags
+            return pkg.get("youtube_title") or project["title"], pkg.get("youtube_description", ""), [], []
         return pkg.get("youtube_title") or project["title"], pkg.get("youtube_description", ""), pkg.get("tags", []), []
     if acc["platform"] == "x":
         return None, pkg.get("x_post", ""), [], []
@@ -541,8 +546,10 @@ def launch_at(conn, channel: str | None) -> datetime | None:
 
 
 def _assign(conn, acc: dict, projects: list[dict], kind: str, slots: list[datetime]) -> int:
+    """Give each project the earliest free slot. Used slots are removed from `slots`, so several kinds can share it."""
     n = 0
-    free = sorted(slots)
+    slots.sort()
+    free = slots
     for project in projects:
         start = launch_at(conn, project["channel_slug"])  # never before the channel's launch day
         when = next((s for s in free if start is None or s >= start), None)
@@ -553,25 +560,49 @@ def _assign(conn, acc: dict, projects: list[dict], kind: str, slots: list[dateti
                         (project["id"], acc["id"], kind))
         if exists:
             continue
-        title, body, tags, hashtags = variant_text(project, acc, kind)
-        if project["format"] == "short":
-            sv = db.one(conn, "select body from script_versions where id=%s", (project["current_script_version_id"],))
-            sb = (sv or {}).get("body") or {}
-            title, body, hashtags = sb.get("title", project["title"]), sb.get("caption", ""), sb.get("hashtags", [])
-            if acc["platform"] == "youtube":
-                body = (body + "\n\n" + " ".join(f"#{h.lstrip('#')}" for h in hashtags + ["Shorts"])).strip()
-        status = "ready_for_review" if project["status"] == "ready_for_review" else "needs_attention"
-        preview = db.one(conn, """select id from media_assets where project_id=%s and kind='preview_video'
-                                  order by created_at desc limit 1""", (project["id"],))
-        with db.transaction(conn):
-            v = db.one(conn, """insert into content_variants (project_id, social_account_id, kind, title, body, tags, hashtags,
-                                                              preview_asset_id, status, checks)
-                                values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) returning id""",
-                       (project["id"], acc["id"], kind, title, body, tags, hashtags, preview["id"] if preview else None,
-                        status, db.j({"project_status": project["status"]})))
-            db.run(conn, """insert into scheduled_posts (variant_id, social_account_id, scheduled_at, status, idempotency_key)
-                            values (%s,%s,%s,'pending_approval',%s)""",
-                   (v["id"], acc["id"], when, f"post:{v['id']}"))
+        _create_variant(conn, acc, project, kind, when)
+        n += 1
+    return n
+
+
+STORY_DELAY = timedelta(hours=3)  # a Story goes up three hours after its Reel
+
+
+def _create_variant(conn, acc: dict, project: dict, kind: str, when: datetime) -> None:
+    title, body, tags, hashtags = variant_text(project, acc, kind)
+    if project["format"] == "short":
+        sv = db.one(conn, "select body from script_versions where id=%s", (project["current_script_version_id"],))
+        sb = (sv or {}).get("body") or {}
+        title, body, hashtags = sb.get("title", project["title"]), sb.get("caption", ""), sb.get("hashtags", [])
+        if acc["platform"] == "youtube":
+            body = (body + "\n\n" + " ".join(f"#{h.lstrip('#')}" for h in hashtags + ["Shorts"])).strip()
+    status = "ready_for_review" if project["status"] == "ready_for_review" else "needs_attention"
+    preview = db.one(conn, """select id from media_assets where project_id=%s and kind='preview_video'
+                              order by created_at desc limit 1""", (project["id"],))
+    with db.transaction(conn):
+        v = db.one(conn, """insert into content_variants (project_id, social_account_id, kind, title, body, tags, hashtags,
+                                                          preview_asset_id, status, checks)
+                            values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) returning id""",
+                   (project["id"], acc["id"], kind, title, body, tags, hashtags, preview["id"] if preview else None,
+                    status, db.j({"project_status": project["status"]})))
+        db.run(conn, """insert into scheduled_posts (variant_id, social_account_id, scheduled_at, status, idempotency_key)
+                        values (%s,%s,%s,'pending_approval',%s)""",
+               (v["id"], acc["id"], when, f"post:{v['id']}"))
+
+
+def _add_stories(conn, acc: dict, project_ids: list) -> int:
+    """A Story for each of these projects' Reels on this Page, three hours after the Reel. A Story never takes a
+    posting slot of its own and is never added twice."""
+    n = 0
+    for pid in project_ids:
+        reel = db.one(conn, """select sp.scheduled_at from scheduled_posts sp join content_variants v on v.id = sp.variant_id
+                               where v.project_id=%s and v.social_account_id=%s and v.kind='reel'
+                                 and sp.status not in ('cancelled','failed') order by sp.scheduled_at limit 1""", (pid, acc["id"]))
+        if not reel or db.one(conn, "select 1 from content_variants where project_id=%s and social_account_id=%s and kind='story'",
+                               (pid, acc["id"])):
+            continue
+        project = db.one(conn, "select * from content_projects where id=%s", (pid,))
+        _create_variant(conn, acc, project, "story", reel["scheduled_at"] + STORY_DELAY)
         n += 1
     return n
 
@@ -774,9 +805,13 @@ def plan_project_distribution(conn, project_id, now: datetime | None = None) -> 
                 plan.append((shorts[-1:], "reel", "posting"))
             if t.get("text_post", 0):
                 plan.append(([head], "text_post", "posting"))
+            if t.get("long_video", 0):
+                plan.append(([head], "long_video", "posting"))
         elif acc["platform"] == "x" and t.get("text_post", 0):
             plan.append(([head], "text_post", "posting"))
         for projects, kind, prefix in plan:
             items = todo(projects, acc, kind)
             created += _assign(conn, acc, items, kind, free_slots(acc, prefix, len(items)))
+        if acc["platform"] == "facebook" and t.get("story", 0):
+            created += _add_stories(conn, acc, [p["id"] for p in shorts[-1:]])
     return created
