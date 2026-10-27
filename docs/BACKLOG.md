@@ -91,6 +91,38 @@ coding assistant. Tick items off by editing this file.
     - Read-only: looking at the page never posts, approves, generates or spends anything.
     - Optional: a weekly Telegram summary of the same numbers.
 
+22b. [ ] **Livelier videos: a few original animated scenes** (review and proposal first, no changes until agreed).
+    - Videos feel like slideshows (still pictures, charts, big text). Keep those where they help, and add a few
+      original animated scenes that illustrate exactly what the narrator says, e.g. coins moving between budget
+      categories, a shopping basket changing as prices rise, AI agents passing tasks between themselves.
+    - A balanced mix, not all motion graphics. Movement explains something, never just decorates. Modern, polished,
+      consistent with Penny's or Pixel's branding. Factual charts stay accurate; captions stay readable.
+    - Free tools and libraries only, building on the existing renderer. No paid APIs, no trial credits, no copying
+      other creators' videos or distinctive styles. Explain any extra computing needs before choosing.
+    - First review how scenes are planned, assets are sourced, and previews and final videos are rendered; propose a
+      small, compatible addition that keeps existing videos, narration, captions, approvals and publishing working.
+    - Include a way to preview and replace one animated scene without regenerating the whole video.
+    - Also consider short real-world stock video clips (b-roll) from Pexels and Pixabay, which the studio already
+      has keys for (it uses them for photos today), with the same licence records as photos.
+
+22c. [ ] **More free visual sources, used automatically** (later, together with 22b). The studio searches these by
+    itself for each scene; you only add the free API keys in Setup. Every download keeps a licence record, and
+    anything without a clear licence for commercial use is skipped.
+    - Already connected (keys in place, photos only today): **Pexels** and **Pixabay**. Add their free **video**
+      search for real b-roll clips.
+    - Already connected (no key): **Openverse** (openly licensed images; licence checked per image).
+    - New, free key: **Unsplash** (high-quality photos; must credit the photographer and follow Unsplash's API rules).
+    - New, free key: **Coverr** (free stock video clips).
+    - New, free key: **Freesound** (sound effects such as coins, clicks, whooshes; use only CC0 or CC-BY sounds and
+      credit CC-BY ones).
+    - New, free key from api.data.gov: **Smithsonian Open Access** (millions of public-domain images, CC0).
+    - New, no key: **NASA Image and Video Library** (public-domain space and science images and video).
+    - New, no key: **Wikimedia Commons** (real photos of places, companies' products and events; licence and credit
+      per file, and skip share-alike files where the licence can't be followed).
+    - New, no key: **Iconify** (open-source icon sets for the animated scenes, coloured in Penny's or Pixel's colours).
+    - Not automatic (no API, so left out): Mixkit, LottieFiles' marketplace, YouTube Audio Library.
+    - Never: paid stock sites, trial credits, or other creators' videos.
+
 ## E. Review after about a month of posting
 
 Until the Performance page exists, do this by hand in each platform's own stats (YouTube Studio → Analytics,
@@ -106,3 +138,24 @@ Facebook Professional dashboard → Insights, X post analytics, TikTok and Insta
 26. [ ] If the saved timezone were ever an unknown name, dates on some pages would break (the Settings picker only
     offers real zones, so this needs a database edit to happen). Harden later.
 27. [ ] Turn on Supabase "leaked password protection" if the project ever moves to Supabase Pro.
+
+## Appendix: original request for item 22b (word for word)
+
+Again, I want to improve the visual experience of generated videos. Currently, they feel too much like slideshows, with
+still pictures, charts, and large text. Keep those visuals where they help, but add a few original animated scenes
+throughout each video to make the explanations more engaging.
+
+I do not want the entire video to become motion graphics. Use a balanced mix of existing visuals and occasional
+animation that directly illustrates what the narrator is saying. For example, coins moving between budget categories, a
+shopping basket changing as prices rise, or AI agents passing tasks between themselves.
+
+These scenes should feel modern, polished, and consistent with Penny's or Pixel's branding. Movement should explain
+something, rather than simply decorate the screen. Keep factual charts accurate and captions readable.
+
+Use free tools and libraries, preferably building on the existing rendering workflow. Avoid paid APIs, trial-credit
+dependencies, and copying other creators' videos or distinctive styles. Explain any additional computing requirements
+before choosing the approach.
+
+First review how the app currently plans scenes, sources assets, and renders previews and final videos. Propose a small,
+compatible addition that preserves existing videos, narration, captions, approvals, and publishing. Include a way to
+preview and replace an animated scene without regenerating the whole video.
