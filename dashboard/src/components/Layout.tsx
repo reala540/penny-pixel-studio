@@ -12,6 +12,7 @@ import { AutoPostBadge } from "./AutoPostToggle";
 import RunningNow from "./RunningNow";
 import ThemeControl from "./ThemeControl";
 import Tour from "./Tour";
+import WorldClock from "./WorldClock";
 import { Loading } from "./ui";
 
 /** The five destinations never change, move or hide. */
@@ -32,7 +33,7 @@ function Brand() {
         <rect x="17" y="10" width="11" height="12" rx="2" className="fill-cyan" />
       </svg>
       <span className="leading-tight">
-        <span className="block font-display text-base font-bold">Penny &amp; Pixel</span>
+        <span className="block whitespace-nowrap font-display text-base font-bold">Penny &amp; Pixel</span>
         <span className="block text-xs text-muted">Studio</span>
       </span>
     </Link>
@@ -151,11 +152,14 @@ export default function Layout() {
         <div className="flex items-center justify-between gap-2 border-b border-line bg-surface px-4 py-2.5 md:hidden">
           <Brand />
           <div className="flex min-w-0 items-center gap-1">
-            <div className="max-w-[9rem]"><RunningNow /></div>
+            <div className="min-w-0 max-w-[9rem]"><RunningNow /></div>
             <button type="button" onClick={() => setSheet(true)} aria-haspopup="dialog" aria-expanded={sheet}
-              className="flex items-center gap-1 rounded-lg px-2 py-2 text-sm text-muted"><Menu size={20} aria-hidden />More</button>
+              className="flex shrink-0 items-center gap-1 rounded-lg px-2 py-2 text-sm text-muted"><Menu size={20} aria-hidden />More</button>
           </div>
         </div>
+        <header aria-label="Clocks" className="border-b border-line bg-surface px-4 py-2 sm:px-6">
+          <div className="mx-auto flex max-w-[1600px] justify-end"><WorldClock /></div>
+        </header>
         <StatusBanners />
         <DraftSync />
         <main id="main" className="mx-auto w-full max-w-[1600px] flex-1 px-4 pb-28 pt-6 sm:px-6 md:pb-12">

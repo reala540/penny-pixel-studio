@@ -446,7 +446,8 @@ function BudgetEditor({budget}: {budget: {monthly_cap_usd: number; enabled: bool
   );
 }
 
-const ZONES = ["Africa/Nairobi", "Africa/Lagos", "Africa/Johannesburg", "Europe/London", "America/New_York", "Asia/Dubai", "Asia/Kolkata", "UTC"];
+const ZONES = ["Africa/Nairobi", "Africa/Lagos", "Africa/Johannesburg", "Europe/London", "America/New_York", "America/Toronto", "America/Chicago",
+  "America/Denver", "America/Los_Angeles", "Australia/Sydney", "Asia/Dubai", "Asia/Kolkata", "UTC"];
 
 function Schedule() {
   const timezone = useSetting<string>("timezone", "Africa/Nairobi");
