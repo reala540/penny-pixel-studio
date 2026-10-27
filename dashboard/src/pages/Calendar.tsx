@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DragEvent, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import ClearButton from "../components/ClearButton";
+import Countdown from "../components/Countdown";
 import { Confirm, ErrorNote, HostMark, Loading, NotConfirmed, PageHeader, StatusBadge, useToast } from "../components/ui";
 import { missingFunction, must, queueJob, useAccounts, useSetting, useTimezone } from "../lib/api";
 import { dayLabel, fmtDateTime, fmtTime, KIND_NAME, localDay, moveToDay, weekDays } from "../lib/format";
@@ -170,7 +171,7 @@ function PostPanel({ post, tz, onMove }: { post: Post; tz: string; onMove: (when
         <h2 className="mt-1 font-display text-lg font-semibold leading-snug">{post.content_variants?.title || post.content_variants?.content_projects?.title}</h2>
         <div className="mt-2"><StatusBadge status={post.status} /></div>
       </div>
-      <p className="text-sm">{fmtDateTime(post.scheduled_at, tz)}</p>
+      <p className="text-sm">{fmtDateTime(post.scheduled_at, tz)} <Countdown at={post.scheduled_at} status={post.status} className="ml-1 text-xs font-medium text-pixel" /></p>
       {post.last_error && <p className="rounded-lg bg-alert-soft px-3 py-2 text-sm text-alert">{post.last_error}</p>}
       {post.published_posts?.url && <a className="btn-quiet w-full" href={post.published_posts.url} target="_blank" rel="noreferrer">Open the post</a>}
       {movable && (

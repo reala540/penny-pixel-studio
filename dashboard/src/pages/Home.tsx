@@ -13,6 +13,7 @@ import { useCleared, visibleAfterClear } from "../lib/clear";
 import { fixFor } from "../lib/labels";
 import { jobStateText, jobTitle, plainError, stillFailing, useRunningJobs } from "../lib/activity";
 import { fmtDateTime, localDay, statusText, weekDays } from "../lib/format";
+import Countdown from "../components/Countdown";
 import { useKeyCheck, useReadiness } from "../lib/readiness";
 import { projectPath } from "../lib/routes";
 import { MissingFileError, signedUrl, supabase } from "../lib/supabase";
@@ -215,6 +216,7 @@ function NextPosts({ tz }: { tz: string }) {
     queryKey: ["next-posts"],
     queryFn: async () => (await must(supabase.from("scheduled_posts").select("id, scheduled_at, status, social_accounts(label), content_variants(title, kind, content_projects(title))")
       .in("status", ["scheduled", "pending_approval"]).gte("scheduled_at", new Date().toISOString()).order("scheduled_at").limit(5))) as any[],
+    refetchInterval: 60_000,  // a post whose time has come drops off once it's handled
   });
   return (
     <section aria-labelledby="next-title">
@@ -224,7 +226,10 @@ function NextPosts({ tz }: { tz: string }) {
           {(next.data ?? []).map((p) => (
             <li key={p.id}>
               <Link to={`/calendar?post=${p.id}`} className="flex flex-wrap items-center gap-3 px-4 py-2.5 hover:bg-sunken">
-                <span className="w-28 tabular text-muted">{fmtDateTime(p.scheduled_at, tz)}</span>
+                <span className="w-32 leading-tight">
+                  <span className="block tabular text-muted">{fmtDateTime(p.scheduled_at, tz)}</span>
+                  <Countdown at={p.scheduled_at} status={p.status} className="block text-xs font-medium text-pixel" />
+                </span>
                 <span className="min-w-0 flex-1 truncate">{p.social_accounts?.label} · {p.content_variants?.title || p.content_variants?.content_projects?.title}</span>
                 <StatusBadge status={p.status} />
               </Link>
