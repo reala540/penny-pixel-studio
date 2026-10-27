@@ -86,7 +86,9 @@ function answer(db, table, url) {
  */
 export async function openStudio(browser, path = "/", opts = {}) {
   const db = opts.db ?? seed();
-  const context = await browser.newContext({ viewport: opts.viewport ?? { width: 1366, height: 900 }, serviceWorkers: "block" });
+  const context = await browser.newContext({ viewport: opts.viewport ?? { width: 1366, height: 900 }, serviceWorkers: "block",
+    ...(opts.timezoneId ? { timezoneId: opts.timezoneId } : {}) });
+  if (opts.clock) await context.clock.install({ time: opts.clock });  // a controllable clock (sleep, DST, midnight)
   const calls = [];
   if (opts.signedIn !== false) {
     const session = { access_token: "test-access", refresh_token: "test-refresh", token_type: "bearer", expires_in: 3600,
@@ -149,6 +151,7 @@ export async function openStudio(browser, path = "/", opts = {}) {
       if (req.method() === "GET" || req.method() === "HEAD") {
         if (table === "settings") {
           const key = (url.searchParams.get("key") || "").replace(/^eq\./, "");
+          if (opts.slowSetting?.[key]) await sleep(opts.slowSetting[key]);
           const rows = key in db.settings ? [{ value: db.settings[key] }] : [];
           return route.fulfill({ status: 200, headers: cors, body: JSON.stringify(rows) });
         }
