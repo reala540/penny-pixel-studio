@@ -76,7 +76,25 @@ coding assistant. Tick items off by editing this file.
     critic and angle-selector steps have a backup.
 22. [ ] **Second clock (done)** — the header now shows studio time and Kenyan time.
 
+22a. [ ] **Performance page in the app** (plan together with 18 and 19; report first, no changes until agreed).
+    One place to monitor everything instead of opening each platform:
+    - YouTube (permission already granted, read-only): views, watch time, average view duration and retention,
+      impressions and click-through rate, subscribers gained, top countries, and later revenue.
+    - Facebook Page: reach, views, watch time and engagement per post (needs the Page insights permission added to
+      the Facebook app).
+    - Instagram (once added): reach, plays, saves, shares per Reel and Story (needs the Instagram insights permission).
+    - TikTok (once added): views, likes, comments and shares per video, as far as TikTok's API allows.
+    - X: per-post stats cost money to read through X's API, so they'd be off by default or shown as "not
+      available" rather than spending the X budget.
+    - Comparisons: AI vs Money, Reels vs long videos, best days and times, top countries (for the UK slot decision).
+    - Every missing number is labelled "not available" or "not yet collected", never guessed; no promises of virality.
+    - Read-only: looking at the page never posts, approves, generates or spends anything.
+    - Optional: a weekly Telegram summary of the same numbers.
+
 ## E. Review after about a month of posting
+
+Until the Performance page exists, do this by hand in each platform's own stats (YouTube Studio → Analytics,
+Facebook Professional dashboard → Insights, X post analytics, TikTok and Instagram in-app insights).
 
 23. [ ] Check each platform's Insights/Analytics for where viewers are. If the UK is big, add a lunchtime slot
     (about 12:00 New York, 17:00 London).
