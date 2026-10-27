@@ -16,6 +16,7 @@ export const KIND_NAME: Record<string, string> = {
   long_video: "Video",
   short_video: "Short",
   reel: "Reel",
+  story: "Story",
   text_post: "Post",
   image_post: "Image post",
 };
