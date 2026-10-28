@@ -35,6 +35,7 @@ const SECTION_BODY: Record<SettingsSection, () => JSX.Element> = {
   voices: () => <Voices />,
   notifications: () => <Telegram />,
   budget: () => <Budget />,
+  offers: () => <AffiliateOffers />,
   appearance: () => <><Appearance /><div className="mt-14"><Schedule /></div></>,
 };
 
@@ -413,6 +414,83 @@ function VoiceForm({ channel, onSaved }: { channel: any; onSaved: () => void }) 
       {draft.message && <p role="status" className="mt-2 text-sm text-muted">{draft.message} <button type="button" className="underline" onClick={draft.reset}>Discard edits</button></p>}
       <button className="btn-quiet mt-3" disabled={save.isPending || draft.conflict}>Save voice</button>
     </form>
+  );
+}
+
+interface Offer { id: string; name: string; url: string; channel_slug: "ai" | "money" | "both"; topics: string[]; blurb: string | null; disclosure: string; enabled: boolean }
+
+const BLANK_OFFER = { name: "", url: "https://", channel_slug: "money" as const, topics: "", blurb: "" };
+
+/** Owner-entered affiliate offers. Off until one exists; a matching one goes into long-video descriptions only. */
+function AffiliateOffers() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const offers = useQuery({
+    queryKey: ["affiliate_offers"],
+    queryFn: async () => {
+      const r = await supabase.from("affiliate_offers").select("*").order("created_at");
+      if (r.error?.code === "42P01" || r.error?.code === "PGRST205") return null;   // before migration 20
+      return must(Promise.resolve(r)) as Promise<Offer[]>;
+    },
+  });
+  const [form, setForm] = useState(BLANK_OFFER);
+  const topics = form.topics.split(",").map((t) => t.trim()).filter(Boolean);
+  const valid = form.name.trim().length >= 2 && /^https:\/\/\S+\.\S+$/.test(form.url.trim()) && topics.length > 0;
+  const add = useMutation({
+    mutationFn: async () => must(supabase.from("affiliate_offers").insert({ name: form.name.trim(), url: form.url.trim(), channel_slug: form.channel_slug,
+      topics, blurb: form.blurb.trim() || null }).select("id")),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["affiliate_offers"] }); setForm(BLANK_OFFER); toast("Offer added"); },
+    onError: (e) => toast((e as Error).message, "bad"),
+  });
+  const toggle = useMutation({
+    mutationFn: async (o: Offer) => must(supabase.from("affiliate_offers").update({ enabled: !o.enabled, updated_at: new Date().toISOString() }).eq("id", o.id).select("id")),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["affiliate_offers"] }),
+    onError: (e) => toast((e as Error).message, "bad"),
+  });
+  const remove = useMutation({
+    mutationFn: async (o: Offer) => must(supabase.from("affiliate_offers").delete().eq("id", o.id).select("id")),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["affiliate_offers"] }); toast("Offer deleted"); },
+    onError: (e) => toast((e as Error).message, "bad"),
+  });
+  return (
+    <Section id="offers" title="Affiliate offers" intro="Links from affiliate programmes you've joined. When a new long video's topic matches an offer, it's added to the description with a clear disclosure first. Never in X posts, Shorts or the narration, and never as advice for someone's own situation.">
+      {offers.isLoading ? <Loading /> : offers.isError ? <NotConfirmed q={offers} what="affiliate offers" /> : offers.data === null ? (
+        <p role="status" className="rounded-lg bg-sunken p-3 text-sm">Affiliate offers need the latest database update. Run GitHub → Actions → First-time setup (keys only).</p>
+      ) : (
+        <div className="space-y-5">
+          {(offers.data ?? []).length === 0 ? <p className="text-sm text-muted">No offers yet, so nothing is added to descriptions.</p> : (
+            <ul className="divide-y divide-line rounded-xl border border-line bg-surface text-sm">
+              {(offers.data ?? []).map((o) => (
+                <li key={o.id} className="flex flex-wrap items-start justify-between gap-3 px-4 py-3">
+                  <span className="min-w-0">
+                    <span className="font-medium">{o.name}</span> <span className="text-muted">· {o.channel_slug === "both" ? "both channels" : o.channel_slug === "ai" ? "Pixel · AI" : "Penny · Money"}{o.enabled ? "" : " · off"}</span>
+                    <span className="block truncate text-xs text-muted">{o.url}</span>
+                    <span className="block text-xs text-muted">Topics: {o.topics.join(", ")}</span>
+                  </span>
+                  <span className="flex gap-2">
+                    <button type="button" className="btn-quiet" disabled={toggle.isPending} onClick={() => toggle.mutate(o)}>{o.enabled ? "Turn off" : "Turn on"}</button>
+                    <button type="button" className="btn-quiet" disabled={remove.isPending} onClick={() => { if (window.confirm(`Delete "${o.name}"? Videos already made keep their description.`)) remove.mutate(o); }}>Delete</button>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <form className="grid gap-3 rounded-xl border border-line bg-surface p-4 text-sm sm:grid-cols-2" onSubmit={(e) => { e.preventDefault(); if (valid) add.mutate(); }}>
+            <p className="font-medium sm:col-span-2">Add an offer</p>
+            <label><span className="text-muted">Name</span><input className="field mt-1" value={form.name} maxLength={80} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. A budgeting app" /></label>
+            <label><span className="text-muted">Your affiliate link (https)</span><input className="field mt-1" value={form.url} maxLength={500} onChange={(e) => setForm({ ...form, url: e.target.value })} /></label>
+            <label><span className="text-muted">Channel</span>
+              <select className="field mt-1" value={form.channel_slug} onChange={(e) => setForm({ ...form, channel_slug: e.target.value as typeof form.channel_slug })}>
+                <option value="money">Penny · Money</option><option value="ai">Pixel · AI</option><option value="both">Both</option>
+              </select></label>
+            <label><span className="text-muted">Topics it fits (commas), e.g. budget, saving</span><input className="field mt-1" value={form.topics} onChange={(e) => setForm({ ...form, topics: e.target.value })} /></label>
+            <label className="sm:col-span-2"><span className="text-muted">One honest line about it (optional)</span><input className="field mt-1" value={form.blurb} maxLength={200} onChange={(e) => setForm({ ...form, blurb: e.target.value })} placeholder="What it does, in plain words" /></label>
+            <p className="text-xs text-muted sm:col-span-2">Every description with an offer starts the block with: "Affiliate link: I may earn a small commission if you sign up, at no extra cost to you." Only add products you'd genuinely recommend.</p>
+            <div className="sm:col-span-2"><button className="btn-primary" disabled={!valid || add.isPending}>Add offer</button></div>
+          </form>
+        </div>
+      )}
+    </Section>
   );
 }
 
