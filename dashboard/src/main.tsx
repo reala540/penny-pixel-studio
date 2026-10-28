@@ -20,6 +20,7 @@ const Create = lazy(() => import("./pages/Create"));
 const Help = lazy(() => import("./pages/Help"));
 const Home = lazy(() => import("./pages/Home"));
 const Ideas = lazy(() => import("./pages/Ideas"));
+const Performance = lazy(() => import("./pages/Performance"));
 const SettingsPage = lazy(() => import("./pages/Settings"));
 
 // Every action that fails says so, even where a page didn't add its own message; every change tells the other tabs.
@@ -67,6 +68,7 @@ function Studio() {
             <Route path="content/:projectId" element={<ProjectPage />} />
             <Route path="calendar" element={<Calendar />} />
             <Route path="activity" element={<Activity />} />
+            <Route path="performance" element={<Performance />} />
             <Route path="settings/:section" element={<SettingsPage />} />
             <Route path="help" element={<Help />} />
             {["week", "mission", "review", "review/:id", "library", "ideas", "research", "setup", "api", "settings"].map((p) => (

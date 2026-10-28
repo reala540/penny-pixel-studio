@@ -20,9 +20,19 @@ SHORT_PREVIEW_BYTES = 5_000_000
 
 
 def record_render(conn, project_id, quality: str, render_seconds: float, video_seconds: float, nbytes: int) -> None:
-    db.run(conn, """insert into provider_usage (provider, service, role, units, latency_ms, success)
-                    values ('ffmpeg','render',%s,%s,%s,true)""",
-           (quality, int(video_seconds), int(render_seconds * 1000)))
+    if _has_project_column(conn):
+        db.run(conn, """insert into provider_usage (provider, service, role, units, latency_ms, success, project_id)
+                        values ('ffmpeg','render',%s,%s,%s,true,%s)""",
+               (quality, int(video_seconds), int(render_seconds * 1000), project_id))
+    else:  # before migration 19: same row, without the package link
+        db.run(conn, """insert into provider_usage (provider, service, role, units, latency_ms, success)
+                        values ('ffmpeg','render',%s,%s,%s,true)""",
+               (quality, int(video_seconds), int(render_seconds * 1000)))
+
+
+def _has_project_column(conn) -> bool:
+    return bool(db.one(conn, """select 1 from information_schema.columns where table_schema='public'
+                                and table_name='provider_usage' and column_name='project_id'"""))
 
 
 def record_github_minutes(conn, minutes: float, job: str) -> None:
