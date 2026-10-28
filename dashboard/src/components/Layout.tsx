@@ -4,7 +4,7 @@ import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { useSetting } from "../lib/api";
+import { useSetting, useTimezoneProblem } from "../lib/api";
 import { known, useOnline, useOtherTabChanges } from "../lib/state";
 import { useNeedsYouCount } from "../lib/content";
 import { signOut, supabase } from "../lib/supabase";
@@ -53,8 +53,15 @@ function StatusBanners() {
   const online = useOnline();
   const pausedQ = useSetting<boolean>("paused", false);
   const paused = known(pausedQ, online);
+  const badZone = useTimezoneProblem();
   return (
     <>
+      {badZone && (
+        <div role="alert" className="bg-alert-soft px-4 py-2 text-center text-sm text-alert">
+          The saved timezone “{badZone.slice(0, 60)}” isn't recognised, so times are shown in UTC.{" "}
+          <Link to="/settings/appearance#timezone" className="font-semibold underline">Choose a timezone</Link>
+        </div>
+      )}
       {!online && (
         <div role="alert" className="bg-gold px-4 py-2 text-center text-sm font-medium text-ink">
           You're offline. What you see may be out of date, and changes can't be saved until you're back online.
