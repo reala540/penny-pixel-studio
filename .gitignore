@@ -11,3 +11,4 @@ __pycache__/
 !.env.example
 backup/
 dashboard/e2e/screenshots/sweep/
+dashboard/e2e/screenshots/quality/

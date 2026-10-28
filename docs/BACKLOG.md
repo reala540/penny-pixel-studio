@@ -42,3 +42,7 @@ possible UK lunchtime slot, keeping or dropping long videos on Facebook, splitti
   4. Search brief per package, keyword-stuffing notes, learning from real results, boost suggestions.
   5. Affiliate offers with disclosure, off until you add one (migration 20).
 - A backup free AI service: Mistral and about 20 others are connected.
+- Quality pack from the outside review: final video named by its content, Facebook's explicit yes, clear Facebook
+  errors, permission check and Page choice, approval of the current version, a written reason for approving with
+  problems, clock-change handling, real capacity numbers, browser tests on GitHub, better photo choice with reasons,
+  separate Facebook Reel and text-post times, what each account can really do, clear draft save labels (migration 21).

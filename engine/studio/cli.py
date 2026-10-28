@@ -156,6 +156,12 @@ def cmd_maintain(a):
             out["heads_up"] = msg and msg["counts"]
         except Exception as exc:  # noqa: BLE001
             out["heads_up"] = f"skipped: {type(exc).__name__}"
+        try:  # read-only "what works right now" for Settings → Accounts; never stops maintenance
+            from .publish import capabilities
+
+            out["account_capabilities"] = len(capabilities.snapshot(conn)["accounts"])
+        except Exception as exc:  # noqa: BLE001
+            out["account_capabilities"] = f"skipped: {type(exc).__name__}"
         from . import analytics
 
         try:  # read-only numbers for the Performance page; never stops maintenance
@@ -235,7 +241,7 @@ def cmd_benchmark(a):
     prev = [r for r in results if r["quality"] == "preview"]
     pratio = sum(r["render_seconds"] for r in prev) / max(sum(r["video_seconds"] for r in prev), 1)
     mb_per_min = sum(r["megabytes"] for r in final) / max(sum(r["video_seconds"] for r in final) / 60, 0.1)
-    long_min = capacity.DEFAULT_LONG_SECONDS / 60
+    long_min = capacity.long_seconds(None) / 60  # the target length
     weekly = {"long_videos": 6, "shorts": 12}
     est = (weekly["long_videos"] * long_min * (pratio + ratio) + weekly["shorts"] * 0.75 * (pratio + ratio))
     report = {"cpu_count": os.cpu_count(), "peak_memory_mb": round(peak_mb), "wall_seconds": round(time.monotonic() - t0, 1),

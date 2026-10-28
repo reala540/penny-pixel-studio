@@ -210,6 +210,9 @@ def _approve_all(conn):
                (v["id"], owner))
         db.run(conn, "update content_variants set status='approved' where id=%s", (v["id"],))
     # as approve_project does: the packages themselves are approved at their current script version
+    db.run(conn, """insert into approvals (target_type, target_id, decision, script_version_id, decided_by)
+                    select 'project', id, 'approved', current_script_version_id, %s from content_projects
+                     where status in ('ready_for_review','needs_attention')""", (owner,))
     db.run(conn, """update content_projects set status='approved', approved_script_version_id=current_script_version_id
                     where status in ('ready_for_review','needs_attention')""")
 

@@ -65,6 +65,8 @@ export function draftLabel(d: CreateDraft, s: DraftState): string {
   }
 }
 
+const JOB_PAGE = 200;
+
 /** One query for all drafts. */
 export function useDraftFacts(drafts: CreateDraft[]) {
   const gen = drafts.filter((d) => d.kind === "generated" && d.ideaId).map((d) => d.ideaId!);
@@ -84,11 +86,17 @@ export function useDraftFacts(drafts: CreateDraft[]) {
       if (contentIds.length) for (const p of (await must(supabase.from("content_projects").select("id, status, idea_id").in("idea_id", contentIds).is("parent_project_id", null))) as any[])
         projects[p.idea_id] = { id: p.id, status: p.status };
       const jobs: DraftFacts["jobs"] = {};
-      const rows = (await must(supabase.from("generation_jobs").select("status, error_message, project_id, input, created_at").eq("job_type", "produce_idea")
-        .order("created_at", { ascending: false }).limit(200))) as any[];
-      for (const j of rows) {
-        const key = j.input?.generated_idea_id ?? j.input?.content_idea_id;
-        if (key && !jobs[key] && (gen.includes(key) || res.includes(key))) jobs[key] = { status: j.status, error_message: j.error_message, project_id: j.project_id };
+      // newest first, page by page, until every draft has its latest job (or the history ends): an older draft's job is
+      // never hidden behind a fixed number of newer ones
+      const want = new Set([...gen, ...res]);
+      for (let page = 0; page < 25 && Object.keys(jobs).length < want.size; page++) {
+        const rows = (await must(supabase.from("generation_jobs").select("status, error_message, project_id, input, created_at").eq("job_type", "produce_idea")
+          .order("created_at", { ascending: false }).range(page * JOB_PAGE, page * JOB_PAGE + JOB_PAGE - 1))) as any[];
+        for (const j of rows) {
+          const key = j.input?.generated_idea_id ?? j.input?.content_idea_id;
+          if (key && !jobs[key] && want.has(key)) jobs[key] = { status: j.status, error_message: j.error_message, project_id: j.project_id };
+        }
+        if (rows.length < JOB_PAGE) break;
       }
       return { ideas, projects, jobs };
     },

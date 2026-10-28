@@ -10,7 +10,8 @@ import { safeUrl, estSeconds, fmtDateTime, fmtDuration, HOST, KIND_NAME, PLATFOR
 import { MissingFileError, signedUrl, supabase } from "../lib/supabase";
 import { ANIMATIONS, asStill, unsaidNumbers } from "../lib/animations";
 import { caption, limitProblems, parseHashtags, parseTags, rule } from "../lib/limits";
-import { claimProblems, droppedShorts, SHORTS_WAITING, visibleIssues } from "../lib/packageParts";
+import { checkState, claimProblems, includedPosts, droppedShorts, ownerState, REASON_MIN, reasonNeeded, SHORTS_WAITING, visibleIssues } from "../lib/packageParts";
+import { TriangleAlert } from "lucide-react";
 import type { Claim, Project, ScriptBody, Variant } from "../lib/types";
 
 function AutoChecks({ projectId }: { projectId: string }) {
@@ -75,7 +76,7 @@ export function Detail({ id }: { id: string }) {
   const setTab = (t: Tab) => { const p = new URLSearchParams(params); p.set("tab", t); setParams(p, { replace: true }); };
   const [confirm, setConfirm] = useState<null | "approve" | "reject">(null);
   const [regen, setRegen] = useState(false);
-  const [override, setOverride] = useState(false);
+  const [reason, setReason] = useState("");
   const data = useQuery({
     queryKey: ["project", id],
     queryFn: async () => {
@@ -105,8 +106,8 @@ export function Detail({ id }: { id: string }) {
   });
 
   const approve = useMutation({
-    mutationFn: async () => approveProject(id, data.data?.project.current_script_version_id ?? null),
-    onSuccess: (n) => { qc.invalidateQueries(); toast(`Approved: ${n} post${n === 1 ? "" : "s"} scheduled`); },
+    mutationFn: async () => approveProject(id, data.data?.project.current_script_version_id ?? null, reason.trim() || null),
+    onSuccess: (n) => { qc.invalidateQueries(); setReason(""); toast(`Approved: ${n} post${n === 1 ? "" : "s"} scheduled`); },
     onError: (e) => toast((e as Error).message, "bad"),
   });
   const reject = useMutation({
@@ -130,6 +131,11 @@ export function Detail({ id }: { id: string }) {
   const counts = claimProblems(claims);
   const bad = claims.filter((c) => ["unsupported", "contradicted"].includes(c.status));
   const decided = ["approved", "rejected", "scheduled", "published"].includes(project.status);
+  const parts = [project, ...children];
+  const checks = checkState(parts, bad.length, issues.length);
+  const owner = ownerState(project.status);
+  const needReason = reasonNeeded(parts, bad.length);
+  const reasonOk = !needReason || reason.trim().length >= REASON_MIN;
 
   return (
     <article aria-labelledby="detail-title" className="min-w-0">
@@ -149,7 +155,13 @@ export function Detail({ id }: { id: string }) {
             </p>
           )}
         </div>
-        <StatusBadge status={project.status} />
+        <div className="flex flex-col items-end gap-1" aria-label="Checks and approval">
+          <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ${checks === "passed" ? "bg-penny-soft text-penny" : "bg-alert-soft text-alert"}`}>
+            {checks === "passed" ? "Passed checks" : "Needs corrections"}</span>
+          <span className="inline-flex items-center rounded-md bg-sunken px-2 py-0.5 text-xs font-medium text-ink">
+            {owner === "approved" ? "Approved by you" : owner === "published" ? "Approved and posted" : owner === "rejected" ? "Discarded" : "Waiting for your approval"}</span>
+          <StatusBadge status={project.status} />
+        </div>
       </div>
 
       <div className="mt-5 grid gap-6 xl:grid-cols-[minmax(0,1fr)_280px]">
@@ -205,6 +217,14 @@ export function Detail({ id }: { id: string }) {
       <Confirm open={confirm === "approve"} title="Approve this package?"
         body={<>
           <p>The main video, {children.length === 0 ? <strong>no short videos</strong> : <>{children.length} short video{children.length === 1 ? "" : "s"}</>} and {variants.length} platform post{variants.length === 1 ? "" : "s"} go out at their scheduled times. You can still cancel single posts in Calendar.</p>
+          <p className="mt-2 font-medium text-ink">Included</p>
+          <ul className="list-disc pl-4 text-ink">
+            {includedPosts(variants, KIND_NAME).map((x) => <li key={x}>{x}</li>)}
+            {includedPosts(variants, KIND_NAME).length === 0 && <li>No platform posts: nothing would be scheduled.</li>}
+          </ul>
+          {project.format === "long" && children.length === 0 && (
+            <p className="mt-2 text-alert">Missing: short videos, so no Shorts, Reels, Stories or TikTok videos come from this package. Use "Make Shorts again" in Short videos first if you want them.</p>
+          )}
           {(bad.length > 0 || issues.length > 0) && (
             <div className="mt-3 rounded-lg bg-alert-soft p-3 text-ink">
               <p className="font-medium text-alert">You're approving with {bad.length + issues.length} warning{bad.length + issues.length === 1 ? "" : "s"}:</p>
@@ -215,16 +235,19 @@ export function Detail({ id }: { id: string }) {
               </ul>
             </div>
           )}
-          {counts.contradicted > 0 && (
-            <label className="mt-3 flex items-start gap-2 text-ink">
-              <input type="checkbox" className="mt-1" checked={override} onChange={(e) => setOverride(e.target.checked)} />
-              <span>I've checked the contradicted claims and want to publish anyway.</span>
+          <p className="mt-3 text-ink">Approving means <strong>you</strong> decided it can go out. It doesn't mean every check passed{checks === "passed" ? " (here they did)" : ": here some didn't"}.</p>
+          {needReason && (
+            <label className="mt-3 block text-ink">
+              <span className="font-medium">Why are you approving anyway? (required, kept permanently with the approval)</span>
+              <textarea className="field mt-1" rows={3} value={reason} onChange={(e) => setReason(e.target.value)}
+                placeholder="For example: I checked the figure on the official site myself." />
+              {!reasonOk && <span className="mt-1 block text-xs text-muted">At least {REASON_MIN} characters.</span>}
             </label>
           )}
         </>}
-        confirmDisabled={counts.contradicted > 0 && !override}
+        confirmDisabled={!reasonOk}
         confirmLabel={bad.length + issues.length > 0 ? "Approve anyway" : "Approve package"}
-        onCancel={() => { setConfirm(null); setOverride(false); }} onConfirm={() => { setConfirm(null); setOverride(false); approve.mutate(); }} />
+        onCancel={() => { setConfirm(null); setReason(""); }} onConfirm={() => { setConfirm(null); approve.mutate(); }} />
       <Confirm open={confirm === "reject"} title="Discard this package?" danger
         body="The video, its Shorts and all their posts are rejected and their slots freed. It stays in Content → Not used."
         confirmLabel="Discard package" onCancel={() => setConfirm(null)} onConfirm={() => { setConfirm(null); reject.mutate(); }} />
@@ -339,6 +362,12 @@ function ScriptEditor({ project, version }: { project: Project; version: { id: s
             <label className="sr-only" htmlFor={`scene-${i}`}>Narration for scene {i + 1}</label>
             <textarea id={`scene-${i}`} className="field" rows={3} value={s.narration}
               onChange={(e) => setBody({ ...body, scenes: body.scenes.map((x, j) => (j === i ? { ...x, narration: e.target.value } : x)) })} />
+            {project.recipe?.render?.scenes?.[i + 1]?.visual?.fallback_reason && (  // the video's scene 0 is the opening hook
+              <p role="note" className="mt-2 flex items-start gap-1.5 rounded-lg bg-gold/15 px-2.5 py-1.5 text-xs text-ink">
+                <TriangleAlert size={13} className="mt-0.5 shrink-0 text-gold" aria-hidden />
+                {project.recipe.render.scenes[i + 1].visual!.fallback_reason}
+              </p>
+            )}
             {s.visual.type === "animated" && (
               <AnimatedScene project={project} index={i} scene={s} dirty={dirty} versionId={version.id}
                 onChange={(visual) => setBody({ ...body, scenes: body.scenes.map((x, j) => (j === i ? { ...x, visual } : x)) })} />

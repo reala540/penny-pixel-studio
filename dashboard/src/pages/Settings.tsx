@@ -13,8 +13,8 @@ import { ErrorNote, Loading, NotConfirmed, PageHeader, useToast } from "../compo
 import { cleanCategories, cleanRegions, DEFAULT_IDEA_CONFIG, SOURCES } from "../lib/ideas";
 import { useIdeaRuns } from "../lib/ideasApi";
 import type { IdeaGeneratorConfig } from "../lib/types";
-import { must, runWorkflow, useAccounts, useSaveSetting, useSetting } from "../lib/api";
-import { PLATFORM_NAME } from "../lib/format";
+import { must, runWorkflow, useAccounts, useSaveSetting, useSetting, useTimezone } from "../lib/api";
+import { fmtDateTime, PLATFORM_NAME } from "../lib/format";
 import { callWorker, supabase, workerUrl } from "../lib/supabase";
 import { PauseButton } from "./Home";
 
@@ -45,7 +45,7 @@ export default function SettingsPage() {
   const [params] = useSearchParams();
   const toast = useToast();
   useEffect(() => {
-    if (params.get("connected")) toast(`${PLATFORM_NAME[params.get("connected") as keyof typeof PLATFORM_NAME] ?? "Account"} connected`);
+    if (params.get("connected")) toast(`${PLATFORM_NAME[params.get("connected") as keyof typeof PLATFORM_NAME] ?? "Account"} connected${params.get("page") ? `: Page ${params.get("page")}` : ""}`);
     if (params.get("connect_error")) toast(`Couldn't connect: ${params.get("connect_error")}`, "bad");
   }, []);
   const current = (SETTINGS_SECTIONS.find(([k]) => k === section) ?? SETTINGS_SECTIONS[0])[0];
@@ -273,6 +273,7 @@ function Automation() {
 function Accounts() {
   const accounts = useAccounts();
   const toast = useToast();
+  const caps = useSetting<AccountCapabilities | null>("account_capabilities", null);
   const connect = useMutation({
     mutationFn: async (id: string) => (await callWorker<{ url: string }>("/api/oauth/start", { account_id: id })).url,
     onSuccess: (url) => { window.location.href = url; },
@@ -280,6 +281,7 @@ function Accounts() {
   });
   return (
     <Section id="accounts" title="Accounts" intro="Sign in once per account. Your login tokens are encrypted; the dashboard never sees them.">
+      <PagePicker />
       {accounts.isLoading ? <Loading /> : accounts.isError ? <NotConfirmed q={accounts} what="your accounts" /> : (
         <ul className="divide-y divide-line rounded-xl border border-line bg-surface">
           {(accounts.data ?? []).map((a) => {
@@ -295,6 +297,7 @@ function Accounts() {
                 <button className="btn-quiet" onClick={() => connect.mutate(a.id)} disabled={connect.isPending || !workerUrl}>
                   {status === "connected" ? "Reconnect" : "Connect"}
                 </button>
+                <div className="basis-full"><Capability info={caps.data?.accounts?.[a.id]} checkedAt={caps.data?.checked_at} loaded={caps.isSuccess} /></div>
               </li>
             );
           })}
@@ -302,6 +305,67 @@ function Accounts() {
       )}
       {!workerUrl && <p className="mt-2 text-sm text-alert">Connecting needs the Worker. See Settings → Getting started.</p>}
     </Section>
+  );
+}
+
+interface AccountCapability {
+  login_saved: boolean; connected_at: string | null; permissions_missing: string[]; can_publish: boolean; method: string;
+  limitation: string; last_success_at: string | null; last_problem: string | null; last_problem_at: string | null; next_step: string;
+}
+interface AccountCapabilities { checked_at: string; accounts: Record<string, AccountCapability> }
+
+/** What this connection can really do, from the engine's daily check: login, permissions, posting, last result. */
+function Capability({ info, checkedAt, loaded }: { info?: AccountCapability; checkedAt?: string; loaded: boolean }) {
+  const tz = useTimezone();
+  if (!loaded) return null;
+  if (!info) return <p className="mt-1 text-xs text-muted">Not checked yet: the daily check (maintenance) fills this in.</p>;
+  const line = (good: boolean | null, text: string) => (
+    <li className="flex items-start gap-1.5"><span aria-hidden className={good === null ? "text-muted" : good ? "text-penny" : "text-alert"}>{good === null ? "•" : good ? "✓" : "✗"}</span><span>{text}</span></li>
+  );
+  const posting = !info.can_publish ? "Can't post automatically" : info.method === "api_draft" ? "Posts as drafts you finish in the app" : "Posts automatically";
+  return (
+    <ul className="space-y-0.5 text-xs sm:columns-2 sm:gap-6">
+      {line(info.login_saved, info.login_saved ? `Login saved${info.connected_at ? ` (${fmtDateTime(info.connected_at, tz)})` : ""}` : "No login saved")}
+      {line(info.permissions_missing.length === 0, info.permissions_missing.length ? `Missing permission: ${info.permissions_missing.join(", ")}` : "Needed permissions granted")}
+      {line(info.can_publish && info.method !== "api_draft", `${posting}${info.limitation ? `: ${info.limitation}` : ""}`)}
+      {line(info.last_success_at ? true : null, info.last_success_at ? `Last post that worked: ${fmtDateTime(info.last_success_at, tz)}` : "No post has gone out through the studio yet")}
+      {info.last_problem && line(false, `Last problem${info.last_problem_at ? ` (${fmtDateTime(info.last_problem_at, tz)})` : ""}: ${info.last_problem}`)}
+      {info.next_step && info.next_step !== info.limitation && <li className="font-medium text-ink">Next: {info.next_step}</li>}
+      {checkedAt && <li className="text-muted">Checked {fmtDateTime(checkedAt, tz)}</li>}
+    </ul>
+  );
+}
+
+/** After Facebook sign-in with more than one Page: choose which Page this studio posts to. Nothing is saved before. */
+function PagePicker() {
+  const [params, setParams] = useSearchParams();
+  const choice = params.get("pick_page");
+  const toast = useToast();
+  const qc = useQueryClient();
+  const pages = useQuery({
+    queryKey: ["facebook-pages", choice], enabled: !!choice, retry: false,
+    queryFn: async () => (await callWorker<{ pages: { id: string; name: string }[] }>("/api/oauth/facebook-pages", { choice })).pages,
+  });
+  const pick = useMutation({
+    mutationFn: async (pageId: string) => callWorker<{ page: string; id: string }>("/api/oauth/facebook-page", { choice, page_id: pageId }),
+    onSuccess: (r) => { toast(`Facebook connected: Page ${r.page} (${r.id})`); params.delete("pick_page"); setParams(params, { replace: true }); qc.invalidateQueries({ queryKey: ["accounts"] }); },
+    onError: (e) => toast((e as Error).message, "bad"),
+  });
+  if (!choice) return null;
+  return (
+    <div role="dialog" aria-labelledby="pick-page-title" className="mb-4 rounded-xl border border-gold/50 bg-gold/10 p-4 text-sm">
+      <p id="pick-page-title" className="font-medium">Which Facebook Page should the studio post to?</p>
+      <p className="mt-1 text-muted">Facebook gave access to more than one Page. Nothing is saved until you choose. The list expires after 15 minutes.</p>
+      {pages.isLoading ? <Loading /> : pages.isError ? <p className="mt-2 text-alert">{(pages.error as Error).message}</p> : (
+        <ul className="mt-2 space-y-1.5">
+          {(pages.data ?? []).map((p) => (
+            <li key={p.id}><button className="btn-quiet w-full justify-between" disabled={pick.isPending} onClick={() => pick.mutate(p.id)}>
+              <span>{p.name}</span><span className="text-xs text-muted tabular">ID {p.id}</span></button></li>
+          ))}
+        </ul>
+      )}
+      <button className="btn-quiet mt-2" onClick={() => { params.delete("pick_page"); setParams(params, { replace: true }); }}>Cancel</button>
+    </div>
   );
 }
 

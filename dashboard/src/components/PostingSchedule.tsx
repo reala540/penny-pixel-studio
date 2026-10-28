@@ -4,7 +4,7 @@ import { Plus, RotateCcw, TriangleAlert, X } from "lucide-react";
 import { useState } from "react";
 import { missingFunction, useAccounts, useSetting, useTimezone } from "../lib/api";
 import { PLATFORM_NAME } from "../lib/format";
-import { DAY_LABEL, DAYS, Day, draftFrom, KINDS, payload, ScheduleDraft, totalPerWeek, warnings, weekPreview } from "../lib/schedule";
+import { coverage, DAY_LABEL, DAYS, Day, draftFrom, KINDS, payload, ScheduleDraft, totalPerWeek, warnings, weekPreview } from "../lib/schedule";
 import { supabase } from "../lib/supabase";
 import type { Account } from "../lib/types";
 import { Confirm, Loading, NotConfirmed, useToast } from "./ui";
@@ -89,6 +89,10 @@ function AccountSchedule({ account }: { account: Account }) {
       let response = await supabase.rpc("save_posting_schedule", { ...args, p_expected: { weekly_targets: account.weekly_targets, enabled: account.enabled } });
       if (missingFunction(response.error)) response = await supabase.rpc("set_posting_schedule", args);
       const {data,error} = response;
+      const sent = payload(account.platform, d, account.weekly_targets ?? {});
+      if (!error && account.platform === "facebook" && ((sent.reel_days as string[])?.length || (sent.text_days as string[])?.length)
+          && !(data as any)?.weekly_targets?.reel_days && !(data as any)?.weekly_targets?.text_days)
+        throw new Error("Separate Reel and text-post times need the latest database update. Run GitHub → Actions → First-time setup (keys only), then save again. The rest of the schedule was saved.");
       if (error) throw new Error(/is not a post type for facebook/i.test(error.message)
         ? "Facebook Stories and long videos need the latest database update. Run GitHub → Actions → First-time setup (keys only), then save again."
         : error.message);
@@ -123,6 +127,24 @@ function AccountSchedule({ account }: { account: Account }) {
             <DayPicker label="Shorts days" value={d.shorts_days} onChange={(v) => set({ shorts_days: v })} />
             <TimesPicker label="Shorts times" value={d.shorts_times} onChange={(v) => set({ shorts_times: v })} />
           </>}
+          {account.platform === "facebook" && (["reel", "text"] as const).map((g) => {
+            const on = d[`${g}_days`].length > 0 || d[`${g}_times`].length > 0;
+            const name = g === "reel" ? "Reels" : "Text posts";
+            return (
+              <div key={g} className="rounded-lg border border-line p-3">
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={on} onChange={(e) => set(e.target.checked
+                    ? { [`${g}_days`]: d.posting_days, [`${g}_times`]: d.posting_times } as Partial<ScheduleDraft>
+                    : { [`${g}_days`]: [], [`${g}_times`]: [] } as Partial<ScheduleDraft>)} />
+                  {name} have their own days and times
+                </label>
+                {on ? <div className="mt-2 space-y-2">
+                  <DayPicker label={`${name}: days`} value={d[`${g}_days`]} onChange={(v) => set({ [`${g}_days`]: v } as Partial<ScheduleDraft>)} />
+                  <TimesPicker label={`${name}: times`} value={d[`${g}_times`]} onChange={(v) => set({ [`${g}_times`]: v } as Partial<ScheduleDraft>)} />
+                </div> : <p className="mt-1 text-xs text-muted">Off: {name.toLowerCase()} use the posting days and times above.</p>}
+              </div>
+            );
+          })}
           <div className="flex flex-wrap gap-3">
             {kinds.map((k) => (
               <label key={k.kind} className="text-sm"><span className="block text-muted">{k.label} per week</span>
@@ -144,6 +166,7 @@ function AccountSchedule({ account }: { account: Account }) {
               </li>
             ))}
           </ol>
+          <WeekCoverage account={account} draft={d} />
           {warn.length > 0 && (
             <ul className="mt-3 space-y-1">
               {warn.map((w) => <li key={w} className="flex items-start gap-1.5 text-xs text-ink"><TriangleAlert size={13} className="mt-0.5 shrink-0 text-gold" aria-hidden />{w}</li>)}
@@ -162,5 +185,36 @@ function AccountSchedule({ account }: { account: Account }) {
       </div>
       <Confirm open={askMove} title={`Move waiting posts for ${account.label}?`} body={`This saves the schedule and moves ${affected.isSuccess ? `${affected.data} future post${affected.data === 1 ? "" : "s"}` : affected.isError ? "this account's future waiting posts (couldn't count them just now)" : "this account's future waiting posts (counting…)"} to the new slots. Published and currently publishing posts stay unchanged. Slot times are in ${tz}; changing the studio's timezone later (Appearance & region) changes future slots, not posts that already have a time.`} confirmLabel="Save and move" onCancel={() => setAskMove(false)} onConfirm={() => { setAskMove(false); save.mutate(); }} />
     </section>
+  );
+}
+
+/** Next 7 days: what the weekly numbers ask for, what is really scheduled, and why any gap is there. */
+function WeekCoverage({ account, draft }: { account: Account; draft: ScheduleDraft }) {
+  const planned = useQuery({
+    queryKey: ["schedule-coverage", account.id],
+    queryFn: async () => {
+      const now = new Date();
+      const { data, error } = await supabase.from("scheduled_posts").select("status, content_variants(kind)")
+        .eq("social_account_id", account.id).in("status", ["pending_approval", "scheduled", "publishing", "published"])
+        .gte("scheduled_at", now.toISOString()).lt("scheduled_at", new Date(now.getTime() + 7 * 86400_000).toISOString());
+      if (error) throw new Error(error.message);
+      return (data ?? []) as unknown as { status: string; content_variants: { kind: string } | null }[];
+    },
+  });
+  if (planned.isLoading) return <p className="mt-3 text-xs text-muted">Checking what's scheduled…</p>;
+  if (!planned.isSuccess) return <p className="mt-3 text-xs text-muted">Couldn't check what's scheduled for the next 7 days just now.</p>;
+  const rows = coverage(account.platform, draft, planned.data.map((p) => ({ kind: p.content_variants?.kind ?? "", approved: p.status !== "pending_approval" })));
+  if (!rows.length) return null;
+  return (
+    <div className="mt-3 rounded-lg border border-line p-2 text-xs">
+      <p className="font-medium">Next 7 days: asked for, and really scheduled</p>
+      <ul className="mt-1 space-y-0.5">
+        {rows.map((r) => (
+          <li key={r.kind} className="tabular">{r.label}: {r.target}/week asked · {r.scheduled} scheduled{r.waiting ? ` (${r.waiting} waiting for approval)` : ""}
+            {r.gap > 0 && <span className="text-alert"> · {r.gap} not covered: {r.cause}</span>}</li>
+        ))}
+      </ul>
+      <p className="mt-1 text-muted">A post goes out when its slot comes and the publisher runs; uploading and the platform's own processing can add a few minutes.</p>
+    </div>
   );
 }

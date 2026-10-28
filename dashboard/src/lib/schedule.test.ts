@@ -72,3 +72,35 @@ describe("posting schedule", () => {
     expect(payload("facebook", { ...fb, targets: { ...fb.targets, reel: 0 } }, saved).targets).toEqual({ reel: 0, text_post: 2 });
   });
 });
+
+describe("Facebook Reels and text posts on their own times", () => {
+  const base = { reel: 2, text_post: 1, posting_days: ["mon", "wed", "fri"], posting_times: ["12:30"] };
+  it("without their own times they share the Page's slots, as before", () => {
+    const week = weekPreview("facebook", draftFrom("facebook", true, base));
+    expect([week.mon[0].label, week.wed[0].label, week.fri[0].label]).toEqual(["Reels", "Reels", "Text posts"]);
+  });
+  it("with their own times each goes on its own days and times", () => {
+    const d = draftFrom("facebook", true, { ...base, reel_days: ["sat", "sun"], reel_times: ["19:00"], text_days: ["tue"], text_times: ["08:00"] });
+    const week = weekPreview("facebook", d);
+    expect(week.sat).toEqual([{ time: "19:00", label: "Reels" }]);
+    expect(week.sun).toEqual([{ time: "19:00", label: "Reels" }]);
+    expect(week.tue).toEqual([{ time: "08:00", label: "Text posts" }]);
+    expect(week.mon).toEqual([]);
+    expect(payload("facebook", d)).toMatchObject({ reel_days: ["sat", "sun"], reel_times: ["19:00"], text_days: ["tue"] });
+    expect(warnings("facebook", { ...d, reel_times: [] }).some((m) => m.includes("Reel"))).toBe(false); // half-set falls back
+  });
+  it("warns when Reels and text posts land too close together", () => {
+    const d = draftFrom("facebook", true, { reel: 1, text_post: 1, reel_days: ["mon"], reel_times: ["12:00"], text_days: ["mon"], text_times: ["12:30"],
+      posting_days: ["fri"], posting_times: ["09:00"] });
+    expect(warnings("facebook", d).some((m) => m.includes("less than an hour apart"))).toBe(true);
+  });
+  it("says how much of the week is covered, and why not", async () => {
+    const { coverage } = await import("./schedule");
+    const d = draftFrom("facebook", true, base);
+    const rows = coverage("facebook", d, [{ kind: "text_post", approved: true }]);
+    expect(rows.find((r) => r.kind === "reel")).toMatchObject({ target: 2, scheduled: 0, gap: 2, cause: "not enough short videos made and approved yet" });
+    expect(rows.find((r) => r.kind === "text_post")).toMatchObject({ scheduled: 1, gap: 0 });
+    const few = coverage("x", draftFrom("x", true, { text_post: 5, posting_days: ["mon"], posting_times: ["09:00"] }), []);
+    expect(few[0].cause).toBe("only 1 slot a week for them");
+  });
+});
