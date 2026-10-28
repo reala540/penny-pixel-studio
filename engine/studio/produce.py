@@ -323,46 +323,94 @@ def fill_sources(description: str, sources: list[dict]) -> str:
     return text.strip()
 
 
-def attach_photos(conn, storage, project_id, recipe: dict, work: Path) -> dict[int, Path]:
-    """Licensed stock photos for 'stock' scenes; scenes without a photo become original type cards."""
+def _video_wanted(n_stock: int) -> bool:
+    """Which stock scenes try a real video clip first (render.stock_video: off, alternate or always)."""
+    mode = str(config.services()["render"].get("stock_video", "alternate"))
+    return mode == "always" or (mode == "alternate" and n_stock % 2 == 0)
+
+
+def _license(conn, hit) -> dict:
+    return db.one(conn, """insert into license_records (source_url, provider, creator, license, attribution_required,
+                              attribution_text)
+                          values (%s,%s,%s,%s,%s,%s)
+                          on conflict (source_url) do update set downloaded_at=now() returning id""",
+                  (hit.source_url, hit.provider, hit.creator, hit.license, hit.attribution_required, hit.attribution_text))
+
+
+def attach_media(conn, storage, project_id, recipe: dict, work: Path) -> tuple[dict[int, Path], dict[int, Path]]:
+    """Licensed stock video clips and photos for 'stock' scenes (a balanced mix: by default every other stock scene
+    tries a clip first). A scene with neither becomes an original type card. Every file keeps its licence record."""
     photos: dict[int, Path] = {}
+    videos: dict[int, Path] = {}
     orientation = "portrait" if recipe["format"] == "short" else "landscape"
+    n_stock = 0
     for i, sc in enumerate(recipe["scenes"]):
         v = sc["visual"]
         if v.get("type") != "stock":
             continue
+        query = v.get("stock_query") or v.get("headline") or recipe["title"]
+        if sc.get("video_key"):
+            local = work / "clips_src" / Path(sc["video_key"]).name
+            try:
+                if not local.exists():
+                    storage.download(sc["video_key"], local)
+                videos[i] = local
+                n_stock += 1
+                continue
+            except Exception:  # the clip was cleaned up: look again (a new clip or photo, with its own licence)
+                sc.pop("video_key", None)
+                sc.pop("license_record_id", None)
+        if not sc.get("photo_key") and _video_wanted(n_stock):
+            clip = stock.find_video(query, work / "clips_raw", orientation)
+            small = None
+            if clip is not None:
+                try:
+                    small = rendering.prepare_clip(clip.path, work / "clips_src" / clip.path.name, recipe["format"])
+                except Exception:  # a clip FFmpeg can't read: use a photo instead
+                    small = None
+                clip.path.unlink(missing_ok=True)  # only the trimmed copy is kept
+            if clip is not None and small is not None:
+                lic = _license(conn, clip)
+                key = storage.upload(f"projects/{project_id}/clips/{small.name}", small, "video/mp4")
+                db.run(conn, """insert into media_assets (project_id, kind, storage_path, bytes, license_record_id)
+                                values (%s,'video_clip',%s,%s,%s)""", (project_id, key, small.stat().st_size, lic["id"]))
+                sc["video_key"], sc["license_record_id"] = key, str(lic["id"])
+                videos[i] = small
+                n_stock += 1
+                continue
+        n_stock += 1
         if sc.get("photo_key"):
             local = work / "photos" / Path(sc["photo_key"]).name
             if not local.exists():
                 storage.download(sc["photo_key"], local)
             photos[i] = local
             continue
-        hit = stock.find_photo(v.get("stock_query") or v.get("headline") or recipe["title"], work / "photos", orientation)
+        hit = stock.find_photo(query, work / "photos", orientation)
         if hit is None:
             v["type"] = "title_card"
             continue
-        lic = db.one(conn, """insert into license_records (source_url, provider, creator, license, attribution_required,
-                                  attribution_text)
-                              values (%s,%s,%s,%s,%s,%s)
-                              on conflict (source_url) do update set downloaded_at=now() returning id""",
-                     (hit.source_url, hit.provider, hit.creator, hit.license, hit.attribution_required,
-                      hit.attribution_text))
+        lic = _license(conn, hit)
         key = storage.upload(f"projects/{project_id}/photos/{hit.path.name}", hit.path)
         db.run(conn, """insert into media_assets (project_id, kind, storage_path, bytes, license_record_id)
                         values (%s,'image',%s,%s,%s)""", (project_id, key, hit.path.stat().st_size, lic["id"]))
         sc["photo_key"], sc["license_record_id"] = key, str(lic["id"])
         photos[i] = hit.path
-    return photos
+    return photos, videos
+
+
+def attach_photos(conn, storage, project_id, recipe: dict, work: Path) -> dict[int, Path]:
+    """Photos only (kept for callers that don't render clips)."""
+    return attach_media(conn, storage, project_id, recipe, work)[0]
 
 
 def render_preview(conn, storage, project_id, script_body: dict, channel: str, fmt: str) -> dict:
     def do(_):
         recipe = rendering.recipe_from_script(script_body, channel, fmt, script_body.get("title", ""))
         work = config.runtime().work_dir / "render" / str(project_id)
-        photos = attach_photos(conn, storage, project_id, recipe, work)
+        photos, videos = attach_media(conn, storage, project_id, recipe, work)
         out = work / "preview.mp4"
         res = rendering.render(recipe, out, "preview", work_dir=config.runtime().work_dir / "render" / "shared",
-                               photos=photos)
+                               photos=photos, videos=videos)
         key = storage.upload(f"projects/{project_id}/preview.mp4", out, "video/mp4")
         asset = db.one(conn, """insert into media_assets (project_id, kind, storage_path, bytes, duration_seconds)
                                 values (%s,'preview_video',%s,%s,%s) returning id""",
@@ -586,6 +634,24 @@ def _assign(conn, acc: dict, projects: list[dict], kind: str, slots: list[dateti
     return n
 
 
+HASHTAGS_PER_PLATFORM = {"youtube": 3, "tiktok": 5, "facebook": 3}
+
+
+def short_caption(sb: dict, platform: str, kind: str, fallback_title: str) -> tuple[str, str, list[str]]:
+    """Each platform gets its own words: the TikTok and Reel captions when the writer gave them (else the main
+    caption), and only as many topic hashtags as suit that platform. YouTube's go in the text with #Shorts."""
+    title = sb.get("title", fallback_title)
+    tags = [h.lstrip("#") for h in sb.get("hashtags", []) if h][: HASHTAGS_PER_PLATFORM.get(platform, 3)]
+    if platform == "tiktok":
+        return title, (sb.get("tiktok_caption") or sb.get("caption", "")).strip(), tags
+    if platform == "facebook":
+        return title, (sb.get("reel_caption") or sb.get("caption", "")).strip(), tags
+    if platform == "youtube":
+        text = (sb.get("caption", "") + "\n\n" + " ".join(f"#{h}" for h in tags + ["Shorts"])).strip()
+        return title, text, tags
+    return title, sb.get("caption", ""), tags
+
+
 STORY_DELAY = timedelta(hours=3)  # a Story goes up three hours after its Reel
 
 
@@ -594,10 +660,11 @@ def _create_variant(conn, acc: dict, project: dict, kind: str, when: datetime) -
     if project["format"] == "short":
         sv = db.one(conn, "select body from script_versions where id=%s", (project["current_script_version_id"],))
         sb = (sv or {}).get("body") or {}
-        title, body, hashtags = sb.get("title", project["title"]), sb.get("caption", ""), sb.get("hashtags", [])
-        if acc["platform"] == "youtube":
-            body = (body + "\n\n" + " ".join(f"#{h.lstrip('#')}" for h in hashtags + ["Shorts"])).strip()
-    status = "ready_for_review" if project["status"] == "ready_for_review" else "needs_attention"
+        title, body, hashtags = short_caption(sb, acc["platform"], kind, project["title"])
+    from .publish import limits
+
+    too_long = limits.problems(acc["platform"], kind, title, body, tags, hashtags)
+    status = "ready_for_review" if project["status"] == "ready_for_review" and not too_long else "needs_attention"
     preview = db.one(conn, """select id from media_assets where project_id=%s and kind='preview_video'
                               order by created_at desc limit 1""", (project["id"],))
     with db.transaction(conn):
@@ -605,7 +672,7 @@ def _create_variant(conn, acc: dict, project: dict, kind: str, when: datetime) -
                                                           preview_asset_id, status, checks)
                             values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) returning id""",
                    (project["id"], acc["id"], kind, title, body, tags, hashtags, preview["id"] if preview else None,
-                    status, db.j({"project_status": project["status"]})))
+                    status, db.j({"project_status": project["status"], "limits": too_long})))
         db.run(conn, """insert into scheduled_posts (variant_id, social_account_id, scheduled_at, status, idempotency_key)
                         values (%s,%s,%s,'pending_approval',%s)""",
                (v["id"], acc["id"], when, f"post:{v['id']}"))

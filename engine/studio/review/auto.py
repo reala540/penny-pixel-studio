@@ -176,6 +176,11 @@ def deterministic_checks(conn, family: list[dict], variants: list[dict], now: da
     check("destination", "Every post goes to an enabled, configured account", not dest, ", ".join(dest))
     not_ready = [f"{v['account_label']} ({v['kind']})" for v in variants if v["status"] != "ready_for_review"]
     check("variants_ready", "Every post is ready (none needs attention)", not not_ready, ", ".join(not_ready[:4]))
+    from ..publish import limits
+
+    too_long = [f"{v['account_label']} {v['kind'].replace('_', ' ')}: {p}" for v in variants
+                for p in limits.problems(v["platform"], v["kind"], v["title"], v["body"], v.get("tags"), v.get("hashtags"))]
+    check("limits", "Every post fits its platform's limits", not too_long, "; ".join(too_long[:4]))
     banned = sorted({h for v in variants for h in quality.banned_hits(f"{v['title'] or ''} {v['body'] or ''}")})
     check("banned", "No banned or generic phrases in post text", not banned, ", ".join(banned))
     if family and family[0]["channel_slug"] == "money":
@@ -184,7 +189,7 @@ def deterministic_checks(conn, family: list[dict], variants: list[dict], now: da
     risky = risk_reasons(conn, family)
     check("smart_mode", "Low-risk package (Smart Mode)", not risky, "; ".join(risky))
     unlicensed = [p["title"] for p in family for sc in ((p["recipe"] or {}).get("render") or {}).get("scenes", [])
-                  if sc.get("photo_key") and not sc.get("license_record_id")]
+                  if (sc.get("photo_key") or sc.get("video_key")) and not sc.get("license_record_id")]
     check("licences", "Every stock photo has a licence record", not unlicensed, ", ".join(sorted(set(unlicensed))))
     return checks
 

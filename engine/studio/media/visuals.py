@@ -170,11 +170,15 @@ def brand_chip(img: Image.Image, theme: Theme, frame: Frame) -> None:
 # ------------------------------------------------------------------------------- cards
 
 def render_card(visual: dict, theme: Theme, frame: Frame, kicker: str | None = None,
-                photo: Path | None = None, source_note: str | None = None) -> Image.Image:
+                photo: Path | None = None, source_note: str | None = None, over_video: bool = False) -> Image.Image:
+    """One scene's picture. With `over_video` it's a see-through layer (words plus a soft shade) to lay over a clip."""
     w, h = frame.width, frame.height
-    img = background(theme.channel, w, h, theme.primary, theme.secondary, theme.channel).copy()
     vtype = visual.get("type", "title_card")
-    if vtype == "stock" and photo and Path(photo).exists():
+    if over_video:
+        img = _video_scrim(w, h, theme)
+    else:
+        img = background(theme.channel, w, h, theme.primary, theme.secondary, theme.channel).copy()
+    if vtype == "stock" and photo and Path(photo).exists() and not over_video:
         img = _photo_background(img, Path(photo), theme)
     d = ImageDraw.Draw(img, "RGBA")
     x0, y0, x1, y1 = frame.content_box
@@ -277,6 +281,15 @@ def _photo_background(base: Image.Image, photo: Path, theme: Theme) -> Image.Ima
     return Image.composite(shade, p, mask)
 
 
+def _video_scrim(w: int, h: int, theme: Theme) -> Image.Image:
+    """A see-through shade, lighter at the top so the clip's movement shows, darker where the words sit."""
+    grad = Image.linear_gradient("L").resize((w, h))          # 0 at the top, 255 at the bottom
+    alpha = Image.eval(grad, lambda v: int(70 + v * 0.62))
+    layer = Image.new("RGBA", (w, h), (*theme.primary, 0))
+    layer.putalpha(alpha)
+    return layer
+
+
 def fmt_num(v: float) -> str:
     if float(v).is_integer():
         return f"{int(v):,}"
@@ -328,17 +341,20 @@ def render_chart(spec: dict, theme: Theme, size: tuple[int, int]) -> Image.Image
     return Image.open(buf).convert("RGBA").resize((w, h), Image.LANCZOS)
 
 
-def card_hash(visual: dict, theme: Theme, frame: Frame, kicker, photo, source_note) -> str:
-    payload = json.dumps([visual, theme.channel, frame.width, frame.height, kicker, str(photo or ""), source_note,
-                          "card-v3"], sort_keys=True, default=str)
+def card_hash(visual: dict, theme: Theme, frame: Frame, kicker, photo, source_note, over_video: bool = False) -> str:
+    parts = [visual, theme.channel, frame.width, frame.height, kicker, str(photo or ""), source_note, "card-v3"]
+    if over_video:  # unchanged hashes for every existing card, so their cached clips are reused
+        parts.append("over-video")
+    payload = json.dumps(parts, sort_keys=True, default=str)
     return hashlib.sha256(payload.encode()).hexdigest()[:24]
 
 
 def card_file(visual: dict, theme: Theme, frame: Frame, out_dir: Path, kicker=None, photo=None,
-              source_note=None) -> tuple[Path, str]:
-    h = card_hash(visual, theme, frame, kicker, photo, source_note)
+              source_note=None, over_video: bool = False) -> tuple[Path, str]:
+    h = card_hash(visual, theme, frame, kicker, photo, source_note, over_video)
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"card_{h}.png"
     if not path.exists():
-        render_card(visual, theme, frame, kicker, photo, source_note).save(path, optimize=False, compress_level=1)
+        render_card(visual, theme, frame, kicker, photo, source_note, over_video).save(path, optimize=False,
+                                                                                       compress_level=1)
     return path, h

@@ -139,8 +139,10 @@ class ShortScript(BaseModel):
     title: str
     hook: str
     scenes: list[Scene]
-    caption: str
+    caption: str = Field(description="YouTube Shorts caption")
     hashtags: list[str] = Field(default_factory=list)
+    tiktok_caption: str | None = Field(default=None, description="A different, shorter caption written for TikTok")
+    reel_caption: str | None = Field(default=None, description="A different caption written for Facebook Reels")
 
 
 class Package(BaseModel):

@@ -8,6 +8,7 @@ import { approveProject, must, queueJob, useTimezone } from "../lib/api";
 import { useProjectHistory } from "../lib/content";
 import { safeUrl, estSeconds, fmtDateTime, fmtDuration, HOST, KIND_NAME, PLATFORM_NAME } from "../lib/format";
 import { MissingFileError, signedUrl, supabase } from "../lib/supabase";
+import { caption, limitProblems, parseHashtags, parseTags, rule } from "../lib/limits";
 import { claimProblems, droppedShorts, SHORTS_WAITING, visibleIssues } from "../lib/packageParts";
 import type { Claim, Project, ScriptBody, Variant } from "../lib/types";
 
@@ -122,7 +123,9 @@ export function Detail({ id }: { id: string }) {
   if (data.isLoading) return <Loading />;
   if (!data.data) return <ErrorNote error={data.error} onRetry={() => data.refetch()} retrying={data.isFetching} />;
   const { project, script, children, variants, claims, thumbs } = data.data;
-  const issues = visibleIssues(project);
+  const issues = [...visibleIssues(project), ...variants.filter((v) => !["skipped", "rejected", "published"].includes(v.status)).flatMap((v) =>
+    limitProblems(v.social_accounts?.platform ?? "", v.kind, { title: v.title ?? "", body: v.body ?? "", tags: v.tags ?? [], hashtags: v.hashtags ?? [] })
+      .map((p) => `${v.social_accounts?.label ?? "Post"} ${(KIND_NAME[v.kind] ?? v.kind).toLowerCase()}: ${p}`))];
   const counts = claimProblems(claims);
   const bad = claims.filter((c) => ["unsupported", "contradicted"].includes(c.status));
   const decided = ["approved", "rejected", "scheduled", "published"].includes(project.status);
@@ -398,22 +401,28 @@ function Posts({ variants, tz, mainId }: { variants: Variant[]; tz: string; main
 function PostEditor({ v, tz }: { v: Variant; tz: string }) {
   const qc = useQueryClient();
   const toast = useToast();
-  const [form, setForm, draft] = useFormDraft(`post:${v.id}`, {title: v.title ?? "", body: v.body ?? ""});
-  const {title, body} = form;
-  const setTitle = (title: string) => setForm((f) => ({...f, title}));
-  const setBody = (body: string) => setForm((f) => ({...f, body}));
+  const [form, setForm, draft] = useFormDraft(`post:${v.id}`, { title: v.title ?? "", body: v.body ?? "",
+    tags: (v.tags ?? []).join(", "), hashtags: (v.hashtags ?? []).map((h) => `#${h.replace(/^#/, "")}`).join(" ") });
+  const { title, body } = form;
+  const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }));
   const platform = v.social_accounts?.platform ?? "x";
-  const limit = platform === "x" ? 280 : platform === "youtube" ? 5000 : 2200;
+  const r = rule(platform, v.kind);
+  const tags = parseTags(form.tags ?? ""), hashtags = parseHashtags(form.hashtags ?? "");
+  const problems = limitProblems(platform, v.kind, { title, body, tags, hashtags });
+  const showTags = r.tagsTotal !== undefined;
+  const showHashtags = r.hashtags !== undefined;
+  const textLimit = r.body ?? r.caption;
   const post = v.scheduled_posts?.[0];
   const save = useMutation({
     mutationFn: async () => {
       if (draft.conflict) throw new Error("This post changed elsewhere. Reload the current version before saving.");
-      let update=supabase.from("content_variants").update({title:title||null,body}).eq("id",v.id);
-      update=v.body == null ? update.is("body",null) : update.eq("body",v.body);
-      update=v.title == null ? update.is("title",null) : update.eq("title",v.title);
+      let update = supabase.from("content_variants").update({ title: title || null, body, tags, hashtags }).eq("id", v.id);
+      update = v.body == null ? update.is("body", null) : update.eq("body", v.body);
+      update = v.title == null ? update.is("title", null) : update.eq("title", v.title);
       return must(update.select("id").single());
     },
-    onSuccess: () => { qc.invalidateQueries(); toast("Post text saved"); },
+    onSuccess: () => { qc.invalidateQueries(); toast("Post saved"); },
+    onError: (e) => toast((e as Error).message, "bad"),
   });
   const skip = useMutation({
     mutationFn: async () => {
@@ -423,7 +432,9 @@ function PostEditor({ v, tz }: { v: Variant; tz: string }) {
     },
     onSuccess: () => { qc.invalidateQueries(); toast("Skipped. This post won't go out."); },
   });
-  const dirty = title !== (v.title ?? "") || body !== (v.body ?? "");
+  const dirty = title !== (v.title ?? "") || body !== (v.body ?? "") || tags.join("|") !== (v.tags ?? []).join("|")
+    || hashtags.join("|") !== (v.hashtags ?? []).map((h) => h.replace(/^#/, "")).join("|");
+  const locked = v.status === "published";
   return (
     <li className="rounded-xl border border-line bg-surface p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -433,20 +444,42 @@ function PostEditor({ v, tz }: { v: Variant; tz: string }) {
           <StatusBadge status={v.status} />
         </span>
       </div>
-      {v.kind !== "text_post" && (
+      {v.kind === "story" ? (
+        <p className="mt-3 text-sm text-muted">A Story shows the short video only, with no caption.</p>
+      ) : <>
+        {v.kind !== "text_post" && (
+          <label className="mt-3 block text-sm">
+            <span className="text-muted">Title</span>
+            <input className="field mt-1" value={title} disabled={locked} onChange={(e) => set({ title: e.target.value })} maxLength={r.title ?? 100} />
+          </label>
+        )}
         <label className="mt-3 block text-sm">
-          <span className="text-muted">Title</span>
-          <input className="field mt-1" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={100} />
+          <span className="text-muted">{v.kind === "long_video" ? "Description" : platform === "x" ? `Post for ${PLATFORM_NAME[platform]}` : "Caption"}</span>
+          <textarea className="field mt-1" rows={v.kind === "long_video" ? 6 : 3} value={body} disabled={locked} onChange={(e) => set({ body: e.target.value })} />
+          {textLimit && <span className={`mt-1 block text-right text-xs tabular ${(r.caption ? caption(body, hashtags).length : body.length) > textLimit ? "text-alert" : "text-muted"}`}>
+            {r.caption ? caption(body, hashtags).length : body.length} / {textLimit}{r.caption ? " with hashtags" : ""}</span>}
         </label>
-      )}
-      <label className="mt-3 block text-sm">
-        <span className="text-muted">{v.kind === "long_video" ? "Description" : platform === "x" ? `Post for ${PLATFORM_NAME[platform]}` : "Caption"}</span>
-        <textarea className="field mt-1" rows={v.kind === "long_video" ? 6 : 3} value={body} onChange={(e) => setBody(e.target.value)} />
-        <span className={`mt-1 block text-right text-xs tabular ${body.length > limit ? "text-alert" : "text-muted"}`}>{body.length} / {limit}</span>
-      </label>
+        {showTags && (
+          <label className="mt-3 block text-sm">
+            <span className="text-muted">Search tags (separate with commas)</span>
+            <input className="field mt-1" value={form.tags ?? ""} disabled={locked} onChange={(e) => set({ tags: e.target.value })} />
+          </label>
+        )}
+        {showHashtags && (
+          <label className="mt-3 block text-sm">
+            <span className="text-muted">Hashtags (up to {r.hashtags}){platform === "youtube" ? " · in the description text above for YouTube" : ""}</span>
+            <input className="field mt-1" value={form.hashtags ?? ""} disabled={locked} onChange={(e) => set({ hashtags: e.target.value })} />
+          </label>
+        )}
+        {problems.length > 0 && (
+          <ul className="mt-2 list-disc pl-5 text-sm text-alert" aria-label="Platform limits">
+            {problems.map((p) => <li key={p}>{p}</li>)}
+          </ul>
+        )}
+      </>}
       {draft.message && <p role="status" className="mt-2 text-sm text-muted">{draft.message} <button className="underline" onClick={draft.reset}>Discard edits</button></p>}
       <div className="mt-2 flex gap-2">
-        <button className="btn-quiet" disabled={!dirty || body.length > limit || save.isPending || draft.conflict} onClick={() => save.mutate()}>Save text</button>
+        {v.kind !== "story" && !locked && <button className="btn-quiet" disabled={!dirty || problems.length > 0 || save.isPending || draft.conflict} onClick={() => save.mutate()}>Save post</button>}
         {!["skipped", "rejected", "published"].includes(v.status) && <button className="btn-quiet" onClick={() => {if(window.confirm("Skip this post? This account will not receive it; the rest of the package is unchanged."))skip.mutate();}} disabled={skip.isPending}>Skip this post</button>}
       </div>
     </li>

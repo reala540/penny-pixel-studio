@@ -52,6 +52,7 @@ render:
   target_long_minutes: 11
   max_long_minutes: 14
   max_short_seconds: 58
+  stock_video: alternate   # stock scenes that try a real video clip first: off | alternate | always
 
 # Auto Review & Post only ever approves low-risk packages ("Smart Mode"). See engine/studio/review/auto.py.
 smart_mode:

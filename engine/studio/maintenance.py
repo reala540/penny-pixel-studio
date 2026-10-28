@@ -234,7 +234,11 @@ def cleanup(conn, storage) -> dict:
     rows = db.all_(conn, """
         select m.id, m.storage_path from media_assets m join content_projects p on p.id=m.project_id
          where m.deleted_at is null and m.storage_path is not null
-           and m.kind in ('preview_video','final_video')
+           and m.kind in ('preview_video','final_video','video_clip')
+           -- a stock clip stays while any post of its project still has to be rendered and sent
+           and (m.kind <> 'video_clip' or not exists (
+                 select 1 from content_variants v join scheduled_posts sp on sp.variant_id = v.id
+                  where v.project_id = p.id and sp.status in ('pending_approval','scheduled','publishing')))
            and ((p.status in ('published','rejected','archived') and p.updated_at < %s)
                 or (p.status='failed' and p.updated_at < %s)
                 or (m.expires_at is not null and m.expires_at < now()))""", (decided_cutoff, failed_cutoff))
