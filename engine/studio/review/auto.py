@@ -189,8 +189,9 @@ def deterministic_checks(conn, family: list[dict], variants: list[dict], now: da
     risky = risk_reasons(conn, family)
     check("smart_mode", "Low-risk package (Smart Mode)", not risky, "; ".join(risky))
     unlicensed = [p["title"] for p in family for sc in ((p["recipe"] or {}).get("render") or {}).get("scenes", [])
-                  if (sc.get("photo_key") or sc.get("video_key")) and not sc.get("license_record_id")]
-    check("licences", "Every stock photo has a licence record", not unlicensed, ", ".join(sorted(set(unlicensed))))
+                  if ((sc.get("photo_key") or sc.get("video_key")) and not sc.get("license_record_id"))
+                  or (sc.get("sfx_key") and not sc.get("sfx_license_record_id"))]
+    check("licences", "Every stock photo, clip and sound has a licence record", not unlicensed, ", ".join(sorted(set(unlicensed))))
     return checks
 
 

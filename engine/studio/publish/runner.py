@@ -77,7 +77,8 @@ def safety_problems(conn, post: dict, ctx: dict, now: datetime) -> list[str]:
     if ctx["fresh_until"] and ctx["fresh_until"] < now:
         problems.append("content expired: time-sensitive facts must be rechecked")
     for sc in ((ctx["recipe"] or {}).get("render") or {}).get("scenes", []):
-        if (sc.get("photo_key") or sc.get("video_key")) and not sc.get("license_record_id"):
+        if ((sc.get("photo_key") or sc.get("video_key")) and not sc.get("license_record_id")) or (
+                sc.get("sfx_key") and not sc.get("sfx_license_record_id")):
             problems.append("media without license record")
             break
     return problems
@@ -131,10 +132,20 @@ def final_media(conn, storage, ctx: dict) -> tuple[Path | None, Path | None]:
             if not local.exists():
                 storage.download(sc["photo_key"], local)
             photos[i] = local
+    effects = {}
+    for i, sc in enumerate(recipe["scenes"]):
+        if sc.get("sfx_key"):
+            local = work / "sfx" / Path(sc["sfx_key"]).name
+            try:
+                if not local.exists():
+                    storage.download(sc["sfx_key"], local)
+                effects[i] = local
+            except Exception:  # cleaned up: the scene keeps just its narration
+                pass
     out = work / f"{ctx['project_id']}_final.mp4"
     if not out.exists():
         res = rendering.render(recipe, out, "final", work_dir=config.runtime().work_dir / "render" / "shared",
-                               photos=photos, videos=videos)
+                               photos=photos, videos=videos, effects=effects)
         from .. import capacity
 
         capacity.record_render(conn, ctx["project_id"], "final", res.seconds_taken, res.duration, res.bytes)

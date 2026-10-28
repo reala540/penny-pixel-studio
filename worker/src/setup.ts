@@ -10,7 +10,7 @@ export const MANAGED = [
   "TELEGRAM_BOT_TOKEN", "TELEGRAM_WEBHOOK_SECRET",
   "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "FACEBOOK_APP_ID", "FACEBOOK_APP_SECRET",
   "TIKTOK_CLIENT_KEY", "TIKTOK_CLIENT_SECRET", "X_CLIENT_ID", "X_CLIENT_SECRET",
-  "YOUTUBE_API_KEY", "PEXELS_API_KEY", "PIXABAY_API_KEY", "FRED_API_KEY", "SEC_USER_AGENT",
+  "YOUTUBE_API_KEY", "PEXELS_API_KEY", "PIXABAY_API_KEY", "FRED_API_KEY", "SEC_USER_AGENT", "FREESOUND_API_KEY",
 ] as const;
 export type ManagedName = (typeof MANAGED)[number];
 
@@ -166,6 +166,11 @@ export async function testValue(env: Env, name: ManagedName, origin: string): Pr
       case "PEXELS_API_KEY": {
         const r = await getJson("https://api.pexels.com/v1/search?query=city&per_page=1", { headers: { Authorization: e.PEXELS_API_KEY! } });
         return r.status === 200 ? { ok: true, detail: "Pexels accepted the key." } : { ok: false, detail: `Pexels rejected the key (HTTP ${r.status}).` };
+      }
+      case "FREESOUND_API_KEY": {
+        const r = await getJson(`https://freesound.org/apiv2/search/text/?query=coin&page_size=1&token=${encodeURIComponent(e.FREESOUND_API_KEY!)}`);
+        return r.status === 200 ? { ok: true, detail: "Freesound accepted the key. Animated scenes can use free sound effects." }
+          : { ok: false, detail: `Freesound rejected the key (HTTP ${r.status}).` };
       }
       case "PIXABAY_API_KEY": {
         const r = await getJson(`https://pixabay.com/api/?key=${encodeURIComponent(e.PIXABAY_API_KEY!)}&q=city&per_page=3`);

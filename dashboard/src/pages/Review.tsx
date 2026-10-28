@@ -8,6 +8,7 @@ import { approveProject, must, queueJob, useTimezone } from "../lib/api";
 import { useProjectHistory } from "../lib/content";
 import { safeUrl, estSeconds, fmtDateTime, fmtDuration, HOST, KIND_NAME, PLATFORM_NAME } from "../lib/format";
 import { MissingFileError, signedUrl, supabase } from "../lib/supabase";
+import { ANIMATIONS, asStill, unsaidNumbers } from "../lib/animations";
 import { caption, limitProblems, parseHashtags, parseTags, rule } from "../lib/limits";
 import { claimProblems, droppedShorts, SHORTS_WAITING, visibleIssues } from "../lib/packageParts";
 import type { Claim, Project, ScriptBody, Variant } from "../lib/types";
@@ -247,6 +248,58 @@ export function Detail({ id }: { id: string }) {
   );
 }
 
+function AnimatedScene({ project, index, scene, dirty, versionId, onChange }: {
+  project: Project; index: number; scene: ScriptBody["scenes"][number]; dirty: boolean; versionId: string;
+  onChange: (v: ScriptBody["scenes"][number]["visual"]) => void;
+}) {
+  const toast = useToast();
+  const v = scene.visual;
+  const preview = project.recipe?.scene_previews?.[String(index)];
+  const current = preview && preview.version === versionId ? preview : undefined;
+  const url = usePreview(current?.key);
+  const ask = useMutation({
+    mutationFn: () => queueJob("preview_scene", { projectId: project.id, input: { scene: index } }),
+    onSuccess: (r) => toast(r.startsSoon ? "Rendering this scene: it appears here in a minute or two." : "Scene preview requested: it starts within about 15 minutes."),
+    onError: (e) => toast((e as Error).message, "bad"),
+  });
+  const unsaid = unsaidNumbers(scene);
+  const help = ANIMATIONS.find((a) => a.id === v.animation)?.help;
+  return (
+    <div className="mt-3 rounded-lg border border-line bg-sunken p-3 text-sm">
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="min-w-[14rem] flex-1">
+          <span className="text-muted">Animation</span>
+          <select className="field mt-1" value={v.animation ?? ""} disabled={project.status === "published"}
+            onChange={(e) => onChange(e.target.value === "still" ? asStill(v) : { ...v, animation: e.target.value })}>
+            {ANIMATIONS.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
+            <option value="still">No animation (still picture)</option>
+          </select>
+        </label>
+        <button type="button" className="btn-quiet" disabled={dirty || ask.isPending} onClick={() => ask.mutate()}
+          title={dirty ? "Save your changes first, then preview" : undefined}>{ask.isPending ? "Asking…" : "Preview this scene"}</button>
+      </div>
+      {v.animation === "counter" ? (
+        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+          <label><span className="text-muted">Number</span>
+            <input className="field mt-1" value={v.stat_value ?? ""} onChange={(e) => onChange({ ...v, stat_value: e.target.value })} /></label>
+          <label><span className="text-muted">Label</span>
+            <input className="field mt-1" value={v.stat_label ?? ""} onChange={(e) => onChange({ ...v, stat_label: e.target.value })} /></label>
+        </div>
+      ) : (
+        <label className="mt-2 block"><span className="text-muted">{help}</span>
+          <textarea className="field mt-1 font-mono text-xs" rows={Math.max(2, (v.items ?? []).length)} value={(v.items ?? []).join("\n")}
+            onChange={(e) => onChange({ ...v, items: e.target.value.split("\n") })} /></label>
+      )}
+      {unsaid.length > 0 && <p className="mt-2 text-alert">This animation shows {unsaid.join(", ")}, which the narration doesn't say. Every number shown must be said (and checked).</p>}
+      {dirty && <p className="mt-2 text-xs text-muted">Save your changes to preview them. Only changed scenes are drawn again.</p>}
+      {current && (url.data
+        ? <video src={url.data} controls preload="metadata" className={`mt-3 w-full rounded-lg bg-ink ${project.format === "short" ? "aspect-[9/16] max-w-xs" : "aspect-video"}`} />
+        : <p className="mt-2 text-xs text-muted">Loading the scene preview…</p>)}
+      {preview && !current && <p className="mt-2 text-xs text-muted">The last scene preview was for an earlier version of the script.</p>}
+    </div>
+  );
+}
+
 function ScriptEditor({ project, version }: { project: Project; version: { id: string; version: number; origin: string; body: ScriptBody } }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -286,6 +339,10 @@ function ScriptEditor({ project, version }: { project: Project; version: { id: s
             <label className="sr-only" htmlFor={`scene-${i}`}>Narration for scene {i + 1}</label>
             <textarea id={`scene-${i}`} className="field" rows={3} value={s.narration}
               onChange={(e) => setBody({ ...body, scenes: body.scenes.map((x, j) => (j === i ? { ...x, narration: e.target.value } : x)) })} />
+            {s.visual.type === "animated" && (
+              <AnimatedScene project={project} index={i} scene={s} dirty={dirty} versionId={version.id}
+                onChange={(visual) => setBody({ ...body, scenes: body.scenes.map((x, j) => (j === i ? { ...x, visual } : x)) })} />
+            )}
           </li>
         ))}
       </ol>

@@ -11,7 +11,7 @@ from .script.models import Script, ShortScript
 
 OWNER_JOBS = ("regenerate_script", "rerender_preview", "regenerate_thumbnails", "run_research", "run_production",
               "run_mission", "recheck_project", "generate_ideas", "refine_idea", "auto_review", "produce_idea",
-              "check_providers", "remake_shorts")
+              "check_providers", "remake_shorts", "preview_scene")
 
 
 START_LABEL = {
@@ -21,7 +21,7 @@ START_LABEL = {
     "recheck_project": "Re-checking the facts", "generate_ideas": "Generating ideas",
     "refine_idea": "Refining an idea", "auto_review": "Reviewing packages automatically",
     "produce_idea": "Making the package for your idea", "check_providers": "Testing the AI keys",
-    "remake_shorts": "Making new Shorts",
+    "remake_shorts": "Making new Shorts", "preview_scene": "Previewing one scene",
 }
 
 
@@ -172,6 +172,8 @@ def _run_owner_job(conn, router: Router, storage, job: dict) -> dict:
         return produce.produce_batch(conn, router, storage, week_start())
     pid = job["project_id"] or inp.get("project_id")
     p = _project(conn, pid)
+    if t == "preview_scene":
+        return produce.preview_scene(conn, storage, pid, int(inp.get("scene", -1)))
     if t == "remake_shorts":
         return produce.remake_shorts(conn, router, storage, pid, job_id=job["id"], note=str(inp.get("note") or "")[:500])
     if t == "rerender_preview":

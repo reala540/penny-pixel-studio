@@ -79,7 +79,12 @@ def _facts_block(facts: FactSheet) -> str:
 
 
 VISUALS = ("Choose a visual type per scene: chart (only with real numbers from the fact sheet), stat, list, steps, "
-           "comparison, quote, title_card or stock (with a short stock_query).")
+           "comparison, quote, title_card or stock (with a short stock_query). For a few scenes where movement explains "
+           "the sentence (at most 4 in a long video, 1 in a Short), use type=animated with an animation: "
+           "budget_jars (money split into 2-4 parts: items 'Label|amount'), price_basket (prices that change: items "
+           "'Item|before|after', 1-4 rows), agent_handoff (AI agents passing a task: items are 2-5 step names) or "
+           "counter (one number growing to its value: stat_value plus stat_label). Every number in an animation "
+           "must be said in that scene's narration and come from the facts.")
 CALCULATIONS = ("Any number you work out yourself (a total, a difference, interest, a percentage) is a claim with "
                 "kind=calculation: put the exact arithmetic in expression using only numbers and + - * / ** ( ), "
                 "write percentages as decimals (5% -> 0.05), and state every assumption in the claim text, e.g. "

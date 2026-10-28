@@ -53,6 +53,8 @@ render:
   max_long_minutes: 14
   max_short_seconds: 58
   stock_video: alternate   # stock scenes that try a real video clip first: off | alternate | always
+  animated_max_long: 4     # original animated scenes per long video (the rest keep still visuals)
+  animated_max_short: 1
 
 # Auto Review & Post only ever approves low-risk packages ("Smart Mode"). See engine/studio/review/auto.py.
 smart_mode:

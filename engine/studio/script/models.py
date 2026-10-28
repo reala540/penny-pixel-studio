@@ -46,7 +46,9 @@ class ChartSpec(BaseModel):
 
 
 class Visual(BaseModel):
-    type: Literal["title_card", "stat", "chart", "list", "quote", "stock", "steps", "comparison"]
+    type: Literal["title_card", "stat", "chart", "list", "quote", "stock", "steps", "comparison", "animated"]
+    animation: Literal["budget_jars", "price_basket", "agent_handoff", "counter"] | None = Field(
+        default=None, description="For type=animated: which original animation explains this sentence")
     headline: str | None = None
     items: list[str] = Field(default_factory=list)
     stat_value: str | None = None

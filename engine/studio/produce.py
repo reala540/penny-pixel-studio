@@ -337,6 +337,36 @@ def _license(conn, hit) -> dict:
                   (hit.source_url, hit.provider, hit.creator, hit.license, hit.attribution_required, hit.attribution_text))
 
 
+def attach_effects(conn, storage, project_id, recipe: dict, work: Path) -> dict[int, Path]:
+    """A soft sound effect for each animated scene when a Freesound key is set (CC0 only, with a licence record)."""
+    from .media import sfx
+
+    effects: dict[int, Path] = {}
+    for i, sc in enumerate(recipe["scenes"]):
+        v = sc["visual"]
+        if v.get("type") != "animated":
+            continue
+        if sc.get("sfx_key"):
+            local = work / "sfx" / Path(sc["sfx_key"]).name
+            try:
+                if not local.exists():
+                    storage.download(sc["sfx_key"], local)
+                effects[i] = local
+                continue
+            except Exception:
+                sc.pop("sfx_key", None)
+        hit = sfx.find_effect(v.get("animation") or "", work / "sfx")
+        if hit is None:
+            continue
+        lic = _license(conn, hit)
+        key = storage.upload(f"projects/{project_id}/sfx/{hit.path.name}", hit.path, "audio/mpeg")
+        db.run(conn, """insert into media_assets (project_id, kind, storage_path, bytes, license_record_id)
+                        values (%s,'music',%s,%s,%s)""", (project_id, key, hit.path.stat().st_size, lic["id"]))
+        sc["sfx_key"], sc["sfx_license_record_id"] = key, str(lic["id"])
+        effects[i] = hit.path
+    return effects
+
+
 def attach_media(conn, storage, project_id, recipe: dict, work: Path) -> tuple[dict[int, Path], dict[int, Path]]:
     """Licensed stock video clips and photos for 'stock' scenes (a balanced mix: by default every other stock scene
     tries a clip first). A scene with neither becomes an original type card. Every file keeps its licence record."""
@@ -408,9 +438,10 @@ def render_preview(conn, storage, project_id, script_body: dict, channel: str, f
         recipe = rendering.recipe_from_script(script_body, channel, fmt, script_body.get("title", ""))
         work = config.runtime().work_dir / "render" / str(project_id)
         photos, videos = attach_media(conn, storage, project_id, recipe, work)
+        effects = attach_effects(conn, storage, project_id, recipe, work)
         out = work / "preview.mp4"
         res = rendering.render(recipe, out, "preview", work_dir=config.runtime().work_dir / "render" / "shared",
-                               photos=photos, videos=videos)
+                               photos=photos, videos=videos, effects=effects)
         key = storage.upload(f"projects/{project_id}/preview.mp4", out, "video/mp4")
         asset = db.one(conn, """insert into media_assets (project_id, kind, storage_path, bytes, duration_seconds)
                                 values (%s,'preview_video',%s,%s,%s) returning id""",
@@ -953,3 +984,30 @@ def remake_shorts(conn, router: Router, storage, project_id, job_id=None, note: 
     notify.send(conn, "package_ready", f"New Shorts ready for review ({len(children)})", head["title"],
                 link=links.project(project_id, "shorts"), dedupe_key=f"remade:{project_id}:{tag}")
     return {"made": len(children), "children": children, "posts": posts, "problems": problems}
+
+
+def preview_scene(conn, storage, project_id, index: int) -> dict:
+    """One scene of the saved script, rendered on its own with its narration, so an animation (or any scene) can be
+    checked without rebuilding the whole video. Nothing is approved, published or replaced by this."""
+    p = db.one(conn, "select * from content_projects where id=%s", (project_id,))
+    if not p or not p["current_script_version_id"]:
+        raise ValueError("This package has no script yet")
+    sv = db.one(conn, "select body from script_versions where id=%s", (p["current_script_version_id"],))
+    body = sv["body"]
+    if not 0 <= index < len(body.get("scenes") or []):
+        raise ValueError("That scene doesn't exist in the current script")
+    recipe = rendering.recipe_from_script(body, p["channel_slug"], p["format"], body.get("title", p["title"]))
+    one = {**recipe, "scenes": [recipe["scenes"][index + 1]]}          # scene 0 of the recipe is the hook
+    work = config.runtime().work_dir / "render" / str(project_id)
+    photos, videos = attach_media(conn, storage, project_id, one, work)
+    effects = attach_effects(conn, storage, project_id, one, work)
+    out = work / f"scene_{index}.mp4"
+    res = rendering.render(one, out, "preview", work_dir=config.runtime().work_dir / "render" / "shared",
+                           photos=photos, videos=videos, effects=effects)
+    key = storage.upload(f"projects/{project_id}/scenes/scene_{index}_{str(p['current_script_version_id'])[:8]}.mp4",
+                         out, "video/mp4")
+    db.run(conn, """update content_projects set recipe = jsonb_set(coalesce(recipe,'{}'::jsonb), '{scene_previews}',
+                        coalesce(recipe->'scene_previews','{}'::jsonb) || %s) where id=%s""",
+           (db.j({str(index): {"key": key, "version": str(p["current_script_version_id"]), "seconds": res.duration}}),
+            project_id))
+    return {"scene": index, "key": key, "seconds": res.duration}
