@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
+from pydantic import BaseModel
+
 from .. import config
 from ..ai.router import Router
 from ..errors import NeedsReview, QuotaError
@@ -332,6 +334,53 @@ def write_long(router: Router, channel: str, idea: dict, sources: list[dict]) ->
     return ScriptResult(script, facts, claims, issues, rep, trail)
 
 
+SHORTS_BRIEF = ("two purpose-built Shorts that each tell a complete mini-story from the facts: 35-55 seconds each, "
+                "which is about 90-130 spoken words in total (hook plus scenes). Their own hook, 3-6 scenes, short "
+                "sentences of at most 16 words, a caption and 3-5 hashtags. Only use facts listed.")
+
+
+class ShortsOnly(BaseModel):
+    shorts: list[ShortScript]
+
+
+def check_shorts(shorts: list[ShortScript], channel: str, facts: FactSheet) -> tuple[list[ShortScript], list[str], list[dict]]:
+    """Shorts that pass every check, a plain line per dropped one, and the dropped ones with their reasons."""
+    fact_numbers = set().union(*[quality.numbers_in(f.text) for f in facts.facts]) if facts.facts else set()
+    good, problems, dropped = [], [], []
+    for s in shorts:
+        issues = quality.check_short(s, channel)
+        stray = set().union(*[quality.numbers_in(sc.narration) for sc in s.scenes]) - fact_numbers - {"1", "2", "3", "4", "5"}
+        if stray:
+            issues.append(f"Short uses numbers not in the fact sheet: {sorted(stray)}")
+        if issues:
+            problems.append(f"Short '{s.title}' dropped: {issues}")
+            dropped.append({"title": s.title, "issues": issues})
+        else:
+            good.append(s)
+    return good, problems, dropped
+
+
+def make_shorts(router: Router, channel: str, script: Script, facts: FactSheet, tries: int = 2,
+                note: str = "") -> tuple[list[ShortScript], list[str], list[dict]]:
+    """Only the Shorts, from the video's own checked facts. Each try that yields no usable Short says why and tries
+    again, up to `tries` times. Returns the good Shorts, the problems and every dropped Short."""
+    problems: list[str] = []
+    dropped: list[dict] = []
+    for n in range(1, tries + 1):
+        reasons = "; ".join(f"'{d['title']}': {', '.join(d['issues'])}" for d in dropped[-2:])
+        prompt = (f"{voice_brief(channel)}\n\nWrite {SHORTS_BRIEF}\nVideo title: {script.title}\nHook: {script.hook}\n"
+                  f"Facts you may use:\n{_facts_block(facts)}\n"
+                  + (f"\nThe last Shorts were rejected because: {reasons}. Fix exactly that.\n" if reasons else "")
+                  + (f"\nOwner note: {note}\n" if note else ""))
+        res = router.complete("repurposer", prompt, schema=ShortsOnly, temperature=0.7, max_tokens=3000)
+        good, why, out = check_shorts(res.data.shorts, channel, facts)
+        problems += [f"Retry {n}: {w}" for w in why]
+        dropped += out
+        if good:
+            return good, problems, dropped
+    return [], problems, dropped
+
+
 def make_package(router: Router, channel: str, script: Script, facts: FactSheet) -> tuple[Package, list[str], dict]:
     ch = config.brand()["channels"][channel]
     prompt = (f"{voice_brief(channel)}\n\nCreate the publishing package for this video.\nTitle: {script.title}\n"
@@ -341,22 +390,14 @@ def make_package(router: Router, channel: str, script: Script, facts: FactSheet)
               "- tags: 10-15 search phrases.\n- thumbnail_headlines: three different 2-5 word texts.\n"
               "- x_post: under 270 characters, no links, one insight + a question.\n"
               f"- facebook_post: 60-120 words for the {config.brand()['brand']['name']} page.\n"
-              "- shorts: two purpose-built Shorts (35-55 seconds each) that each tell a complete mini-story from "
-              "the facts, with their own hook, 3-6 scenes, a caption and 3-5 hashtags. Only use facts listed.")
+              f"- shorts: {SHORTS_BRIEF}")
     res = router.complete("repurposer", prompt, schema=Package, temperature=0.8, max_tokens=6000)
     pkg = res.data
-    problems = []
-    fact_numbers = set().union(*[quality.numbers_in(f.text) for f in facts.facts]) if facts.facts else set()
-    good_shorts: list[ShortScript] = []
-    for s in pkg.shorts:
-        issues = quality.check_short(s, channel)
-        stray = set().union(*[quality.numbers_in(sc.narration) for sc in s.scenes]) - fact_numbers - {"1", "2", "3", "4", "5"}
-        if stray:
-            issues.append(f"Short uses numbers not in the fact sheet: {sorted(stray)}")
-        if issues:
-            problems.append(f"Short '{s.title}' dropped: {issues}")
-        else:
-            good_shorts.append(s)
+    good_shorts, problems, _ = check_shorts(pkg.shorts, channel, facts)
+    if not good_shorts:  # both failed the checks: one focused retry before giving up
+        retry, retry_problems, _ = make_shorts(router, channel, script, facts, tries=1)
+        problems += retry_problems
+        good_shorts = retry
     if len(pkg.x_post) > 280 or "http" in pkg.x_post.lower() or "www." in pkg.x_post.lower():
         problems.append("X post too long or contains a link; trimmed")
         pkg.x_post = pkg.x_post.split("http")[0][:270].strip()

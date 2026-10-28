@@ -39,7 +39,8 @@ export interface Project {
   status: string;
   batch_week: string | null;
   current_script_version_id: string | null;
-  quality_report: { issues?: string[]; critic?: Record<string, number>; package_problems?: string[]; duration_seconds?: number; note?: string; owner_edited?: boolean };
+  quality_report: { issues?: string[]; critic?: Record<string, number>; package_problems?: string[]; duration_seconds?: number; note?: string; owner_edited?: boolean;
+    shorts_remakes?: { at: string; made: number; problems?: string[] }[] };
   recipe: { preview_key?: string; preview_seconds?: number; package?: Record<string, any> };
   fresh_until: string | null;
   created_at: string;
