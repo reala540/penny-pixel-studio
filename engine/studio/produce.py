@@ -373,8 +373,29 @@ def render_preview(conn, storage, project_id, script_body: dict, channel: str, f
         capacity.record_render(conn, project_id, "preview", res.seconds_taken, res.duration, res.bytes)
         return {"asset_id": str(asset["id"]), "key": key, "seconds": res.duration, "render_seconds": res.seconds_taken}
 
-    return jobs.run_stage(conn, "render_preview", f"preview:{project_id}:{_script_version(conn, project_id)}", do,
-                          project_id=project_id).output
+    out = jobs.run_stage(conn, "render_preview", f"preview:{project_id}:{_script_version(conn, project_id)}", do,
+                         project_id=project_id).output
+    if fmt == "long" and out and out.get("seconds"):
+        use_real_length(conn, project_id, float(out["seconds"]))
+    return out
+
+
+def use_real_length(conn, project_id, seconds: float) -> None:
+    """The script's length warning is a word-count estimate; once the video exists, its real length decides."""
+    from .script import quality
+
+    row = db.one(conn, "select quality_report from content_projects where id=%s", (project_id,))
+    qr = (row or {}).get("quality_report") or {}
+    issues = qr.get("issues") or []
+    kept = [i for i in issues if not i.startswith(("Too short: about", "Too long: about"))]
+    max_min = config.services()["render"]["max_long_minutes"]
+    if seconds < quality.MIN_LONG_SECONDS:
+        kept.append(f"Too short: {seconds / 60:.1f} min (aim for {quality.MIN_LONG_SECONDS // 60}+ min)")
+    elif seconds > max_min * 60:
+        kept.append(f"Too long: {seconds / 60:.1f} min (max {max_min})")
+    if kept != issues:
+        qr["issues"] = kept
+        db.run(conn, "update content_projects set quality_report=%s where id=%s", (db.j(qr), project_id))
 
 
 def _script_version(conn, project_id) -> str:
@@ -744,19 +765,24 @@ def resume_due_retries(conn, router: Router, storage, limit: int = 1) -> list[di
     return out
 
 
-def plan_project_distribution(conn, project_id, now: datetime | None = None) -> int:
+def plan_project_distribution(conn, project_id, now: datetime | None = None, shorts_only: bool = False) -> int:
     """Posts for one package only. Other projects of the same week are never touched. Each post takes its account's
-    next free slot from the posting week on (the week after the package's week), never a slot another post holds."""
+    next free slot from the posting week on (the week after the package's week), never a slot another post holds.
+    `shorts_only` plans just the Shorts still waiting for review (new Shorts for a package that was already decided):
+    the main video's posts are never added or touched."""
     now = now or datetime.now(timezone.utc)
     tz = db.get_setting(conn, "timezone", "Africa/Nairobi")
     head = db.one(conn, "select * from content_projects where id=%s and parent_project_id is null", (project_id,))
-    if not head or head["status"] not in ("ready_for_review", "needs_attention"):
+    allowed = ("ready_for_review", "needs_attention") + (("approved", "scheduled", "published") if shorts_only else ())
+    if not head or head["status"] not in allowed:
         return 0
     shorts = db.all_(conn, """select * from content_projects where parent_project_id=%s
                               and status in ('ready_for_review','needs_attention') order by created_at""", (project_id,))
     accounts = db.all_(conn, """select a.*, c.slug channel from social_accounts a
                                 left join channel_profiles c on c.id = a.channel_profile_id where a.enabled order by a.platform""")
     first_week = (head["batch_week"] or research.week_start()) + timedelta(days=7)
+    if shorts_only:
+        first_week = max(first_week, research.week_start())
     launch = launch_at(conn, head["channel_slug"])
     earliest = max(now, launch) if launch else now
     taken: dict = {}
@@ -809,9 +835,54 @@ def plan_project_distribution(conn, project_id, now: datetime | None = None) -> 
                 plan.append(([head], "long_video", "posting"))
         elif acc["platform"] == "x" and t.get("text_post", 0):
             plan.append(([head], "text_post", "posting"))
+        if shorts_only:
+            plan = [x for x in plan if x[0] is not None and head not in x[0]]
         for projects, kind, prefix in plan:
             items = todo(projects, acc, kind)
             created += _assign(conn, acc, items, kind, free_slots(acc, prefix, len(items)))
         if acc["platform"] == "facebook" and t.get("story", 0):
             created += _add_stories(conn, acc, [p["id"] for p in shorts[-1:]])
     return created
+
+
+def remake_shorts(conn, router: Router, storage, project_id, job_id=None, note: str = "") -> dict:
+    """New Shorts for a package, from its own checked facts, without touching its script, main video or posts.
+    The new Shorts and their posts wait for the owner's approval; posts that already exist are never planned again."""
+    head = db.one(conn, "select * from content_projects where id=%s", (project_id,))
+    if not head or head["parent_project_id"] or head["format"] != "long":
+        raise ValueError("Choose the main video of a package; Shorts are made from it")
+    if head["status"] in ("rejected", "archived", "failed"):
+        raise ValueError(f"This package is {head['status']}; Shorts can't be added to it")
+    facts_job = db.one(conn, "select output from generation_jobs where idempotency_key=%s and status='completed'",
+                       (f"script:{project_id}",))
+    if not facts_job or not (facts_job["output"] or {}).get("facts"):
+        raise ValueError("This package's checked facts weren't saved, so its Shorts can't be remade safely")
+    from .script.models import FactSheet
+
+    facts = FactSheet.model_validate(facts_job["output"]["facts"])
+    sv = db.one(conn, "select body, provider_trail from script_versions where id=%s", (head["current_script_version_id"],))
+    script = Script.model_validate(sv["body"])
+    shorts, problems, dropped = pipeline.make_shorts(router, head["channel_slug"], script, facts, tries=2, note=note)
+    qr = head["quality_report"] or {}
+    qr["shorts_remakes"] = (qr.get("shorts_remakes") or []) + [
+        {"at": datetime.now(timezone.utc).isoformat(), "made": len(shorts), "problems": problems[-6:]}]
+    db.run(conn, "update content_projects set quality_report=%s where id=%s", (db.j(qr), project_id))
+    if not shorts:
+        notify.send(conn, "job_failed", "Couldn't make new Shorts", "; ".join(problems[-4:])[:1500],
+                    link=links.project(project_id, "shorts"), dedupe_key=f"remake_failed:{project_id}:{job_id}")
+        return {"made": 0, "problems": problems}
+    tag = str(job_id or datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S"))
+    children = []
+    for n, short in enumerate(shorts, 1):
+        child = ensure_project(conn, head["channel_slug"], "short", short.title, head["batch_week"], parent_id=project_id,
+                               key=f"{project_id}:short:remake:{tag}:{n}")
+        save_script(conn, child["id"], short.model_dump(), "ai", sv["provider_trail"] or [])
+        db.run(conn, "update content_projects set fresh_until=%s, quality_report=%s, status='rendering' where id=%s",
+               (head["fresh_until"], db.j({"derived_from": str(project_id), "issues": [], "remade": True}), child["id"]))
+        render_preview(conn, storage, child["id"], short.model_dump(), head["channel_slug"], "short")
+        final_status(conn, child["id"])
+        children.append(str(child["id"]))
+    posts = plan_project_distribution(conn, project_id, shorts_only=True)
+    notify.send(conn, "package_ready", f"New Shorts ready for review ({len(children)})", head["title"],
+                link=links.project(project_id, "shorts"), dedupe_key=f"remade:{project_id}:{tag}")
+    return {"made": len(children), "children": children, "posts": posts, "problems": problems}

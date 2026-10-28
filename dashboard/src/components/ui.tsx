@@ -162,8 +162,9 @@ export function useToast() {
   return useContext(ToastCtx);
 }
 
-export function Confirm({ open, title, body, confirmLabel, danger, onConfirm, onCancel }: {
+export function Confirm({ open, title, body, confirmLabel, danger, onConfirm, onCancel, confirmDisabled }: {
   open: boolean; title: string; body: ReactNode; confirmLabel: string; danger?: boolean; onConfirm: () => void; onCancel: () => void;
+  confirmDisabled?: boolean;
 }) {
   if (!open) return null;
   // Rendered at the end of <body> so a dialog opened from inside a table or list stays valid HTML.
@@ -175,7 +176,7 @@ export function Confirm({ open, title, body, confirmLabel, danger, onConfirm, on
         <div className="mt-2 text-sm text-muted">{body}</div>
         <div className="mt-5 flex justify-end gap-2">
           <button className="btn-quiet" onClick={onCancel} autoFocus>Cancel</button>
-          <button className={danger ? "btn-danger" : "btn-primary"} onClick={onConfirm}>{confirmLabel}</button>
+          <button className={danger ? "btn-danger" : "btn-primary"} onClick={onConfirm} disabled={confirmDisabled}>{confirmLabel}</button>
         </div>
       </div>
     </div>,

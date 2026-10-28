@@ -8,6 +8,7 @@ import { approveProject, must, queueJob, useTimezone } from "../lib/api";
 import { useProjectHistory } from "../lib/content";
 import { safeUrl, estSeconds, fmtDateTime, fmtDuration, HOST, KIND_NAME, PLATFORM_NAME } from "../lib/format";
 import { MissingFileError, signedUrl, supabase } from "../lib/supabase";
+import { claimProblems, droppedShorts, SHORTS_WAITING, visibleIssues } from "../lib/packageParts";
 import type { Claim, Project, ScriptBody, Variant } from "../lib/types";
 
 function AutoChecks({ projectId }: { projectId: string }) {
@@ -72,6 +73,7 @@ export function Detail({ id }: { id: string }) {
   const setTab = (t: Tab) => { const p = new URLSearchParams(params); p.set("tab", t); setParams(p, { replace: true }); };
   const [confirm, setConfirm] = useState<null | "approve" | "reject">(null);
   const [regen, setRegen] = useState(false);
+  const [override, setOverride] = useState(false);
   const data = useQuery({
     queryKey: ["project", id],
     queryFn: async () => {
@@ -120,7 +122,8 @@ export function Detail({ id }: { id: string }) {
   if (data.isLoading) return <Loading />;
   if (!data.data) return <ErrorNote error={data.error} onRetry={() => data.refetch()} retrying={data.isFetching} />;
   const { project, script, children, variants, claims, thumbs } = data.data;
-  const issues = [...(project.quality_report?.issues ?? []), ...(project.quality_report?.package_problems ?? [])];
+  const issues = visibleIssues(project);
+  const counts = claimProblems(claims);
   const bad = claims.filter((c) => ["unsupported", "contradicted"].includes(c.status));
   const decided = ["approved", "rejected", "scheduled", "published"].includes(project.status);
 
@@ -134,6 +137,13 @@ export function Detail({ id }: { id: string }) {
             {HOST[project.channel_slug].channel} · {fmtDuration(project.recipe?.preview_seconds)} preview
             {project.fresh_until && <> · facts fresh until {fmtDateTime(project.fresh_until, tz)}</>}
           </p>
+          {project.format === "long" && (
+            <p className="mt-1 text-sm" aria-label="What this package contains">
+              <button type="button" className="underline-offset-2 hover:underline" onClick={() => setTab("script")}>Main video · {fmtDuration(project.recipe?.preview_seconds)}</button>
+              {" · "}<button type="button" className={`underline-offset-2 hover:underline ${children.length ? "" : "font-medium text-alert"}`} onClick={() => setTab("shorts")}>Short videos · {children.length}</button>
+              {" · "}<button type="button" className="underline-offset-2 hover:underline" onClick={() => setTab("posts")}>Platform posts · {variants.length}</button>
+            </p>
+          )}
         </div>
         <StatusBadge status={project.status} />
       </div>
@@ -157,7 +167,7 @@ export function Detail({ id }: { id: string }) {
           {!decided && <ApprovalModeNotice />}
           {issues.length > 0 || bad.length > 0 ? (
             <div className="rounded-xl border border-alert/40 bg-alert-soft p-4 text-sm">
-              <p className="font-medium text-alert">Check before approving</p>
+              <p className="font-medium text-alert">{decided ? "Approved with these warnings" : "Check before approving"}</p>
               <ul className="mt-2 list-disc space-y-1 pl-4 text-ink">
                 {bad.map((c) => <li key={c.id}>Claim not backed by a source: “{c.claim_text.slice(0, 90)}”</li>)}
                 {issues.map((i) => <li key={i}>{i}</li>)}
@@ -189,15 +199,35 @@ export function Detail({ id }: { id: string }) {
       </div>
 
       <Confirm open={confirm === "approve"} title="Approve this package?"
-        body={<>The video, its Shorts and {variants.length} post{variants.length === 1 ? "" : "s"} go out at their scheduled times. You can still cancel single posts in Calendar.</>}
-        confirmLabel="Approve package" onCancel={() => setConfirm(null)} onConfirm={() => { setConfirm(null); approve.mutate(); }} />
+        body={<>
+          <p>The main video, {children.length === 0 ? <strong>no short videos</strong> : <>{children.length} short video{children.length === 1 ? "" : "s"}</>} and {variants.length} platform post{variants.length === 1 ? "" : "s"} go out at their scheduled times. You can still cancel single posts in Calendar.</p>
+          {(bad.length > 0 || issues.length > 0) && (
+            <div className="mt-3 rounded-lg bg-alert-soft p-3 text-ink">
+              <p className="font-medium text-alert">You're approving with {bad.length + issues.length} warning{bad.length + issues.length === 1 ? "" : "s"}:</p>
+              <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                {counts.contradicted > 0 && <li>{counts.contradicted} claim{counts.contradicted === 1 ? " is" : "s are"} contradicted by the sources</li>}
+                {counts.unsupported > 0 && <li>{counts.unsupported} claim{counts.unsupported === 1 ? " has" : "s have"} no source behind {counts.unsupported === 1 ? "it" : "them"}</li>}
+                {issues.slice(0, 6).map((i) => <li key={i}>{i}</li>)}
+              </ul>
+            </div>
+          )}
+          {counts.contradicted > 0 && (
+            <label className="mt-3 flex items-start gap-2 text-ink">
+              <input type="checkbox" className="mt-1" checked={override} onChange={(e) => setOverride(e.target.checked)} />
+              <span>I've checked the contradicted claims and want to publish anyway.</span>
+            </label>
+          )}
+        </>}
+        confirmDisabled={counts.contradicted > 0 && !override}
+        confirmLabel={bad.length + issues.length > 0 ? "Approve anyway" : "Approve package"}
+        onCancel={() => { setConfirm(null); setOverride(false); }} onConfirm={() => { setConfirm(null); setOverride(false); approve.mutate(); }} />
       <Confirm open={confirm === "reject"} title="Discard this package?" danger
         body="The video, its Shorts and all their posts are rejected and their slots freed. It stays in Content → Not used."
         confirmLabel="Discard package" onCancel={() => setConfirm(null)} onConfirm={() => { setConfirm(null); reject.mutate(); }} />
       {regen && <RegenerateDialog project={project} onClose={() => setRegen(false)} />}
 
       <div role="tablist" aria-label="Package parts" className="mt-8 flex gap-1 overflow-x-auto border-b border-line">
-        {([["script", "Script"], ["facts", `Sources & checks (${claims.length})`], ["thumbs", "Thumbnails"], ["shorts", `Shorts (${children.length})`], ["posts", `Posts (${variants.length})`], ["history", "History"]] as const).map(([k, label]) => (
+        {([["script", "Script"], ["facts", `Sources & checks (${claims.length})`], ["thumbs", "Thumbnails"], ["shorts", `Short videos (${children.length})`], ["posts", `Platform posts (${variants.length})`], ["history", "History"]] as const).map(([k, label]) => (
           <button key={k} role="tab" aria-selected={tab === k} onClick={() => setTab(k)}
             className={`whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium ${tab === k ? "border-ink text-ink" : "border-transparent text-muted hover:text-ink"}`}>{label}</button>
         ))}
@@ -206,8 +236,8 @@ export function Detail({ id }: { id: string }) {
         {tab === "script" && script && <ScriptEditor project={project} version={script} />}
         {tab === "facts" && <><Facts claims={claims} /><AutoChecks projectId={id} /></>}
         {tab === "thumbs" && <Thumbs thumbs={thumbs} projectId={id} />}
-        {tab === "posts" && <Posts variants={variants} tz={tz} />}
-        {tab === "shorts" && <Shorts shorts={children} />}
+        {tab === "posts" && <Posts variants={variants} tz={tz} mainId={project.id} />}
+        {tab === "shorts" && <Shorts head={project} shorts={children} />}
         {tab === "history" && <History projectId={id} />}
       </div>
     </article>
@@ -345,11 +375,23 @@ function Thumbs({ thumbs, projectId }: { thumbs: any[]; projectId: string }) {
   );
 }
 
-function Posts({ variants, tz }: { variants: Variant[]; tz: string }) {
+function Posts({ variants, tz, mainId }: { variants: Variant[]; tz: string; mainId: string }) {
+  const groups = [
+    { title: "From the main video", items: variants.filter((v) => v.project_id === mainId) },
+    { title: "From the short videos", items: variants.filter((v) => v.project_id !== mainId) },
+  ].filter((g) => g.items.length);
+  if (!groups.length) return <p className="text-sm text-muted">No platform posts for this package yet.</p>;
   return (
-    <ul className="space-y-4">
-      {variants.map((v) => <PostEditor key={v.id} v={v} tz={tz} />)}
-    </ul>
+    <div className="space-y-6">
+      {groups.map((g) => (
+        <section key={g.title} aria-label={g.title}>
+          <h3 className="mb-2 text-sm font-semibold">{g.title} · {g.items.length}</h3>
+          <ul className="space-y-4">
+            {g.items.map((v) => <PostEditor key={v.id} v={v} tz={tz} />)}
+          </ul>
+        </section>
+      ))}
+    </div>
   );
 }
 
@@ -411,17 +453,54 @@ function PostEditor({ v, tz }: { v: Variant; tz: string }) {
   );
 }
 
-function Shorts({ shorts }: { shorts: Project[] }) {
-  if (!shorts.length) return <p className="text-sm text-muted">No Shorts for this package.</p>;
+function Shorts({ head, shorts }: { head: Project; shorts: Project[] }) {
+  const toast = useToast();
+  const dropped = droppedShorts(head.quality_report);
+  const decided = ["approved", "scheduled", "published"].includes(head.status);
+  const canRemake = head.format === "long" && !["rejected", "archived", "failed"].includes(head.status);
+  const remake = useMutation({
+    mutationFn: () => queueJob("remake_shorts", { projectId: head.id }),
+    onSuccess: (r) => toast(r.startsSoon ? "Making new Shorts: they appear here for your approval in a few minutes." : "New Shorts requested: they start within about 15 minutes."),
+    onError: (e) => toast((e as Error).message, "bad"),
+  });
   return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-      {shorts.map((s) => <ShortCard key={s.id} s={s} />)}
+    <div className="space-y-5">
+      <p className="text-sm text-muted">Short videos are made from the main video's checked facts. Facebook Reels and Stories, YouTube Shorts and TikTok videos all come from them.</p>
+      {shorts.length > 0 && (
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {shorts.map((s) => <ShortCard key={s.id} s={s} approvable={decided && SHORTS_WAITING.includes(s.status)} />)}
+        </div>
+      )}
+      {dropped.length > 0 && (
+        <div className="rounded-xl border border-alert/40 bg-alert-soft p-4 text-sm">
+          <p className="font-medium text-alert">{shorts.length ? "Some Shorts were dropped by the quality checks" : "No short videos: the quality checks dropped them"}</p>
+          <ul className="mt-2 space-y-1 text-ink">
+            {dropped.map((d, i) => <li key={`${d.title}-${i}`}><span className="font-medium">“{d.title}”</span>: {d.reasons.join("; ")}</li>)}
+          </ul>
+          {!shorts.length && <p className="mt-2 text-ink">Without short videos this package gets no Reel, Story, YouTube Short or TikTok post.</p>}
+        </div>
+      )}
+      {!shorts.length && !dropped.length && <p className="text-sm text-muted">No Shorts for this package.</p>}
+      {canRemake && (
+        <div className="rounded-xl border border-line bg-surface p-4 text-sm">
+          <p className="font-medium">Make Shorts again</p>
+          <p className="mt-1 text-muted">Writes new Shorts from this video's checked facts only. The script, main video and existing posts stay as they are, and nothing already posted is posted again. New Shorts wait here for your approval{decided ? "" : " together with the package"}.</p>
+          <button type="button" className="btn-quiet mt-3" disabled={remake.isPending} onClick={() => remake.mutate()}>{remake.isPending ? "Asking…" : "Make Shorts again"}</button>
+        </div>
+      )}
     </div>
   );
 }
 
-function ShortCard({ s }: { s: Project }) {
+function ShortCard({ s, approvable }: { s: Project; approvable?: boolean }) {
   const url = usePreview(s.recipe?.preview_key);
+  const qc = useQueryClient();
+  const toast = useToast();
+  const approve = useMutation({
+    mutationFn: () => approveProject(s.id, s.current_script_version_id ?? null),
+    onSuccess: (n) => { qc.invalidateQueries(); toast(`Short approved: ${n} post${n === 1 ? "" : "s"} scheduled`); },
+    onError: (e) => toast((e as Error).message, "bad"),
+  });
   return (
     <figure className="rounded-xl border border-line bg-surface p-2">
       {url.data ? <video src={url.data} controls preload="metadata" className="aspect-[9/16] w-full rounded-lg bg-ink object-cover" /> : <div className="aspect-[9/16] rounded-lg bg-sunken" />}
@@ -429,6 +508,7 @@ function ShortCard({ s }: { s: Project }) {
         <span className="font-medium leading-snug">{s.title}</span>
         <StatusBadge status={s.status} />
       </figcaption>
+      {approvable && <button type="button" className="btn-primary mt-2 w-full" disabled={approve.isPending} onClick={() => approve.mutate()}>Approve this Short</button>}
     </figure>
   );
 }

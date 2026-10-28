@@ -121,6 +121,7 @@ export function useProjectHistory(projectId: string) {
 }
 
 const JOB_TEXT: Record<string, string> = { script: "writing and fact check", package: "Shorts and posts", render_preview: "preview", thumbnails: "thumbnails",
-  regenerate_script: "rewrite", rerender_preview: "re-render", regenerate_thumbnails: "new thumbnails", recheck_project: "fact re-check", produce_idea: "package request" };
+  regenerate_script: "rewrite", rerender_preview: "re-render", regenerate_thumbnails: "new thumbnails", recheck_project: "fact re-check", produce_idea: "package request",
+  remake_shorts: "new Shorts" };
 const REVIEW_TEXT: Record<string, string> = { approved: "approved", needs_review: "sent to you", error: "couldn't check, sent to you", skipped: "skipped", fixing: "fixing" };
 const POST_TEXT: Record<string, string> = { failed: "didn't post", blocked: "on hold (facts need a re-check)", needs_review: "check on the platform", needs_manual: "post it yourself", cancelled: "cancelled" };
