@@ -42,6 +42,7 @@ export interface Project {
   quality_report: { issues?: string[]; critic?: Record<string, number>; package_problems?: string[]; duration_seconds?: number; note?: string; owner_edited?: boolean;
     shorts_remakes?: { at: string; made: number; problems?: string[] }[] };
   recipe: { preview_key?: string; preview_seconds?: number; package?: Record<string, any>;
+    render?: { scenes?: { visual?: { type?: string; fallback_reason?: string } }[] };
     scene_previews?: Record<string, { key: string; version: string; seconds?: number }> };
   fresh_until: string | null;
   created_at: string;

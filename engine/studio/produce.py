@@ -424,10 +424,13 @@ def attach_media(conn, storage, project_id, recipe: dict, work: Path) -> tuple[d
                 storage.download(sc["photo_key"], local)
             photos[i] = local
             continue
-        hit = stock.find_photo(query, work / "photos", orientation)
-        if hit is None:
+        problems: list[str] = []
+        hit = stock.find_photo(query, work / "photos", orientation, problems=problems)
+        if hit is None:  # shown on the Review page next to the scene, so a plain card is never a mystery
             v["type"] = "title_card"
+            v["fallback_reason"] = f"No matching photo for \"{query[:80]}\" ({'; '.join(problems) or 'no photo source answered'}), so this scene shows its words on a card."
             continue
+        v.pop("fallback_reason", None)
         lic = _license(conn, hit)
         key = storage.upload(f"projects/{project_id}/photos/{hit.path.name}", hit.path)
         db.run(conn, """insert into media_assets (project_id, kind, storage_path, bytes, license_record_id)
@@ -611,10 +614,19 @@ def plan_distribution(conn, week: date, *, channel: str | None = None) -> int:
             pick = schedule.balance_by_mix([{**p, "topic": p["channel_slug"]} for p in shorts[::-1]], mix, t.get("reel", 3))
             texts = schedule.balance_by_mix([{**p, "topic": p["channel_slug"]} for p in longs], mix, t.get("text_post", 2))
             videos = schedule.balance_by_mix([{**p, "topic": p["channel_slug"]} for p in longs], mix, t.get("long_video", 0))
-            free = slots_for(t, "posting", post_week, tz, now)  # each type takes the next free slots
-            created += _assign(conn, acc, pick, "reel", free)
-            created += _assign(conn, acc, texts, "text_post", free)
-            created += _assign(conn, acc, videos, "long_video", free)
+            # Reels and text posts may have their own days and times; kinds on the same schedule share its slots
+            pools: dict = {}
+
+            def pool(prefix: str) -> list[datetime]:
+                days, times = schedule_for(t, prefix)
+                key = (tuple(days), tuple(times))
+                if key not in pools:
+                    pools[key] = schedule.slots(days, times, post_week, tz, not_before=now)
+                return pools[key]
+
+            created += _assign(conn, acc, pick, "reel", pool("reel"))
+            created += _assign(conn, acc, texts, "text_post", pool("text"))
+            created += _assign(conn, acc, videos, "long_video", pool("posting"))
             created += _add_stories(conn, acc, [p["id"] for p in pick][: t.get("story", 0)])
         elif acc["platform"] == "x":
             pick = schedule.balance_by_mix([{**p, "topic": p["channel_slug"]} for p in longs], mix, t.get("text_post", 3))
@@ -893,6 +905,7 @@ def plan_project_distribution(conn, project_id, now: datetime | None = None, sho
     launch = launch_at(conn, head["channel_slug"])
     earliest = max(now, launch) if launch else now
     taken: dict = {}
+    clock_notes: dict = {}
 
     def free_slots(acc: dict, prefix: str, n: int) -> list[datetime]:
         if n <= 0:
@@ -901,10 +914,11 @@ def plan_project_distribution(conn, project_id, now: datetime | None = None, sho
             select scheduled_at from scheduled_posts where social_account_id=%s and status not in ('cancelled','failed')""",
             (acc["id"],))])
         t = acc["weekly_targets"] or {}
-        days, times = t.get(f"{prefix}_days") or [], t.get(f"{prefix}_times") or []
+        days, times = schedule_for(t, prefix)
         out: list[datetime] = []
+        notes = clock_notes.setdefault(acc["id"], [])
         for w in range(8):
-            for slot in schedule.slots(days, times, first_week + timedelta(days=7 * w), tz, not_before=earliest):
+            for slot in schedule.slots(days, times, first_week + timedelta(days=7 * w), tz, not_before=earliest, notes=notes):
                 if all(abs((slot - x).total_seconds()) >= 1800 for x in held):
                     out.append(slot)
                     held.append(slot)
@@ -934,10 +948,10 @@ def plan_project_distribution(conn, project_id, now: datetime | None = None, sho
         elif acc["platform"] == "tiktok" and t.get("short_video", 0):
             plan.append((shorts[:1], "short_video", "posting"))
         elif acc["platform"] == "facebook":
-            if t.get("reel", 0):
-                plan.append((shorts[-1:], "reel", "posting"))
+            if t.get("reel", 0):  # Reels and text posts can have their own days and times (else the Page's)
+                plan.append((shorts[-1:], "reel", "reel"))
             if t.get("text_post", 0):
-                plan.append(([head], "text_post", "posting"))
+                plan.append(([head], "text_post", "text"))
             if t.get("long_video", 0):
                 plan.append(([head], "long_video", "posting"))
         elif acc["platform"] == "x" and t.get("text_post", 0):
@@ -949,7 +963,20 @@ def plan_project_distribution(conn, project_id, now: datetime | None = None, sho
             created += _assign(conn, acc, items, kind, free_slots(acc, prefix, len(items)))
         if acc["platform"] == "facebook" and t.get("story", 0):
             created += _add_stories(conn, acc, [p["id"] for p in shorts[-1:]])
+    for acc in accounts:
+        if clock_notes.get(acc["id"]):
+            notify.send(conn, "schedule_note", f"Clock change: a posting time moved ({acc['label']})",
+                        "; ".join(clock_notes[acc["id"]][:4]), dedupe_key=f"clock:{acc['id']}:{first_week}")
     return created
+
+
+def schedule_for(targets: dict, prefix: str) -> tuple[list[str], list[str]]:
+    """Days and times for one kind of post. Facebook Reels ('reel') and text posts ('text') use their own when set,
+    otherwise the account's main posting days and times."""
+    days, times = targets.get(f"{prefix}_days") or [], targets.get(f"{prefix}_times") or []
+    if prefix in ("reel", "text") and not (days and times):
+        days, times = targets.get("posting_days") or [], targets.get("posting_times") or []
+    return days, times
 
 
 def remake_shorts(conn, router: Router, storage, project_id, job_id=None, note: str = "") -> dict:

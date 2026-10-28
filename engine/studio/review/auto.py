@@ -334,7 +334,11 @@ def _fix_in_progress(conn, project_id) -> bool:
 def _next_free_slot(conn, account: dict, kind: str, after: datetime, tz: str) -> datetime | None:
     t = account["weekly_targets"] or {}
     prefix = "shorts" if account["platform"] == "youtube" and kind == "short_video" else "posting"
-    days, times = t.get(f"{prefix}_days") or [], t.get(f"{prefix}_times") or []
+    if account["platform"] == "facebook" and kind in ("reel", "text_post"):
+        prefix = "reel" if kind == "reel" else "text"
+    from ..produce import schedule_for
+
+    days, times = schedule_for(t, prefix)
     if not days or not times:
         return None
     taken = {r["scheduled_at"] for r in db.all_(conn, """select scheduled_at from scheduled_posts where social_account_id=%s

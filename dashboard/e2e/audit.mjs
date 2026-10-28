@@ -91,7 +91,7 @@ try {
           JSON.stringify([{ id: "d1", rev: 1, updatedAt: new Date().toISOString(), step: "idea", channel: "ai", kind: null, ideaId: null, own: "An idea typed on this device", depth: 3 }])));
         await page.reload();
         await expectText(page, "Unfinished");
-        await expectText(page, "not on your other devices until the latest database update");
+        await expectText(page, "sync unavailable until the latest database update");
         await page.waitForTimeout(3000);
         const body = await page.locator("body").innerText();
         if (/cloud recovery is unavailable|cloud sync needs Retry|Retry sync/.test(body)) throw new Error("misleading sync banner shown");

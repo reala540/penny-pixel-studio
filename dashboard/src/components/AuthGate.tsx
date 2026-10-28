@@ -9,6 +9,14 @@ import { configured, signedOutDeliberately, signOut, supabase } from "../lib/sup
 // "failed" = the access check didn't get an answer (offline, server error): never treated as "not the owner".
 type OwnerState = "checking" | "owner" | "not-owner" | "failed";
 
+/** After a sign-in change: whether the cached data must go (signed out, or another account), and who is signed in now.
+ *  A token refresh for the same account keeps the cache. */
+export function accountChange(previous: string | null, now: string | null, event: string): { clear: boolean; user: string | null } {
+  if (now) return { clear: previous !== null && previous !== now, user: now };
+  if (event === "SIGNED_OUT") return { clear: true, user: null };
+  return { clear: previous !== null, user: previous };
+}
+
 export default function AuthGate({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null | undefined>(undefined);
   // the access answer belongs to one account: a different account is never shown the previous answer
@@ -30,10 +38,9 @@ export default function AuthGate({ children }: { children: ReactNode }) {
     const { data } = supabase.auth.onAuthStateChange((_event, s) => {
       if (!s && hadSession.current && !signedOutDeliberately()) setEndedMidway(true);  // expired, not the Sign out button
       // signed out or a different account: nothing loaded for the previous account stays in memory
-      const uid = s?.user.id ?? null;
-      if (lastUser.current && uid !== lastUser.current) qc.clear();
-      if (uid) lastUser.current = uid;
-      else if (_event === "SIGNED_OUT") { qc.clear(); lastUser.current = null; }
+      const next = accountChange(lastUser.current, s?.user.id ?? null, _event);
+      if (next.clear) qc.clear();
+      lastUser.current = next.user;
       setSession(s);
     });
     return () => data.subscription.unsubscribe();

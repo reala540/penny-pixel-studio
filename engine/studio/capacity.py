@@ -9,7 +9,7 @@ from datetime import date, datetime, timezone
 
 from . import config, db
 
-DEFAULT_LONG_SECONDS = 420          # 7-minute video
+DEFAULT_LONG_SECONDS = 420          # only when the settings give no target length
 DEFAULT_SHORT_SECONDS = 45
 # measured on a 4-core machine: ~1.1 s of render per 1 s of 1080p video; GitHub's 2-core runners are slower
 DEFAULT_FINAL_RATIO = 2.0
@@ -50,6 +50,33 @@ def render_ratio(conn, quality: str, default: float) -> float:
     return default
 
 
+RETRY_ALLOWANCE = 1.15              # some renders and uploads are retried; plan for it rather than be surprised
+ANIMATED_SCENE_MINUTES = 0.4        # drawing an animated scene frame by frame, preview and final together
+
+
+def long_seconds(conn) -> float:
+    """How long a long video is: measured from recent final renders when there are enough, else the target length."""
+    target = float((config.services().get("render") or {}).get("target_long_minutes") or DEFAULT_LONG_SECONDS / 60) * 60
+    if conn is None:
+        return target
+    row = db.one(conn, """select count(*) n, avg(units) secs from provider_usage where service='render' and role='final'
+                          and units > 180 and created_at > now() - interval '60 days'""")
+    if row and row["n"] and row["n"] >= 3 and row["secs"]:
+        return float(row["secs"])
+    return target
+
+
+def youtube_targets(conn) -> dict[str, int]:
+    """Long videos a week per channel, from the owner's saved schedule (Settings), else the starter config."""
+    rows = db.all_(conn, """select c.slug channel, a.weekly_targets from social_accounts a
+                            join channel_profiles c on c.id = a.channel_profile_id
+                            where a.platform='youtube' and a.enabled""")
+    if rows:
+        return {r["channel"]: int((r["weekly_targets"] or {}).get("long_video", 3)) for r in rows}
+    return {a["channel"]: int(a["weekly_targets"].get("long_video", 3)) for a in config.accounts()["accounts"]
+            if a["platform"] == "youtube" and a.get("channel")}
+
+
 def github_minutes_used(conn) -> int:
     row = db.one(conn, """select coalesce(sum(units),0) n from provider_usage where service='github_minutes'
                           and date_trunc('month', created_at) = date_trunc('month', now())""")
@@ -75,11 +102,11 @@ def ai_daily_capacity() -> int:
 def plan_batch(conn, today: date | None = None) -> dict:
     today = today or datetime.now(timezone.utc).date()
     svc = config.services()
-    targets = {}
-    for a in config.accounts()["accounts"]:
-        if a["platform"] == "youtube" and a.get("channel"):
-            targets[a["channel"]] = int(a["weekly_targets"].get("long_video", 3))
+    targets = youtube_targets(conn)
     shorts_per_long = 2
+    long_s = long_seconds(conn)
+    render_cfg = svc.get("render") or {}
+    animated = int(render_cfg.get("animated_max_long") or 0) + shorts_per_long * int(render_cfg.get("animated_max_short") or 0)
     gh = svc["quotas"]["github_actions"]
     used = github_minutes_used(conn)
     days_in_month = calendar.monthrange(today.year, today.month)[1]
@@ -91,9 +118,9 @@ def plan_batch(conn, today: date | None = None) -> dict:
 
     def minutes_for(n_long: int) -> float:
         n_short = n_long * shorts_per_long
-        produce = n_long * (3 + DEFAULT_LONG_SECONDS * prev_r / 60) + n_short * (0.5 + DEFAULT_SHORT_SECONDS * prev_r / 60)
-        publish = n_long * (1.5 + DEFAULT_LONG_SECONDS * final_r / 60) + n_short * (1 + DEFAULT_SHORT_SECONDS * final_r / 60)
-        return 6 + produce + publish  # +research and housekeeping
+        produce = n_long * (3 + long_s * prev_r / 60) + n_short * (0.5 + DEFAULT_SHORT_SECONDS * prev_r / 60)
+        publish = n_long * (1.5 + long_s * final_r / 60) + n_short * (1 + DEFAULT_SHORT_SECONDS * final_r / 60)
+        return 6 + (produce + publish + n_long * animated * ANIMATED_SCENE_MINUTES) * RETRY_ALLOWANCE  # +research, housekeeping
 
     plan = dict(targets)
     warnings = []
@@ -123,4 +150,7 @@ def plan_batch(conn, today: date | None = None) -> dict:
     return {"long_per_channel": plan, "targets": targets, "github_minutes_used": used,
             "github_minutes_weekly_budget": round(weekly_budget), "estimated_minutes": round(minutes_for(sum(plan.values()))),
             "storage_free_bytes": int(storage_free), "ai_requests_needed": ai_need, "ai_daily_capacity": ai_cap,
+            "assumptions": {"long_video_minutes": round(long_s / 60, 1), "preview_render_ratio": round(prev_r, 2),
+                            "final_render_ratio": round(final_r, 2), "animated_scenes_per_package": animated,
+                            "retry_allowance": RETRY_ALLOWANCE},
             "warnings": warnings}

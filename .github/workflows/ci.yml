@@ -65,3 +65,36 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+
+  # The dashboard in a real browser against simulated services (no real database, platform or AI is called):
+  # every page in normal and failing conditions, approvals, drafts, schedules, settings and the clocks.
+  browser:
+    runs-on: ubuntu-24.04  # pinned: ubuntu-latest moves to 26.04, which broke the backup step
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: dashboard
+    env:
+      E2E_SCREENSHOT_DIR: /tmp/studio-screenshots
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm install --no-save playwright@1.56.1
+      - run: npx playwright install --with-deps chromium
+      - name: Every page, normal and failing data
+        run: node e2e/sweep.mjs
+      - run: node e2e/audit.mjs
+      - run: node e2e/phase1.mjs
+      - run: node e2e/phase2.mjs
+      - run: node e2e/reliability.mjs
+      - run: node e2e/clock.mjs
+      - run: node e2e/quality.mjs
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-screenshots
+          path: /tmp/studio-screenshots
+          retention-days: 7

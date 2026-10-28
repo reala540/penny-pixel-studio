@@ -139,14 +139,30 @@ export async function handleCallback(env: Env, req: Request, platform: Platform)
         "https://graph.facebook.com/v23.0/oauth/access_token?" +
           new URLSearchParams({ grant_type: "fb_exchange_token", client_id: env.FACEBOOK_APP_ID ?? "", client_secret: env.FACEBOOK_APP_SECRET ?? "", fb_exchange_token: short.access_token }),
       );
+      // Which permissions Facebook actually granted: a person can untick some on Facebook's screen
+      const perms = await getJson(`https://graph.facebook.com/v23.0/me/permissions?access_token=${long.access_token}`);
+      scopes = grantedFacebook(perms);
+      const missing = FACEBOOK_NEEDED.filter((x) => !scopes.includes(x));
+      if (missing.length) return fail(`Facebook didn't allow: ${missing.join(", ")}. Press Connect again and keep every permission switched on (on Facebook's screen choose "Edit access" if it offers it).`);
       // Page tokens obtained from a long-lived user token do not expire.
-      const pages = await getJson(`https://graph.facebook.com/v23.0/me/accounts?fields=id,name,access_token&access_token=${long.access_token}`);
-      const page = pages.data?.[0];
-      if (!page) return fail("No Facebook Page found. Create a Page first, then connect again.");
+      const pages = await getJson(`https://graph.facebook.com/v23.0/me/accounts?fields=id,name,access_token,tasks&access_token=${long.access_token}`);
+      const list: FacebookPage[] = (pages.data ?? []).filter((x: any) => x?.id && x?.access_token)
+        .map((x: any) => ({ id: String(x.id), name: String(x.name ?? x.id), token: String(x.access_token), tasks: Array.isArray(x.tasks) ? x.tasks.map(String) : null }));
+      const usable = list.filter(canPost);
+      if (!list.length) return fail("No Facebook Page found. Create a Page first, then connect again.");
+      if (!usable.length) return fail(`This Facebook login can't post on ${list.map((x) => x.name).join(", ")}. Ask the Page's admin to give you full control (Page settings → Page access), then connect again.`);
+      const db0 = new Supabase(env);
+      const before = await db0.select<{ external_id: string | null }>("social_accounts", `id=eq.${encodeURIComponent(state.a)}&select=external_id`);
+      const same = usable.find((x) => x.id === before[0]?.external_id);
+      if (!same && usable.length > 1) {
+        // more than one Page: the owner chooses, nothing is saved until they do (the list is encrypted and expires)
+        const choice = await encryptJson(env.TOKEN_ENCRYPTION_KEY, { a: state.a, e: Date.now() + 15 * 60_000, scopes, pages: usable } satisfies PageChoice);
+        return Response.redirect(`${dash}/settings/accounts?pick_page=${encodeURIComponent(choice)}`, 302);
+      }
+      const page = same ?? usable[0];
       externalId = page.id;
       handle = page.name;
-      scopes = SCOPES.facebook.split(",");
-      tokens = { page_id: page.id, page_token: page.access_token, page_name: page.name };
+      tokens = { page_id: page.id, page_token: page.token, page_name: page.name };
     } else if (platform === "tiktok") {
       const t = await form("https://open.tiktokapis.com/v2/oauth/token/", {
         client_key: env.TIKTOK_CLIENT_KEY ?? "", client_secret: env.TIKTOK_CLIENT_SECRET ?? "", code,
@@ -171,13 +187,60 @@ export async function handleCallback(env: Env, req: Request, platform: Platform)
   } catch (e) {
     return fail(String((e as Error).message).slice(0, 200));
   }
+  await saveConnection(env, state.a, platform, tokens, externalId, handle, scopes);
+  const extra = platform === "facebook" ? `&page=${encodeURIComponent(`${handle} (${externalId})`)}` : "";
+  return Response.redirect(`${dash}/settings?connected=${platform}${extra}`, 302);
+}
+
+/** Facebook permissions the studio needs to post on a Page. */
+export const FACEBOOK_NEEDED = ["pages_show_list", "pages_read_engagement", "pages_manage_posts"];
+
+export function grantedFacebook(perms: any): string[] {
+  return (perms?.data ?? []).filter((x: any) => x?.status === "granted").map((x: any) => String(x.permission));
+}
+
+interface FacebookPage { id: string; name: string; token: string; tasks: string[] | null }
+interface PageChoice { a: string; e: number; scopes: string[]; pages: FacebookPage[] }
+
+/** Facebook lists what this login may do on each Page; posting needs CREATE_CONTENT (unknown = allowed, Facebook checks). */
+export function canPost(page: FacebookPage): boolean {
+  return page.tasks === null || page.tasks.includes("CREATE_CONTENT") || page.tasks.includes("MANAGE");
+}
+
+/** The Pages to choose from, without their tokens, for the dashboard's "Which Page?" screen. */
+export async function pageChoices(env: Env, blob: string): Promise<{ id: string; name: string }[]> {
+  const c = await openChoice(env, blob);
+  return c.pages.map((x) => ({ id: x.id, name: x.name }));
+}
+
+/** The owner picked a Page: save that one. */
+export async function choosePage(env: Env, blob: string, pageId: string): Promise<{ page: string; id: string }> {
+  const c = await openChoice(env, blob);
+  const page = c.pages.find((x) => x.id === pageId);
+  if (!page) throw new Error("That Page isn't in the list Facebook gave. Press Connect again.");
+  await saveConnection(env, c.a, "facebook", { page_id: page.id, page_token: page.token, page_name: page.name }, page.id, page.name, c.scopes);
+  return { page: page.name, id: page.id };
+}
+
+async function openChoice(env: Env, blob: string): Promise<PageChoice> {
+  let c: PageChoice;
+  try {
+    c = await decryptJson<PageChoice>(env.TOKEN_ENCRYPTION_KEY, blob);
+  } catch {
+    throw new Error("This Page list isn't valid. Press Connect again.");
+  }
+  if (!c?.pages?.length || c.e < Date.now()) throw new Error("This Page list expired (15 minutes). Press Connect again.");
+  return c;
+}
+
+async function saveConnection(env: Env, accountId: string, platform: Platform, tokens: Record<string, unknown>,
+                              externalId: string, handle: string, scopes: string[]): Promise<void> {
   const db = new Supabase(env);
-  await db.upsert("oauth_secrets", { social_account_id: state.a, ciphertext: await encryptJson(env.TOKEN_ENCRYPTION_KEY, tokens), updated_at: new Date().toISOString() }, "social_account_id");
-  await db.update("oauth_connections", `social_account_id=eq.${state.a}`, {
+  await db.upsert("oauth_secrets", { social_account_id: accountId, ciphertext: await encryptJson(env.TOKEN_ENCRYPTION_KEY, tokens), updated_at: new Date().toISOString() }, "social_account_id");
+  await db.update("oauth_connections", `social_account_id=eq.${accountId}`, {
     status: "connected", scopes, last_error: null, connected_at: new Date().toISOString(), last_checked_at: new Date().toISOString(),
     token_expires_at: typeof tokens.expires_at === "number" ? new Date((tokens.expires_at as number) * 1000).toISOString() : null,
   });
-  await db.update("social_accounts", `id=eq.${state.a}`, { external_id: externalId, handle });
-  await db.audit("account_connected", { platform, account: state.a, handle });
-  return Response.redirect(`${dash}/settings?connected=${platform}`, 302);
+  await db.update("social_accounts", `id=eq.${accountId}`, { external_id: externalId, handle });
+  await db.audit("account_connected", { platform, account: accountId, handle, page_id: platform === "facebook" ? externalId : undefined });
 }

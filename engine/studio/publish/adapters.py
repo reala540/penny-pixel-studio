@@ -30,7 +30,32 @@ class Capability:
     reason: str = ""
 
 
+# Meta's error codes (https://developers.facebook.com/docs/graph-api/guides/error-handling): a login that expired or a
+# permission that is missing comes back as HTTP 400, so the code inside the reply decides what the owner should do
+META_LOGIN = {102, 190, 463, 467}
+META_RATE = {4, 17, 32, 613, 80001}
+
+
+def _meta_error(r: httpx.Response) -> dict:
+    try:
+        err = r.json().get("error")
+    except ValueError:
+        return {}
+    return err if isinstance(err, dict) else {}
+
+
 def _raise_for(r: httpx.Response, platform: str, after_upload: bool = False) -> None:
+    if platform == "facebook" and r.status_code >= 400:
+        err = _meta_error(r)
+        code, msg = err.get("code"), str(err.get("message") or "")[:200]
+        if code in META_LOGIN:
+            raise AuthError(f"facebook: the login expired or was removed (code {code}): {msg}. "
+                            "Reconnect Facebook in Settings → Accounts")
+        if code == 10 or (isinstance(code, int) and 200 <= code < 300):
+            raise AuthError(f"facebook: a permission is missing (code {code}): {msg}. Reconnect Facebook in "
+                            "Settings → Accounts and allow every permission it asks for")
+        if code in META_RATE:
+            raise QuotaError(f"facebook: Facebook's rate limit was reached (code {code}); trying again later")
     if r.status_code in (401, 403):
         raise AuthError(f"{platform}: permission denied ({r.status_code}): {r.text[:200]}")
     if r.status_code == 429:
@@ -128,7 +153,9 @@ class Facebook:
             r = self.client.post(f"{g}/{page_id}/feed", data={"message": variant.get("body") or "", "access_token": token})
             _raise_for(r, "facebook", after_upload=True)
             pid = r.json().get("id")
-            return PublishResult(pid, f"https://www.facebook.com/{pid}" if pid else None, "public", "api")
+            if not pid:  # Facebook normally returns the new post's id; without it nobody can say the post exists
+                raise AmbiguousPublish("facebook: the text post wasn't confirmed (no post id came back): check the Page")
+            return PublishResult(pid, f"https://www.facebook.com/{pid}", "public", "api")
         if video is None:
             raise PermanentError(f"facebook: a {variant['kind'].replace('_', ' ')} needs a video")
         if variant["kind"] == "long_video":
@@ -160,8 +187,8 @@ class Facebook:
                                data={"upload_phase": "finish", "video_id": vid, "video_state": "PUBLISHED",
                                      "description": caption.strip()[:2200], "access_token": token})
         _raise_for(fin, "facebook", after_upload=True)
-        if not fin.json().get("success", True):
-            raise AmbiguousPublish("facebook: finish phase did not confirm success")
+        if fin.json().get("success") is not True:  # only an explicit yes counts as posted
+            raise AmbiguousPublish("facebook: the Reel's finish step didn't confirm success: check the Page")
         return PublishResult(vid, f"https://www.facebook.com/reel/{vid}", "public", "api")
 
     CHUNK_LIMIT = 200  # a long video is sent in pieces; this many pieces means something is wrong

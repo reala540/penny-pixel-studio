@@ -17,6 +17,7 @@ Safeguards (each is tested):
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -65,11 +66,17 @@ def safety_problems(conn, post: dict, ctx: dict, now: datetime) -> list[str]:
         problems.append("account disabled")
     if ctx["variant_status"] != "approved":
         problems.append("variant not approved")
-    approval = db.one(conn, """select 1 from approvals where decision='approved'
-                               and ((target_type='variant' and target_id=%s) or (target_type='project' and target_id=%s))
-                               limit 1""", (ctx["id"], ctx["project_id"]))
-    if not approval:
+    # both the post and its package need an approval record, and the package's must be for the script as it is now:
+    # an approval of an earlier version doesn't count
+    post_ok = db.one(conn, """select 1 from approvals where decision='approved' and target_type='variant' and target_id=%s
+                              limit 1""", (ctx["id"],))
+    package_ok = db.one(conn, """select 1 from approvals where decision='approved' and target_type='project' and target_id=%s
+                                 and script_version_id is not distinct from %s limit 1""",
+                        (ctx["project_id"], ctx["current_script_version_id"]))
+    if not post_ok:
         problems.append("no explicit approval record")
+    elif not package_ok:
+        problems.append("no approval record for the current script version: approve the current version again")
     if ctx["project_status"] not in ("approved", "scheduled", "published"):
         problems.append(f"package is {ctx['project_status']}, not approved")
     elif ctx["approved_script_version_id"] != ctx["current_script_version_id"]:
@@ -142,7 +149,8 @@ def final_media(conn, storage, ctx: dict) -> tuple[Path | None, Path | None]:
                 effects[i] = local
             except Exception:  # cleaned up: the scene keeps just its narration
                 pass
-    out = work / f"{ctx['project_id']}_final.mp4"
+    # named by what is in it, so a file made before an edit is never mistaken for the current one
+    out = work / f"{ctx['project_id']}_final_{recipe_fingerprint(recipe, photos, videos, effects)}.mp4"
     if not out.exists():
         res = rendering.render(recipe, out, "final", work_dir=config.runtime().work_dir / "render" / "shared",
                                photos=photos, videos=videos, effects=effects)
@@ -156,6 +164,15 @@ def final_media(conn, storage, ctx: dict) -> tuple[Path | None, Path | None]:
         if t and t["options"].get("key"):
             thumb = storage.download(t["options"]["key"], work / "thumb.jpg")
     return out, thumb
+
+
+def recipe_fingerprint(recipe: dict, photos: dict, videos: dict, effects: dict) -> str:
+    """Short hash of everything the final video is made from: the scenes and the exact media files they use."""
+    h = hashlib.sha256(json.dumps(recipe, sort_keys=True, default=str).encode())
+    for label, files in (("photo", photos), ("video", videos), ("sfx", effects)):
+        for i in sorted(files):
+            h.update(f"{label}:{i}:{Path(files[i]).name}:{Path(files[i]).stat().st_size}".encode())
+    return h.hexdigest()[:16]
 
 
 def fingerprint(ctx: dict, video: Path | None) -> str:

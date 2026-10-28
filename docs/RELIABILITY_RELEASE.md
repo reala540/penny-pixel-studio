@@ -153,3 +153,45 @@ functions are only used once they exist, and the dashboard says "needs the lates
 
 Storage: stock clips are trimmed to 20 s and compressed (a few MB); clips, previews and final renders of decided
 projects are cleaned up after 7 days, but a clip stays while any post of its project still has to go out.
+
+## Quality pack (migration 21)
+
+An outside review of an older copy (26 Oct) listed 12 points; each was checked against the current code. Already
+done: missing Shorts (PR #31), animations and scene preview (Phases 1-2), SEO and learning from results (Phases 3-4).
+The rest is fixed here:
+
+1. **Final video named by its content.** The final file's name includes a fingerprint of the recipe and its media,
+   so a reused workspace never posts a video made before an edit.
+2. **Facebook's explicit yes.** A Reel counts as posted only when Facebook answers `success: true`; a text post only
+   with a post id. Anything else is "please check" (needs review), never "posted".
+3. **Facebook errors say what to do.** Meta's error codes are read: an expired login (190, 102, …) or a missing
+   permission (10, 200-299) marks the connection for reconnecting; a rate limit (4, 17, 32, 613) is retried later.
+4. **Facebook connection.** The Worker asks Facebook which permissions were really granted, refuses a login that
+   can't post on the Page, keeps the already-connected Page on reconnect, and with several Pages lets the owner choose
+   (the list travels encrypted and expires in 15 minutes; nothing is saved before the choice).
+5. **Approval of the current version.** The publisher needs the post's approval and the package's approval for the
+   script version that is current now.
+6. **Approving with problems needs a reason** (`approve_project`, migration 21): with unsupported or contradicted
+   facts, or parts needing attention, the owner writes why (at least 10 characters). The reason is kept with the
+   approval and in the audit log (`approved_with_problems`). Review shows "Passed checks / Needs corrections" and
+   "Approved by you / Waiting for your approval" as separate answers, and the dialog lists what's included and missing.
+7. **Clock changes.** A posting time the clocks skip moves later by the jump (02:30 → 03:30); a time that happens
+   twice uses the first. The owner gets a note (Telegram routine alert, `schedule_note`).
+8. **Capacity.** Estimates use the configured length (11 min) or the measured length of recent final renders, the
+   measured render speed, animated scenes and a retry allowance; `plan_batch` returns these assumptions.
+9. **Browser tests on GitHub.** The Tests workflow runs every browser suite (`browser` job), including the new
+   `e2e/quality.mjs`; engine, Worker and dashboard tests cover each fix above.
+10. **Photos.** The best-matching result is chosen (words in its description, then size), not the first; when no photo
+    is found, the reason is saved on the scene and shown in Review.
+11. **Facebook schedules.** Reels and text posts can have their own days and times (`reel_days/reel_times`,
+    `text_days/text_times`, migration 21); without them they use the Page's, exactly as before. The schedule card
+    shows the next 7 days: asked for, really scheduled, and why any gap is there.
+12. **Settings → Accounts** shows, from a daily engine check (`account_capabilities` setting): login saved, needed
+    permissions granted, posting automatic / drafts / not possible, last post that worked, last problem, next step.
+13. **Drafts.** Each draft says "Saved to your account" or "Saved on this device" (syncing / sync unavailable); cloud
+    drafts and job history are read page by page instead of a fixed 200 rows. Signing out or switching account
+    clears cached data (tested).
+
+Rollout: everything except points 6 and 11 works before migration 21. Before it, the old approval function is used
+(no reason asked by the database; the dashboard still asks), and separate Facebook times show a message to run the
+update. Apply it with **GitHub → Actions → First-time setup (keys only)**.

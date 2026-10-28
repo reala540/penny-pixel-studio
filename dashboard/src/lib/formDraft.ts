@@ -41,6 +41,6 @@ export function useFormDraft<T>(name: string, initial: T) {
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty]);
   const reset = () => { base.current = initialText; setValue(initial); setConflict(false); };
-  const message = conflict ? "This changed elsewhere. Your edits are kept; discard them to load the current version before saving." : error || (dirty ? "Unsaved changes — recovery draft kept on this device." : "");
+  const message = conflict ? "This changed elsewhere. Your edits are kept; discard them to load the current version before saving." : error || (dirty ? "Unsaved changes. A recovery copy is kept on this device only (not in your account) until you save." : "");
   return [value, setValue, { dirty, conflict, message, reset }] as const;
 }

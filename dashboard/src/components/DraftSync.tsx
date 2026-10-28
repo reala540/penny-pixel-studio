@@ -11,6 +11,20 @@ let cloud: "unknown" | "ok" | "needs_update" = "unknown";
 const listeners = new Set<() => void>();
 const setCloud = (v: typeof cloud) => { if (cloud !== v) { cloud = v; listeners.forEach((l) => l()); } };
 export const useCloudDrafts = () => useSyncExternalStore((cb) => { listeners.add(cb); return () => listeners.delete(cb); }, () => cloud, () => cloud);
+// which drafts' latest version is saved to the owner's account (as of the last sync), and whether the last sync failed
+let synced: ReadonlySet<string> = new Set();
+let syncFailed = false;
+const setSynced = (ids: string[], failed: boolean) => { synced = new Set(ids); syncFailed = failed; listeners.forEach((l) => l()); };
+export const useSyncedDrafts = () => useSyncExternalStore((cb) => { listeners.add(cb); return () => listeners.delete(cb); }, () => synced, () => synced);
+export const useSyncFailed = () => useSyncExternalStore((cb) => { listeners.add(cb); return () => listeners.delete(cb); }, () => syncFailed, () => syncFailed);
+
+/** Plain words for where a draft is saved. */
+export function draftSaveLabel(cloudState: typeof cloud, isSynced: boolean, failed: boolean): string {
+  if (cloudState === "needs_update") return "Saved on this device · sync unavailable until the latest database update";
+  if (isSynced) return "Saved to your account";
+  if (failed || (typeof navigator !== "undefined" && navigator.onLine === false)) return "Saved on this device · sync unavailable right now";
+  return "Saved on this device · syncing to your account";
+}
 const notInstalled = (e: { code?: string; message?: string } | null) =>
   ["PGRST202", "PGRST205", "42P01", "42883"].includes(e?.code ?? "") || /schema cache/i.test(e?.message ?? "");
 export default function DraftSync() {
@@ -26,7 +40,14 @@ export default function DraftSync() {
       if (busy || navigator.onLine === false) return;
       busy = true;
       try {
-        const response = await supabase.from("studio_drafts").select("id,payload,revision").eq("owner_id",owner).order("updated_at", {ascending:false}).limit(200);
+        // every cloud row, page by page (removal records included), so a long history never hides older drafts
+        const response: { data: CloudRow[]; error: { code?: string; message?: string } | null } = { data: [], error: null };
+        for (let page = 0; page < 50; page++) {
+          const part = await supabase.from("studio_drafts").select("id,payload,revision").eq("owner_id",owner).order("updated_at", {ascending:false}).range(page * 200, page * 200 + 199);
+          if (part.error) { response.error = part.error; break; }
+          response.data.push(...((part.data ?? []) as CloudRow[]));
+          if ((part.data ?? []).length < 200) break;
+        }
         if (notInstalled(response.error)) { setCloud("needs_update"); clearInterval(timer); if (live) setMessage(""); return; }
         if (response.error) throw new Error("Drafts are kept on this device; the cloud copy couldn't be updated just now.");
         setCloud("ok");
@@ -80,7 +101,8 @@ export default function DraftSync() {
         localStorage.setItem(removedKey,"[]");
         localStorage.setItem(metaKey,JSON.stringify(meta));
         if(live)setMessage(recovered ? "Drafts changed on another device. Both versions were kept; review your recovered copy in Create." : "");
-      } catch(e) {if(live)setMessage((e as Error).message);}
+        setSynced(listDrafts(owner).filter((d)=>same(d,meta[d.id]?.payload)).map((d)=>d.id), false);
+      } catch(e) {if(live)setMessage((e as Error).message); setSynced([...synced], true);}
       finally {busy=false;}
     };
     void sync();

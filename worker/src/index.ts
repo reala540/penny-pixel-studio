@@ -8,7 +8,7 @@
 
 import { randomToken, timingSafeEqual } from "./crypto";
 import { addCredential, addProvider, deleteCredential, InputError, replaceCredential, replaceEnvKey, testCredential } from "./credentials";
-import { handleCallback, startUrl } from "./oauth";
+import { choosePage, handleCallback, pageChoices, startUrl } from "./oauth";
 import { ensureWebhookSecret, removeValue, saveValue, SetupError, setupStatus, testValue, withSavedSecrets, isManaged } from "./setup";
 import { Env, Supabase } from "./supabase";
 import { stopAndClear } from "./stop";
@@ -358,6 +358,20 @@ export async function handleFetch(req: Request, rawEnv: Env): Promise<Response> 
     const acc = await new Supabase(env).select<{ id: string; platform: string }>("social_accounts", `id=eq.${encodeURIComponent(body.account_id)}&select=id,platform`);
     if (!acc.length) return json(env, { error: "unknown account" }, 404);
     return json(env, { url: await startUrl(env, req, acc[0].platform as any, acc[0].id) });
+  }
+
+  if ((url.pathname === "/api/oauth/facebook-pages" || url.pathname === "/api/oauth/facebook-page") && req.method === "POST") {
+    const owner = await ownerOrNull(env, req);
+    if (!owner) return json(env, { error: "not authorised" }, 401);
+    const body = (await req.json().catch(() => ({}))) as { choice?: string; page_id?: string };
+    if (!body.choice) return json(env, { error: "choice required" }, 400);
+    try {
+      if (url.pathname === "/api/oauth/facebook-pages") return json(env, { pages: await pageChoices(env, body.choice) });
+      if (!body.page_id) return json(env, { error: "page_id required" }, 400);
+      return json(env, await choosePage(env, body.choice, body.page_id));
+    } catch (e) {
+      return json(env, { error: (e as Error).message }, 400);
+    }
   }
 
   if (url.pathname === "/api/telegram/link-code" && req.method === "POST") {

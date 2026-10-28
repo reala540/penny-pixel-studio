@@ -36,3 +36,33 @@ export function claimProblems(claims: Pick<Claim, "status">[]) {
 }
 
 export const SHORTS_WAITING = ["ready_for_review", "needs_attention"];
+
+/** Two separate answers, never one word for both: did the automatic checks pass, and has the owner approved. */
+export function checkState(parts: Pick<Project, "status">[], badClaims: number, issues: number): "passed" | "needs_corrections" {
+  return badClaims > 0 || issues > 0 || parts.some((p) => p.status === "needs_attention") ? "needs_corrections" : "passed";
+}
+
+export function ownerState(status: string): "approved" | "rejected" | "waiting" | "published" {
+  if (status === "published") return "published";
+  if (status === "approved" || status === "scheduled") return "approved";
+  if (status === "rejected") return "rejected";
+  return "waiting";
+}
+
+export const REASON_MIN = 10;
+
+/** The database asks for a written reason when unsupported or contradicted facts, or parts needing attention, remain. */
+export function reasonNeeded(parts: Pick<Project, "status">[], badClaims: number): boolean {
+  return badClaims > 0 || parts.some((p) => p.status === "needs_attention");
+}
+
+/** "Facebook Reel ×2" style lines for the approval dialog, from the package's posts that are still to go out. */
+export function includedPosts(variants: { kind: string; status: string; social_accounts?: { label?: string } | null }[], kindName: Record<string, string>): string[] {
+  const n = new Map<string, number>();
+  for (const v of variants) {
+    if (["skipped", "rejected"].includes(v.status)) continue;
+    const key = `${v.social_accounts?.label ?? "Post"} ${(kindName[v.kind] ?? v.kind).toLowerCase()}`;
+    n.set(key, (n.get(key) ?? 0) + 1);
+  }
+  return [...n.entries()].map(([k, c]) => (c > 1 ? `${k} ×${c}` : k)).sort();
+}
