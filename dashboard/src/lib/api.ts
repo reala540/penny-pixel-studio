@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { announceChange, friendlyError } from "./state";
+import { isValidZone } from "./clock";
 import { callWorker, supabase } from "./supabase";
 import type { Account } from "./types";
 
@@ -27,8 +28,17 @@ export function useSetting<T>(key: string, fallback: T) {
   });
 }
 
+/** The studio timezone for showing dates. A saved name the browser doesn't recognise would break every date on the
+ *  page, so such a value shows times in UTC instead, and `useTimezoneProblem` says so in a banner. */
 export function useTimezone(): string {
-  return useSetting<string>("timezone", "Africa/Nairobi").data ?? "Africa/Nairobi";
+  const saved = useSetting<string>("timezone", "Africa/Nairobi").data ?? "Africa/Nairobi";
+  return isValidZone(saved) ? saved : "UTC";
+}
+
+/** The saved timezone when it isn't one the browser recognises, otherwise null. */
+export function useTimezoneProblem(): string | null {
+  const q = useSetting<string>("timezone", "Africa/Nairobi");
+  return q.isSuccess && !isValidZone(q.data) ? String(q.data) : null;
 }
 
 export function useSaveSetting() {
