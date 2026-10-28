@@ -74,20 +74,20 @@ export default function Performance() {
       <section aria-labelledby="sources" className="mb-6">
         <h2 id="sources" className="section-title mb-2">Where the numbers come from</h2>
         <ul className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
-          <li className="rounded-lg border border-line bg-surface p-3"><b>YouTube</b>: {lastCollected ? <>last checked {lastCollected}. YouTube's numbers arrive 1–3 days late.</> : "not collected yet: the next daily check reads it."}</li>
+          <li className="rounded-lg border border-line bg-surface p-3"><b>YouTube</b>: {accounts.isError ? "couldn't load the channel numbers just now." : lastCollected ? <>last checked {lastCollected}. YouTube's numbers arrive 1–3 days late.</> : "not collected yet: the next daily check reads it."}</li>
           <li className="rounded-lg border border-line bg-surface p-3"><b>Facebook</b>: not collected yet. It needs the Page insights permission on your Facebook app.</li>
           <li className="rounded-lg border border-line bg-surface p-3"><b>X</b>: not read. X charges for reading post stats, so check them in the X app.</li>
-          <li className="rounded-lg border border-line bg-surface p-3"><b>TikTok, Instagram</b>: not connected yet.</li>
+          <li className="rounded-lg border border-line bg-surface p-3"><b>TikTok, Instagram</b>: not part of the studio yet (they are on the to-do list).</li>
         </ul>
       </section>
 
       <section aria-labelledby="last28" className="mb-6">
         <h2 id="last28" className="section-title mb-2">YouTube, last 28 days</h2>
-        <div className="grid gap-3 sm:grid-cols-3">
+        {accounts.isError ? <NotConfirmed q={accounts} what="channel numbers" /> : <div className="grid gap-3 sm:grid-cols-3">
           <Stat label="Views" value={fmtCount(sum((a) => a.views))} />
           <Stat label="Watch time" value={fmtMinutes(sum((a) => a.watch_minutes))} />
           <Stat label="Subscribers gained" value={fmtCount(sum((a) => a.subscribers_gained))} />
-        </div>
+        </div>}
         {topCountries.length > 0 && (
           <div className="mt-3 rounded-xl border border-line bg-surface p-4 text-sm">
             <p className="font-medium">Top countries</p>
@@ -156,12 +156,12 @@ export default function Performance() {
             </table>
           </div>
         )}
-        <p className="mt-2 text-xs text-muted">"—" means the number isn't available: point at it to see why. Nothing is guessed.</p>
+        <p className="mt-2 text-xs text-muted">"—" means the number isn't available: point at it to see why. Numbers are never guessed.</p>
       </section>
 
       <section aria-labelledby="costs">
         <h2 id="costs" className="section-title mb-2">What each package cost to make</h2>
-        {costs.isLoading ? <Loading /> : costs.isError ? <NotConfirmed q={costs} what="package costs" /> : costs.data === NEEDS_UPDATE ? null : (costs.data ?? []).length === 0 ? <p className="text-sm text-muted">No packages in the last 90 days.</p> : (
+        {costs.isLoading ? <Loading /> : costs.isError ? <NotConfirmed q={costs} what="package costs" /> : costs.data === NEEDS_UPDATE ? null : (costs.data ?? []).length === 0 ? <p className="text-sm text-muted">0 packages made in the last 90 days.</p> : (
           <div className="overflow-x-auto rounded-xl border border-line bg-surface">
             <table className="w-full min-w-[640px] text-left text-sm">
               <thead className="border-b border-line text-xs uppercase tracking-wide text-muted">
