@@ -138,3 +138,18 @@ Until then, Facebook schedules still save; asking for Stories or long videos sho
   pieces. They take a posting slot after the Reels and text posts, so add a posting day or time if the week is full.
 - Nothing changes until the owner sets **Stories per week** and **Long videos per week** for the Facebook Page in
   Settings → Posting schedule. Ads are not part of the studio.
+
+## Improvement phases 1-5 (migrations 17-20)
+
+Merge the PRs in order (Phase 1, 2, 3, 4, 5), then run **GitHub → Actions → First-time setup (keys only)** once; it
+applies every missing migration in order. Each phase works before its migration lands: the new job types, tables and
+functions are only used once they exist, and the dashboard says "needs the latest database update" instead of failing.
+
+- **17** `remake_shorts`: new Shorts for a package from its own checked facts; hand-posted texts marked published.
+- **18** `preview_scene`: render one scene on its own; the Freesound key can be saved from Setup.
+- **19** Performance: `post_metrics`, `account_metrics`, `provider_usage.project_id`, `studio_performance()`,
+  `studio_package_costs()`. Collected once a day by maintenance, read-only.
+- **20** `affiliate_offers`: owner-entered, https only, disclosure first, long-video descriptions only.
+
+Storage: stock clips are trimmed to 20 s and compressed (a few MB); clips, previews and final renders of decided
+projects are cleaned up after 7 days, but a clip stays while any post of its project still has to go out.

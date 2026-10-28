@@ -11,6 +11,7 @@ export const SETTINGS_SECTIONS = [
   ["voices", "Channel voices"],
   ["notifications", "Notifications"],
   ["budget", "Budget"],
+  ["offers", "Affiliate offers"],
   ["appearance", "Appearance & region"],
 ] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number][0];

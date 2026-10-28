@@ -271,7 +271,13 @@ def produce_project(conn, router: Router, storage, idea: dict, week: date, *, pr
         pkg, problems, trail = pipeline.make_package(router, channel, script, facts,
                                                      hints=analytics.packaging_hints(conn, channel))
         pkg.youtube_description = fill_sources(pkg.youtube_description, sources_used(conn, pid))
+        from . import offers
+
+        pkg.youtube_description, offer = offers.add_to_description(
+            conn, channel, pkg.youtube_description, " ".join([script.title, script.full_text()]))
         pdata = pkg.model_dump()
+        if offer:
+            pdata["affiliate_offer"] = offer
         children = []
         for n, short in enumerate(pkg.shorts, 1):
             child = ensure_project(conn, channel, "short", short.title, week, parent_id=pid, key=f"{pid}:short:{n}")

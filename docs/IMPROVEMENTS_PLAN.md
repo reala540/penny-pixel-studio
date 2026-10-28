@@ -1,6 +1,6 @@
 # Improvements: what exists, what's missing, and a phased plan
 
-Report for to-do items 18–22c. Nothing here has been built yet; each phase starts only when the owner agrees.
+Report for to-do items 18–22c. **Status: all five phases built** (PRs for phases 1–5); the notes below describe what each one does.
 Checked against the code and the live studio on 28 Oct 2026.
 
 ## Summary
