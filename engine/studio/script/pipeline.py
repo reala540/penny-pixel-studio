@@ -336,7 +336,10 @@ def write_long(router: Router, channel: str, idea: dict, sources: list[dict]) ->
 
 SHORTS_BRIEF = ("two purpose-built Shorts that each tell a complete mini-story from the facts: 35-55 seconds each, "
                 "which is about 90-130 spoken words in total (hook plus scenes). Their own hook, 3-6 scenes, short "
-                "sentences of at most 16 words, a caption and 3-5 hashtags. Only use facts listed.")
+                "sentences of at most 16 words. Give each Short a YouTube caption, a different shorter tiktok_caption "
+                "and a different reel_caption for Facebook (each says what the viewer learns, no clickbait, no "
+                "'link in bio'), and 3-5 hashtags about the topic itself, never unrelated trending tags. "
+                "Only use facts listed.")
 
 
 class ShortsOnly(BaseModel):

@@ -77,7 +77,7 @@ def safety_problems(conn, post: dict, ctx: dict, now: datetime) -> list[str]:
     if ctx["fresh_until"] and ctx["fresh_until"] < now:
         problems.append("content expired: time-sensitive facts must be rechecked")
     for sc in ((ctx["recipe"] or {}).get("render") or {}).get("scenes", []):
-        if sc.get("photo_key") and not sc.get("license_record_id"):
+        if (sc.get("photo_key") or sc.get("video_key")) and not sc.get("license_record_id"):
             problems.append("media without license record")
             break
     return problems
@@ -116,9 +116,17 @@ def final_media(conn, storage, ctx: dict) -> tuple[Path | None, Path | None]:
     if not recipe:
         raise PermanentError("No render recipe stored for this project")
     work = config.runtime().work_dir / "final" / str(ctx["project_id"])
-    photos = {}
+    photos, videos = {}, {}
     for i, sc in enumerate(recipe["scenes"]):
-        if sc.get("photo_key"):
+        if sc.get("video_key"):
+            local = work / "clips_src" / Path(sc["video_key"]).name
+            try:
+                if not local.exists():
+                    storage.download(sc["video_key"], local)
+                videos[i] = local
+            except Exception:  # cleaned up: this scene shows its words on the brand background instead
+                pass
+        elif sc.get("photo_key"):
             local = work / "photos" / Path(sc["photo_key"]).name
             if not local.exists():
                 storage.download(sc["photo_key"], local)
@@ -126,7 +134,7 @@ def final_media(conn, storage, ctx: dict) -> tuple[Path | None, Path | None]:
     out = work / f"{ctx['project_id']}_final.mp4"
     if not out.exists():
         res = rendering.render(recipe, out, "final", work_dir=config.runtime().work_dir / "render" / "shared",
-                               photos=photos)
+                               photos=photos, videos=videos)
         from .. import capacity
 
         capacity.record_render(conn, ctx["project_id"], "final", res.seconds_taken, res.duration, res.bytes)

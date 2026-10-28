@@ -98,12 +98,36 @@ def recipe_from_script(script: dict, channel: str, fmt: str, title: str) -> dict
             "speed": float(vp.get("tts_speed", 1.0)), "scenes": scenes}
 
 
+CLIP_SECONDS = 20  # a stock clip is cut to this length (it loops if a scene runs longer)
+
+
+def prepare_clip(src: Path, out: Path, fmt: str) -> Path:
+    """A stock clip made storage-friendly: cut to CLIP_SECONDS, cropped to the video's frame, no sound, compact."""
+    w, h, _, _ = _size_for(fmt, "final")
+    if not out.exists():
+        out.parent.mkdir(parents=True, exist_ok=True)
+        ffmpeg(["-i", str(src), "-t", str(CLIP_SECONDS), "-an", "-vf",
+                f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},fps={FPS},setsar=1",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "28", "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+                str(out)], timeout=600)
+    return out
+
+
+def _file_hash(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()[:16]
+
+
 def _silence(path: Path, seconds: float) -> None:
     ffmpeg(["-f", "lavfi", "-i", f"anullsrc=r={tts.SAMPLE_RATE}:cl=mono", "-t", f"{seconds:.2f}", str(path)])
 
 
 def render(recipe: dict, out_path: Path, quality: str = "preview", work_dir: Path | None = None,
-           photos: dict[int, Path] | None = None, music: Path | None = None) -> RenderResult:
+           photos: dict[int, Path] | None = None, music: Path | None = None,
+           videos: dict[int, Path] | None = None) -> RenderResult:
     started = time.monotonic()
     work = work_dir or (config.runtime().work_dir / "render")
     audio_dir, card_dir, clip_dir = work / "audio", work / "cards", work / "clips"
@@ -123,12 +147,27 @@ def render(recipe: dict, out_path: Path, quality: str = "preview", work_dir: Pat
             if not wav.exists():
                 _silence(wav, dur)
         photo = (photos or {}).get(i)
-        card, chash = card_file(sc["visual"], theme, frame, card_dir, kicker=sc.get("kicker"), photo=photo,
-                                source_note=sc.get("source_note"))
-        key = hashlib.sha256(f"{chash}|{ahash}|{w}x{h}|{crf}|{preset}|clip-v2".encode()).hexdigest()[:24]
+        video = (videos or {}).get(i)
+        if video is not None and not Path(video).exists():
+            video = None
+        card, chash = card_file(sc["visual"], theme, frame, card_dir, kicker=sc.get("kicker"),
+                                photo=None if video else photo, source_note=sc.get("source_note"),
+                                over_video=video is not None)
+        vhash = _file_hash(video) if video else ""
+        key = hashlib.sha256(f"{chash}|{ahash}|{w}x{h}|{crf}|{preset}|clip-v2{('|' + vhash) if vhash else ''}".encode()).hexdigest()[:24]
         clip = clip_dir / f"clip_{key}.mp4"
         if clip.exists():
             cached += 1
+        elif video:
+            # a real clip under the scene's words: cropped to the frame, looped if shorter than the narration, its own
+            # sound dropped (the narration is the only voice)
+            ffmpeg(["-stream_loop", "-1", "-i", str(video), "-i", str(card), "-i", str(wav), "-filter_complex",
+                    f"[0:v]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},fps={FPS},setsar=1[b];"
+                    f"[b][1:v]overlay=0:0,format=yuv420p,"
+                    f"fade=t=in:st=0:d=0.18,fade=t=out:st={max(dur - 0.18, 0):.2f}:d=0.18[v]",
+                    "-map", "[v]", "-map", "2:a", "-c:v", "libx264", "-preset", preset, "-crf", str(crf),
+                    "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
+                    "-t", f"{dur:.3f}", str(clip)])
         else:
             frames = max(int(math.ceil(dur * FPS)), 1)
             zoom = "1+0.035*on/{}".format(frames) if i % 2 == 0 else "1.035-0.035*on/{}".format(frames)
