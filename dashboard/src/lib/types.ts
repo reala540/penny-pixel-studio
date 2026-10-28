@@ -15,7 +15,7 @@ export interface Account {
 export interface Scene {
   narration: string;
   on_screen_text?: string | null;
-  visual: { type: string; headline?: string | null; items?: string[]; stat_value?: string | null; stat_label?: string | null; chart?: unknown; stock_query?: string | null };
+  visual: { type: string; animation?: string | null; headline?: string | null; items?: string[]; stat_value?: string | null; stat_label?: string | null; chart?: unknown; stock_query?: string | null };
   claim_keys?: string[];
 }
 
@@ -41,7 +41,8 @@ export interface Project {
   current_script_version_id: string | null;
   quality_report: { issues?: string[]; critic?: Record<string, number>; package_problems?: string[]; duration_seconds?: number; note?: string; owner_edited?: boolean;
     shorts_remakes?: { at: string; made: number; problems?: string[] }[] };
-  recipe: { preview_key?: string; preview_seconds?: number; package?: Record<string, any> };
+  recipe: { preview_key?: string; preview_seconds?: number; package?: Record<string, any>;
+    scene_previews?: Record<string, { key: string; version: string; seconds?: number }> };
   fresh_until: string | null;
   created_at: string;
   updated_at: string;

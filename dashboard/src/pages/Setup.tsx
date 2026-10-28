@@ -349,6 +349,8 @@ function ResearchStep({ status, done }: { status?: Status; done: boolean }) {
         help="Google Cloud → APIs & Services → Credentials → Create credentials → API key (same project, with YouTube Data API v3 enabled)." />
       <SecretField name="PEXELS_API_KEY" label="Pexels API key" state={status?.values?.PEXELS_API_KEY} help="pexels.com/api → Your API key." />
       <SecretField name="PIXABAY_API_KEY" label="Pixabay API key" state={status?.values?.PIXABAY_API_KEY} help="pixabay.com/api/docs → your key is shown when signed in." />
+      <SecretField name="FREESOUND_API_KEY" label="Freesound API key (sound effects for animated scenes)" state={status?.values?.FREESOUND_API_KEY}
+        help="freesound.org → sign up → freesound.org/apiv2/apply → Create new credentials → copy the API key. Only free public-domain (CC0) sounds are used." />
       <SecretField name="FRED_API_KEY" label="FRED API key (economic data for Penny)" state={status?.values?.FRED_API_KEY} help="fredaccount.stlouisfed.org → API Keys → Request API key." />
       <SecretField name="SEC_USER_AGENT" label="SEC contact (name and email)" secret={false} state={status?.values?.SEC_USER_AGENT}
         placeholder="Your Name you@example.com" help="SEC asks every app to say who it is. Not a password." />

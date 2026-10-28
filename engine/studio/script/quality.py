@@ -133,7 +133,22 @@ def check_long(script: Script, channel: str) -> list[str]:
         nums = numbers_in(sc.narration) - {"1", "2", "3", "4", "5", "10"}
         if nums and not sc.claim_keys:
             issues.append(f"Scene {i} states numbers {sorted(nums)} without a claim/source")
+    issues += animation_numbers(script.scenes)
     return issues
+
+
+def animation_numbers(scenes) -> list[str]:
+    """An animated scene may only show numbers its narrator says (the narration's numbers are fact-checked)."""
+    out = []
+    for i, sc in enumerate(scenes, 1):
+        v = sc.visual
+        if v.type != "animated":
+            continue
+        shown = numbers_in(" ".join([*(v.items or []), v.stat_value or ""]))
+        unsaid = shown - numbers_in(sc.narration)
+        if unsaid:
+            out.append(f"Scene {i} animation shows numbers the narrator doesn't say: {sorted(unsaid)}")
+    return out
 
 
 def check_short(short: ShortScript, channel: str) -> list[str]:
@@ -147,6 +162,7 @@ def check_short(short: ShortScript, channel: str) -> list[str]:
         issues.append(f"Short too thin: ~{dur:.0f}s")
     if not 2 <= len(short.scenes) <= 8:
         issues.append("Short needs 2-8 scenes")
+    issues += animation_numbers(short.scenes)
     claimed = invented_tests(" ".join(s.narration for s in short.scenes) + " " + short.hook + " " + short.title)
     if claimed:
         issues.append(f"Claims a hands-on test that didn't happen: \"{claimed[0]}\"")

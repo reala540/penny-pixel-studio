@@ -20,6 +20,7 @@ from pathlib import Path
 from .. import config
 from ..errors import PermanentError, TransientError
 from . import captions, tts
+from . import animate
 from .visuals import Frame, Theme, card_file
 
 FPS = int(os.environ.get("STUDIO_FPS", "30"))
@@ -71,6 +72,20 @@ def _size_for(fmt: str, quality: str) -> tuple[int, int, int, str]:
     return q["width"], q["height"], q["crf"], q["preset"]
 
 
+def _limit_animations(scenes: list[dict], fmt: str) -> None:
+    """Keep the mix balanced: at most a few animated scenes, each with what its template needs; others go still."""
+    cap = int(config.services()["render"].get("animated_max_" + ("long" if fmt == "long" else "short"), 4 if fmt == "long" else 1))
+    used = 0
+    for sc in scenes:
+        v = sc["visual"]
+        if v.get("type") != "animated":
+            continue
+        if used < cap and animate.usable(v):
+            used += 1
+        else:
+            sc["visual"] = animate.as_static(v)
+
+
 def recipe_from_script(script: dict, channel: str, fmt: str, title: str) -> dict:
     """Turn a validated Script/ShortScript dict into a render recipe (hook + scenes + outro)."""
     ch = config.brand()["channels"][channel]
@@ -87,6 +102,7 @@ def recipe_from_script(script: dict, channel: str, fmt: str, title: str) -> dict
         scenes.append({"narration": sc["narration"], "visual": visual,
                        "kicker": sc.get("on_screen_text") if visual.get("headline") != sc.get("on_screen_text") else None,
                        "source_note": (visual.get("chart") or {}).get("source_note") or None})
+    _limit_animations(scenes, fmt)
     if fmt == "long" and script.get("cta"):
         scenes.append({"narration": script["cta"],
                        "visual": {"type": "title_card", "headline": f"Subscribe to {ch['display_name']}"},
@@ -113,6 +129,44 @@ def prepare_clip(src: Path, out: Path, fmt: str) -> Path:
     return out
 
 
+def _animated_clip(sc, theme, frame, dur, wav, ahash, w, h, crf, preset, card_dir, clip_dir, effect=None) -> tuple[Path, int]:
+    """An animated scene with its narration (and a quiet sound effect, if one was found). If the animation can't be
+    drawn, the scene is shown still instead."""
+    vhash = animate.animation_hash(sc["visual"], theme, frame, dur, FPS)
+    effect = effect if effect is not None and Path(effect).exists() else None
+    ehash = _file_hash(effect) if effect else ""
+    key = hashlib.sha256(f"{vhash}|{ahash}|{w}x{h}|{crf}|{preset}|anim-clip-v1{('|' + ehash) if ehash else ''}".encode()).hexdigest()[:24]
+    clip = clip_dir / f"clip_{key}.mp4"
+    if clip.exists():
+        return clip, 1
+    silent = card_dir / f"anim_{vhash}.mp4"
+    try:
+        if not silent.exists():
+            animate.render_animation(sc["visual"], theme, frame, dur, FPS, silent)
+        fade = f"[0:v]fps={FPS},format=yuv420p,fade=t=in:st=0:d=0.18,fade=t=out:st={max(dur - 0.18, 0):.2f}:d=0.18[v]"
+        if effect:  # under the voice, starting as the movement starts
+            inputs = ["-i", str(silent), "-i", str(wav), "-i", str(effect)]
+            graph = fade + ";[2:a]volume=0.22,adelay=250|250,apad[e];[1:a][e]amix=inputs=2:duration=first:normalize=0[a]"
+            amap = "[a]"
+        else:
+            inputs, graph, amap = ["-i", str(silent), "-i", str(wav)], fade, "1:a"
+        ffmpeg([*inputs, "-filter_complex", graph,
+                "-map", "[v]", "-map", amap, "-c:v", "libx264", "-preset", preset, "-crf", str(crf),
+                "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
+                "-t", f"{dur:.3f}", str(clip)])
+        return clip, 0
+    except Exception:
+        still = {**sc, "visual": animate.as_static(sc["visual"])}
+        card, chash = card_file(still["visual"], theme, frame, card_dir, kicker=sc.get("kicker"),
+                                source_note=sc.get("source_note"))
+        frames = max(int(math.ceil(dur * FPS)), 1)
+        ffmpeg(["-loop", "1", "-i", str(card), "-i", str(wav), "-filter_complex",
+                f"[0:v]scale={w}:{h},fps={FPS},format=yuv420p[v]", "-map", "[v]", "-map", "1:a",
+                "-c:v", "libx264", "-preset", preset, "-crf", str(crf), "-pix_fmt", "yuv420p", "-c:a", "aac",
+                "-b:a", "128k", "-ar", "48000", "-ac", "2", "-frames:v", str(frames), "-t", f"{dur:.3f}", str(clip)])
+        return clip, 0
+
+
 def _file_hash(path: Path) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -127,7 +181,7 @@ def _silence(path: Path, seconds: float) -> None:
 
 def render(recipe: dict, out_path: Path, quality: str = "preview", work_dir: Path | None = None,
            photos: dict[int, Path] | None = None, music: Path | None = None,
-           videos: dict[int, Path] | None = None) -> RenderResult:
+           videos: dict[int, Path] | None = None, effects: dict[int, Path] | None = None) -> RenderResult:
     started = time.monotonic()
     work = work_dir or (config.runtime().work_dir / "render")
     audio_dir, card_dir, clip_dir = work / "audio", work / "cards", work / "clips"
@@ -148,6 +202,15 @@ def render(recipe: dict, out_path: Path, quality: str = "preview", work_dir: Pat
                 _silence(wav, dur)
         photo = (photos or {}).get(i)
         video = (videos or {}).get(i)
+        if sc["visual"].get("type") == "animated":
+            clip, was_cached = _animated_clip(sc, theme, frame, dur, wav, ahash, w, h, crf, preset, card_dir, clip_dir,
+                                              (effects or {}).get(i))
+            cached += was_cached
+            clips.append(clip)
+            timeline.append({"index": i, "narration": sc.get("narration", ""), "start": round(t, 3), "duration": round(dur, 3),
+                             "audio_hash": ahash, "card_hash": clip.stem, "clip": clip.name})
+            t += dur
+            continue
         if video is not None and not Path(video).exists():
             video = None
         card, chash = card_file(sc["visual"], theme, frame, card_dir, kicker=sc.get("kicker"),

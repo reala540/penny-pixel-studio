@@ -1,5 +1,5 @@
 import DraftSync from "./DraftSync";
-import { Activity, CalendarDays, ChevronDown, CircleHelp, Home, LayoutList, LogOut, Menu, PlusCircle, Settings, X } from "lucide-react";
+import { Activity, BarChart3, CalendarDays, ChevronDown, CircleHelp, Home, LayoutList, LogOut, Menu, PlusCircle, Settings, X } from "lucide-react";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
@@ -135,6 +135,7 @@ export default function Layout() {
           </div>
           <div className="min-h-4 flex-1" aria-hidden />
           <nav aria-label="More" className="flex flex-col gap-0.5 border-t border-line pt-3">
+            <NavLink to="/performance" className={secondaryLink}><BarChart3 size={17} aria-hidden /> Performance</NavLink>
             <NavLink to="/settings" className={secondaryLink}><Settings size={17} aria-hidden /> Settings</NavLink>
             <div className="flex items-center justify-between gap-2">
               <NavLink to="/help" className={secondaryLink}><CircleHelp size={17} aria-hidden /> Help</NavLink>
@@ -196,6 +197,7 @@ export default function Layout() {
             </div>
             <div className="flex flex-col gap-1">
               <AutoPostBadge />
+              <NavLink to="/performance" className={secondaryLink}><BarChart3 size={17} aria-hidden /> Performance</NavLink>
               <NavLink to="/settings" className={secondaryLink}><Settings size={17} aria-hidden /> Settings</NavLink>
               <NavLink to="/help" className={secondaryLink}><CircleHelp size={17} aria-hidden /> Help</NavLink>
               <div className="flex items-center justify-between px-3 py-1.5 text-sm text-muted">Theme <ThemeControl compact /></div>

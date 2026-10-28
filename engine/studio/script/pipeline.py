@@ -79,7 +79,12 @@ def _facts_block(facts: FactSheet) -> str:
 
 
 VISUALS = ("Choose a visual type per scene: chart (only with real numbers from the fact sheet), stat, list, steps, "
-           "comparison, quote, title_card or stock (with a short stock_query).")
+           "comparison, quote, title_card or stock (with a short stock_query). For a few scenes where movement explains "
+           "the sentence (at most 4 in a long video, 1 in a Short), use type=animated with an animation: "
+           "budget_jars (money split into 2-4 parts: items 'Label|amount'), price_basket (prices that change: items "
+           "'Item|before|after', 1-4 rows), agent_handoff (AI agents passing a task: items are 2-5 step names) or "
+           "counter (one number growing to its value: stat_value plus stat_label). Every number in an animation "
+           "must be said in that scene's narration and come from the facts.")
 CALCULATIONS = ("Any number you work out yourself (a total, a difference, interest, a percentage) is a claim with "
                 "kind=calculation: put the exact arithmetic in expression using only numbers and + - * / ** ( ), "
                 "write percentages as decimals (5% -> 0.05), and state every assumption in the claim text, e.g. "
@@ -384,7 +389,27 @@ def make_shorts(router: Router, channel: str, script: Script, facts: FactSheet, 
     return [], problems, dropped
 
 
-def make_package(router: Router, channel: str, script: Script, facts: FactSheet) -> tuple[Package, list[str], dict]:
+STUFFING_LIMIT = 3  # the main search phrase more often than this in one description reads as keyword stuffing
+
+
+def search_problems(pkg: Package) -> list[str]:
+    """Keyword stuffing and a brief that isn't used: plain notes for Review (they never change the text)."""
+    b = pkg.search_brief
+    if not b or not b.primary_phrase.strip():
+        return []
+    phrase = b.primary_phrase.strip().lower()
+    out = []
+    n = pkg.youtube_description.lower().count(phrase)
+    if n > STUFFING_LIMIT:
+        out.append(f"The search phrase \"{b.primary_phrase}\" appears {n} times in the description (keyword stuffing: use it once or twice)")
+    tags = [t.lower() for t in pkg.tags]
+    if sum(phrase in t for t in tags) > 3:
+        out.append(f"Too many tags repeat \"{b.primary_phrase}\"; vary them with the supporting phrases")
+    return out
+
+
+def make_package(router: Router, channel: str, script: Script, facts: FactSheet,
+                 hints: str = "") -> tuple[Package, list[str], dict]:
     ch = config.brand()["channels"][channel]
     prompt = (f"{voice_brief(channel)}\n\nCreate the publishing package for this video.\nTitle: {script.title}\n"
               f"Hook: {script.hook}\nSummary: {script.promise}\nFacts you may use:\n{_facts_block(facts)}\n\n"
@@ -393,10 +418,17 @@ def make_package(router: Router, channel: str, script: Script, facts: FactSheet)
               "- tags: 10-15 search phrases.\n- thumbnail_headlines: three different 2-5 word texts.\n"
               "- x_post: under 270 characters, no links, one insight + a question.\n"
               f"- facebook_post: 60-120 words for the {config.brand()['brand']['name']} page.\n"
-              f"- shorts: {SHORTS_BRIEF}")
+              f"- shorts: {SHORTS_BRIEF}\n"
+              "- search_brief: the intended audience, the question they would type into YouTube or Google, one primary "
+              "search phrase (2-5 words) and 3-6 supporting phrases. Base it on the topic and facts only; you have no "
+              "search-volume data, so never claim volumes or that a topic is trending. Use the primary phrase naturally "
+              "in youtube_title and the first sentence of youtube_description, and the supporting phrases in tags. "
+              "Write each platform's text for that platform; don't copy the same words everywhere."
+              + (f"\n\nYour own past results (real numbers from this channel):\n{hints}" if hints else ""))
     res = router.complete("repurposer", prompt, schema=Package, temperature=0.8, max_tokens=6000)
     pkg = res.data
     good_shorts, problems, _ = check_shorts(pkg.shorts, channel, facts)
+    problems += search_problems(pkg)
     if not good_shorts:  # both failed the checks: one focused retry before giving up
         retry, retry_problems, _ = make_shorts(router, channel, script, facts, tries=1)
         problems += retry_problems

@@ -173,6 +173,10 @@ def render_card(visual: dict, theme: Theme, frame: Frame, kicker: str | None = N
                 photo: Path | None = None, source_note: str | None = None, over_video: bool = False) -> Image.Image:
     """One scene's picture. With `over_video` it's a see-through layer (words plus a soft shade) to lay over a clip."""
     w, h = frame.width, frame.height
+    if visual.get("type") == "animated":  # a still picture of an animated scene (e.g. a thumbnail): its still version
+        from .animate import as_static
+
+        visual = as_static(visual)
     vtype = visual.get("type", "title_card")
     if over_video:
         img = _video_scrim(w, h, theme)

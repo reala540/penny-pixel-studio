@@ -46,7 +46,9 @@ class ChartSpec(BaseModel):
 
 
 class Visual(BaseModel):
-    type: Literal["title_card", "stat", "chart", "list", "quote", "stock", "steps", "comparison"]
+    type: Literal["title_card", "stat", "chart", "list", "quote", "stock", "steps", "comparison", "animated"]
+    animation: Literal["budget_jars", "price_basket", "agent_handoff", "counter"] | None = Field(
+        default=None, description="For type=animated: which original animation explains this sentence")
     headline: str | None = None
     items: list[str] = Field(default_factory=list)
     stat_value: str | None = None
@@ -145,6 +147,13 @@ class ShortScript(BaseModel):
     reel_caption: str | None = Field(default=None, description="A different caption written for Facebook Reels")
 
 
+class SearchBrief(BaseModel):
+    audience: str = Field(description="Who this is for, in a few words")
+    question: str = Field(description="The question they would type into search")
+    primary_phrase: str = Field(description="One main search phrase, 2-5 words")
+    supporting_phrases: list[str] = Field(default_factory=list, description="3-6 related phrases")
+
+
 class Package(BaseModel):
     youtube_title: str
     youtube_description: str
@@ -153,3 +162,4 @@ class Package(BaseModel):
     x_post: str = Field(description="Under 270 characters, no links")
     facebook_post: str
     shorts: list[ShortScript] = Field(description="Two purpose-built Shorts, each 35-55 seconds")
+    search_brief: SearchBrief | None = None
