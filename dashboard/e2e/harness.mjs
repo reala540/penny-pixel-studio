@@ -124,6 +124,8 @@ export async function openStudio(browser, path = "/", opts = {}) {
         if (!existing) { existing = {id: `job-${Math.random()}`,job_type:data.p_job_type,status:"queued",project_id:data.p_project_id,input:data.p_input,requested_by:"owner",created_at:new Date().toISOString()}; db.generation_jobs.push(existing); }
         out = existing.id;
       }
+      if (rpc[1] === "studio_performance") out = db.performance ?? [];
+      if (rpc[1] === "studio_package_costs") out = db.package_costs ?? [];
       if (rpc[1] === "patch_studio_setting") {
         db.settings[data.p_key] = {...(db.settings[data.p_key] ?? {}), ...data.p_patch}; out = db.settings[data.p_key];
       }

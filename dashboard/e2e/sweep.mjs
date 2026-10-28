@@ -6,7 +6,7 @@ import { openStudio, startServer, withBrowser } from "./harness.mjs";
 const OUT = (process.env.E2E_SCREENSHOT_DIR || new URL("./screenshots/sweep/", import.meta.url).pathname).replace(/\/?$/, "/");
 mkdirSync(OUT, { recursive: true });
 const SECTIONS = ["setup", "accounts", "schedule", "automation", "ideas", "ai", "voices", "notifications", "budget", "appearance"];
-const PAGES = ["/", "/create", "/content", "/content/ideas", "/content/proj-1", "/calendar", "/activity", "/help", ...SECTIONS.map((s) => `/settings/${s}`)];
+const PAGES = ["/", "/create", "/content", "/content/ideas", "/content/proj-1", "/calendar", "/activity", "/performance", "/help", ...SECTIONS.map((s) => `/settings/${s}`)];
 // wording that claims there is nothing / everything is fine: must never appear while the data failed to load
 const EMPTY = /\b(nothing (is |needs|planned|running|here)|no (posts|ideas|packages|runs|accounts|problems|channels|jobs|automatic|research)\b|studio idle|all clear|not linked|not connected|not checked yet|haven't been checked|no ai service that passed|^\d+ of \d+ needed steps done)/i;
 
