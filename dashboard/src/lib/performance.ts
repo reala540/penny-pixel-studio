@@ -51,3 +51,20 @@ export function weekdayHour(iso: string, tz: string): { day: string; hour: strin
 }
 
 export const KIND_LABEL: Record<string, string> = { long_video: "Long videos", short_video: "Shorts", reel: "Reels", story: "Stories", text_post: "Text posts" };
+
+/** Packages whose YouTube video is clearly beating its channel's usual views (at least twice the median of 5+ videos,
+ *  and 100 views) and that have a Facebook post from the last week: worth boosting there. A suggestion only. */
+export function boostIdeas(rows: PostRow[], now = Date.now()): { project_id: string; title: string; views: number; usual: number; facebook: PostRow }[] {
+  const yt = rows.filter((r) => r.platform === "youtube" && r.views != null);
+  const out = [];
+  for (const ch of new Set(yt.map((r) => r.channel_slug))) {
+    const mine = yt.filter((r) => r.channel_slug === ch).map((r) => Number(r.views)).sort((a, b) => a - b);
+    if (mine.length < 5) continue;
+    const median = mine[Math.floor(mine.length / 2)];
+    for (const r of yt.filter((x) => x.channel_slug === ch && Number(x.views) >= Math.max(100, 2 * median))) {
+      const fb = rows.find((x) => x.platform === "facebook" && x.project_id === r.project_id && now - Date.parse(x.published_at) < 7 * 86_400_000);
+      if (fb) out.push({ project_id: r.project_id, title: r.title, views: Number(r.views), usual: median, facebook: fb });
+    }
+  }
+  return out;
+}

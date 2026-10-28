@@ -266,7 +266,10 @@ def produce_project(conn, router: Router, storage, idea: dict, week: date, *, pr
     script = Script.model_validate(sv["body"])
 
     def do_package(_):
-        pkg, problems, trail = pipeline.make_package(router, channel, script, facts)
+        from . import analytics
+
+        pkg, problems, trail = pipeline.make_package(router, channel, script, facts,
+                                                     hints=analytics.packaging_hints(conn, channel))
         pkg.youtube_description = fill_sources(pkg.youtube_description, sources_used(conn, pid))
         pdata = pkg.model_dump()
         children = []

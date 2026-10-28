@@ -25,3 +25,18 @@ describe("performance numbers", () => {
     expect(weekdayHour("2026-10-27T22:00:00Z", "America/New_York")).toEqual({ day: "Tuesday", hour: "18:00" });
   });
 });
+
+import { boostIdeas } from "./performance";
+
+describe("boost ideas", () => {
+  it("only a clear winner with a recent Facebook post", () => {
+    const now = Date.parse("2026-11-05T12:00:00Z");
+    const yt = (id: string, views: number) => row({ published_post_id: id, project_id: id, views });
+    const rows = [yt("a", 50), yt("b", 60), yt("c", 70), yt("d", 80), yt("star", 900)];
+    expect(boostIdeas(rows, now)).toEqual([]);
+    const fb = row({ published_post_id: "fb", project_id: "star", platform: "facebook", url: "https://fb.test", published_at: "2026-11-03T12:00:00Z" });
+    const ideas = boostIdeas([...rows, fb], now);
+    expect(ideas.map((i) => [i.project_id, i.views, i.usual])).toEqual([["star", 900, 70]]);
+    expect(boostIdeas([...rows.slice(1), fb], now)).toEqual([]);        // fewer than 5 videos: no comparison yet
+  });
+});

@@ -160,6 +160,7 @@ def cmd_maintain(a):
 
         try:  # read-only numbers for the Performance page; never stops maintenance
             out["performance"] = analytics.collect(conn) if config.runtime().token_key else "skipped: no token key"
+            out["boost_suggestions"] = analytics.notify_boosts(conn)
         except Exception as exc:  # noqa: BLE001
             out["performance"] = f"skipped: {type(exc).__name__}"
         _print(out)

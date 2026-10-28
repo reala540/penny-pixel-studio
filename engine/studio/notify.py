@@ -13,7 +13,7 @@ MAX_ATTEMPTS = 5
 
 # Updates that don't need the owner. With the "important" preference they stay in the app only; problems and
 # anything that needs a decision always go to Telegram.
-ROUTINE = {"ideas_ready", "research_ready", "published", "auto_approved", "auto_fixing", "provider_check_ready",
+ROUTINE = {"ideas_ready", "research_ready", "published", "auto_approved", "auto_fixing", "provider_check_ready", "boost_suggestion",
            "ai_model_back", "job_cancelled", "auto_replace", "posts_ready"}
 GROUPED = {"job_failed", "publish_blocked", "ai_key_rejected"}   # identical repeats within 30 minutes are sent once
 

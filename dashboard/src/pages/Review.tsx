@@ -240,7 +240,7 @@ export function Detail({ id }: { id: string }) {
         {tab === "script" && script && <ScriptEditor project={project} version={script} />}
         {tab === "facts" && <><Facts claims={claims} /><AutoChecks projectId={id} /></>}
         {tab === "thumbs" && <Thumbs thumbs={thumbs} projectId={id} />}
-        {tab === "posts" && <Posts variants={variants} tz={tz} mainId={project.id} />}
+        {tab === "posts" && <><SearchBriefCard brief={project.recipe?.package?.search_brief} /><Posts variants={variants} tz={tz} mainId={project.id} /></>}
         {tab === "shorts" && <Shorts head={project} shorts={children} />}
         {tab === "history" && <History projectId={id} />}
       </div>
@@ -432,6 +432,22 @@ function Thumbs({ thumbs, projectId }: { thumbs: any[]; projectId: string }) {
         <button className="btn-quiet mt-2" onClick={() => redo.mutate()} disabled={redo.isPending}>Make new thumbnails</button>
       </div>
     </div>
+  );
+}
+
+function SearchBriefCard({ brief }: { brief?: { audience?: string; question?: string; primary_phrase?: string; supporting_phrases?: string[] } }) {
+  if (!brief?.primary_phrase) return null;
+  return (
+    <section aria-label="Search brief" className="mb-5 rounded-xl border border-line bg-surface p-4 text-sm">
+      <p className="font-medium">Search brief <span className="font-normal text-muted">· written from the topic and facts; search volumes aren't measured</span></p>
+      <dl className="mt-2 grid gap-x-6 gap-y-1 sm:grid-cols-[10rem_1fr]">
+        {brief.audience && <><dt className="text-muted">Who it's for</dt><dd>{brief.audience}</dd></>}
+        {brief.question && <><dt className="text-muted">What they'd search</dt><dd>“{brief.question}”</dd></>}
+        <dt className="text-muted">Main phrase</dt><dd className="font-medium">{brief.primary_phrase}</dd>
+        {!!brief.supporting_phrases?.length && <><dt className="text-muted">Related phrases</dt><dd>{brief.supporting_phrases.join(" · ")}</dd></>}
+      </dl>
+      <p className="mt-2 text-xs text-muted">Edit the titles, captions, tags and hashtags below to change what each platform shows.</p>
+    </section>
   );
 }
 

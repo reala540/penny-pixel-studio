@@ -117,3 +117,83 @@ def collect(conn, client: httpx.Client | None = None, today: date | None = None)
         except Exception as exc:  # noqa: BLE001
             out.append({"account": acc["label"], "error": type(exc).__name__})
     return out
+
+
+MIN_POSTS_FOR_HINTS = 5
+
+
+def packaging_hints(conn, channel: str) -> str:
+    """What has worked on this channel so far, from real YouTube numbers, for the package writer. Empty until there
+    are enough videos with numbers to compare (one or two posts tell you nothing)."""
+    if not db.one(conn, "select 1 from information_schema.tables where table_schema='public' and table_name='post_metrics'"):
+        return ""
+    rows = db.all_(conn, """select distinct on (pp.id) coalesce(v.title, p.title) title, m.views, m.avg_view_seconds, m.ctr
+                              from post_metrics m join published_posts pp on pp.id = m.published_post_id
+                              join scheduled_posts sp on sp.id = pp.scheduled_post_id
+                              join content_variants v on v.id = sp.variant_id
+                              join content_projects p on p.id = v.project_id
+                             where pp.platform='youtube' and p.channel_slug=%s and m.views is not null
+                             order by pp.id, m.collected_on desc""", (channel,))
+    if len(rows) < MIN_POSTS_FOR_HINTS:
+        return ""
+    rows.sort(key=lambda r: r["views"], reverse=True)
+    top, bottom = rows[:3], rows[-3:]
+
+    def line(r):
+        extra = f", {float(r['ctr']):.1f}% click-through" if r.get("ctr") is not None else ""
+        return f'- "{r["title"]}": {int(r["views"])} views{extra}'
+    return ("Titles that did best so far:\n" + "\n".join(line(r) for r in top) + "\nTitles that did least well:\n"
+            + "\n".join(line(r) for r in bottom) + f"\n(Based on {len(rows)} videos. Learn from the pattern, don't copy titles, "
+            "and never make a title less accurate to chase clicks.)")
+
+
+BOOST_MIN_VIEWS = 100
+
+
+def boost_suggestions(conn) -> list[dict]:
+    """Packages whose YouTube video is clearly beating this channel's usual views, while their Facebook post is
+    recent: worth boosting on Facebook. Only a suggestion; the studio never spends money."""
+    if not db.one(conn, "select 1 from information_schema.tables where table_schema='public' and table_name='post_metrics'"):
+        return []
+    rows = db.all_(conn, """select distinct on (pp.id) pp.id, coalesce(p.parent_project_id, p.id) project_id, p.channel_slug,
+                                   coalesce(v.title, p.title) title, m.views
+                              from post_metrics m join published_posts pp on pp.id = m.published_post_id
+                              join scheduled_posts sp on sp.id = pp.scheduled_post_id
+                              join content_variants v on v.id = sp.variant_id
+                              join content_projects p on p.id = v.project_id
+                             where pp.platform='youtube' and m.views is not null and pp.published_at > now() - interval '60 days'
+                             order by pp.id, m.collected_on desc""")
+    out = []
+    for ch in {r["channel_slug"] for r in rows}:
+        mine = sorted(r["views"] for r in rows if r["channel_slug"] == ch)
+        if len(mine) < MIN_POSTS_FOR_HINTS:
+            continue
+        median = mine[len(mine) // 2]
+        for r in rows:
+            if r["channel_slug"] != ch or r["views"] < max(BOOST_MIN_VIEWS, 2 * median):
+                continue
+            fb = db.one(conn, """select pp.url, pp.published_at from published_posts pp
+                                  join scheduled_posts sp on sp.id = pp.scheduled_post_id
+                                  join content_variants v on v.id = sp.variant_id
+                                  join content_projects p on p.id = v.project_id
+                                 where pp.platform='facebook' and coalesce(p.parent_project_id, p.id)=%s
+                                   and pp.published_at > now() - interval '7 days'
+                                 order by pp.published_at desc limit 1""", (r["project_id"],))
+            if fb:
+                out.append({"project_id": str(r["project_id"]), "title": r["title"], "views": int(r["views"]),
+                            "usual": int(median), "facebook_url": fb["url"]})
+    return out
+
+
+def notify_boosts(conn) -> int:
+    from . import links, notify
+
+    sent = 0
+    for s in boost_suggestions(conn):
+        notify.send(conn, "boost_suggestion", f"Worth boosting: {s['title'][:80]}",
+                    f"Its YouTube video has {s['views']} views, about {s['views'] // max(s['usual'], 1)}x this channel's usual "
+                    f"{s['usual']}. If you'd like more reach, open its Facebook post and press Boost with a budget you choose. "
+                    "The studio never spends money.", link=s["facebook_url"] or links.project(s["project_id"]),
+                    dedupe_key=f"boost:{s['project_id']}")
+        sent += 1
+    return sent

@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { Empty, Loading, NotConfirmed, PageHeader } from "../components/ui";
 import { missingFunction, must, useTimezone } from "../lib/api";
 import { fmtDateTime } from "../lib/format";
-import { emptyReason, fmtCount, fmtMinutes, fmtPercent, fmtSeconds, groupBy, KIND_LABEL, type PostRow, weekdayHour } from "../lib/performance";
+import { boostIdeas, emptyReason, fmtCount, fmtMinutes, fmtPercent, fmtSeconds, groupBy, KIND_LABEL, type PostRow, weekdayHour } from "../lib/performance";
 import { supabase } from "../lib/supabase";
 
 const NEEDS_UPDATE = "needs_update" as const;
@@ -65,6 +65,7 @@ export default function Performance() {
   for (const a of channels) for (const c of a.top_countries ?? []) countries.set(c.country, (countries.get(c.country) ?? 0) + Number(c.views));
   const topCountries = [...countries.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
   const lastCollected = channels[0]?.collected_on;
+  const boosts = boostIdeas(rows);
 
   return (
     <>
@@ -96,6 +97,16 @@ export default function Performance() {
           </div>
         )}
       </section>
+
+      {boosts.length > 0 && (
+        <section aria-labelledby="boost" className="mb-6 rounded-xl border border-penny/30 bg-penny-soft p-4 text-sm">
+          <h2 id="boost" className="font-display text-base font-semibold">Worth boosting</h2>
+          <p className="mt-1 text-muted">These are clearly beating your usual views on YouTube. If you want more reach, open the Facebook post and press Boost with a budget you choose. The studio never spends money.</p>
+          <ul className="mt-2 space-y-1">
+            {boosts.map((b) => <li key={b.project_id}>“{b.title}”: {fmtCount(b.views)} views (usual {fmtCount(b.usual)}){b.facebook.url && <> · <a className="underline" href={b.facebook.url} target="_blank" rel="noreferrer">open the Facebook post</a></>}</li>)}
+          </ul>
+        </section>
+      )}
 
       {withData.length > 0 && (
         <section aria-labelledby="compare" className="mb-6">

@@ -12,11 +12,11 @@ from .test_database import as_user, reset_role
 from .test_end_to_end import _connect_all
 
 
-def _published_youtube_post(c, video_id="yt1"):
+def _published_youtube_post(c, video_id="yt1", title="AI ROI Reality"):
     acc = db.one(c, "select id from social_accounts where platform='youtube' order by label limit 1")["id"]
     pid = db.one(c, "insert into content_projects (channel_slug, format, title, status) values ('ai','long','AI ROI','published') returning id")["id"]
-    v = db.one(c, "insert into content_variants (project_id, social_account_id, kind, title, status) values (%s,%s,'long_video','AI ROI Reality','published') returning id",
-               (pid, acc))["id"]
+    v = db.one(c, "insert into content_variants (project_id, social_account_id, kind, title, status) values (%s,%s,'long_video',%s,'published') returning id",
+               (pid, acc, title))["id"]
     sp = db.one(c, """insert into scheduled_posts (variant_id, social_account_id, scheduled_at, status, idempotency_key)
                       values (%s,%s,now() - interval '3 days','published',%s) returning id""", (v, acc, f"post:{v}"))["id"]
     pp = db.one(c, """insert into published_posts (scheduled_post_id, platform, platform_post_id, url, visibility, method, social_account_id, published_at)
