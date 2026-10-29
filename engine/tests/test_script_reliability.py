@@ -330,7 +330,7 @@ def test_repair_flow_fixes_what_it_can_and_finishes_without_the_busy_model(monke
     assert "voice_edit" in steps and trail[steps.index("voice_edit")].get("skipped")   # busy: skipped, not failed
     assert len(result.script.scenes) == 6                                  # the critic's cut was applied
     assert state["rewrites"] == 0                                          # dated by code: no rewrite needed
-    assert "As reported in December 2021" in result.script.full_text()
+    assert "(as of December 2021)" in result.script.full_text()
     statuses = {c["key"]: c["status"] for c in result.claims}
     assert statuses == {"C2": "supported"} and not result.issues
     assert result.script.facts and result.report["findings"]
@@ -600,7 +600,7 @@ def test_an_old_figure_gets_its_date_from_its_source():
     script = _script([claim], [_scene("Static analysis has a trust problem. DeepSource aims to keep false positives under 5%.", ["C1"])],
                      facts=[fact])
     fixed, changes = repair.qualify_stale(script, [{"key": "C1", "status": "stale", "note": ""}])
-    assert "As reported in June 2020, DeepSource aims" in fixed.scenes[0].narration
+    assert "DeepSource aims to keep false positives under 5% (as of June 2020)." in fixed.scenes[0].narration
     assert fixed.scenes[0].narration.startswith("Static analysis has a trust problem.") and changes
     rec = verify.check_claims(Stub(claim_checker=_supported_checker), fixed, FactSheet(facts=[fact]), [old])
     assert rec[0]["status"] != "stale"
@@ -615,3 +615,54 @@ def test_repair_finds_saved_facts_by_source_id_not_by_label():
     fact = fact.model_copy(update={"source_ref": "S1"})          # S1 = the Guardian in the writer's filtered list
     out, dropped = evidence.attach(FactSheet(facts=[fact]), [off, GUARDIAN], now=NOW)   # S1 = the forex page here
     assert [f.key for f in out.facts] == ["F1"] and out.facts[0].source_id == GUARDIAN["id"] and not dropped
+
+
+
+# ------------------------------------------------------------------ found by the owner's Recheck and repair (29 Oct, actual providers)
+
+def test_this_years_date_is_not_an_earlier_date():
+    assert not evidence.names_past_date("CVE-Bench, June 2026", NOW)
+    assert evidence.names_past_date("DeepSource in 2020", NOW) and evidence.names_past_date("three years ago", NOW)
+
+
+def test_cuts_are_undone_when_the_rewrite_makes_the_video_too_short(monkeypatch):
+    monkeypatch.setattr(quality, "MIN_LONG_SECONDS", 20)
+    monkeypatch.setattr("studio.config.services", lambda: {"render": {"min_long_minutes_floor": 0.5, "max_long_minutes": 14,
+                                                                       "target_long_minutes": 11, "min_long_minutes": 8}})
+    names = ["one", "two", "three", "four", "five", "six", "seven", "eight"]
+    texts = [f"Part {n} explains one distinct thing about saving money with a careful worked example here." for n in names]
+    script = _script([], [_scene(t) for t in texts])
+
+    def critic(prompt):
+        return {"hook": 8, "originality": 8, "clarity": 8, "pacing": 4, "value": 8, "fixes": ["merge"],
+                "weak_scenes": [], "delete": [], "merge": [[2, 3], [4, 5]]}
+
+    def shrinking_writer(prompt):  # the rewrite of merged scenes comes back much shorter
+        import re
+        n = len(re.search(r"scene numbers \[([^\]]*)\]", prompt).group(1).split(","))
+        return {"scenes": [{"narration": "Short.", "visual": {"type": "title_card", "headline": "x"}, "claim_keys": []}
+                           for _ in range(n)], "claims": []}
+
+    router = Stub(critic=critic, scriptwriter=shrinking_writer, angle_selector=lambda p: {"best": 0, "reason": "ok"})
+    result = pipeline.finish_long(router, "ai", script, FactSheet(facts=[]), [], set(), [])
+    assert len(result.script.scenes) == 8 and not any(i.startswith("Too short") for i in result.issues)
+    assert any("Undid the critic's cuts" in c for c in result.report["repairs"])
+
+
+def test_repair_judges_post_texts_and_shorts_again(produced, monkeypatch):
+    conn, storage = produced
+    p = _long(conn, "money")
+    qr = {**(p["quality_report"] or {}), "findings": [
+        {"kind": "blocker", "code": "package_part", "text": "Facebook post states numbers not in the evidence: ['30']"},
+        {"kind": "missing", "code": "package_part", "text": "No Shorts: they couldn't be made to pass the checks"},
+        {"kind": "info", "code": "package_part", "text": "Title marked as UK-specific"}]}
+    db.run(conn, """update content_projects set status='needs_attention', quality_report=%s,
+                    recipe = jsonb_set(recipe, '{package,facebook_post}', '"Why the 30-year rate keeps rising"') where id=%s""",
+           (db.j(qr), p["id"]))
+    produce.repair_package(conn, ScriptedRouter(monkeypatch, extra=MORE), storage, p["id"])
+    now = db.one(conn, "select status, quality_report from content_projects where id=%s", (p["id"],))
+    texts = [f["text"] for f in now["quality_report"]["findings"]]
+    assert "Title marked as UK-specific" in texts                                   # notes kept
+    assert not any("states numbers not in the evidence" in t for t in texts)        # '30-year' is a label
+    assert not any(t.startswith("No Shorts") for t in texts)                         # it has Shorts
+    assert now["status"] == "ready_for_review"

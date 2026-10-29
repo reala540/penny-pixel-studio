@@ -117,7 +117,7 @@ LOWER_START = {"The", "A", "An", "This", "That", "These", "Those", "It", "Its", 
 
 
 def qualify_stale(script: Script, records: list[dict]) -> tuple[Script, list[str]]:
-    """An old figure said as current gets its date, from its own source: 'As reported in June 2020, DeepSource aims…'.
+    """An old figure said as current gets its date, from its own source: '… under 5% (as of June 2020).'.
     Only the sentence that states it changes (the one sharing most of the claim's words), and the claim says it too."""
     from .evidence import words
 
@@ -131,11 +131,14 @@ def qualify_stale(script: Script, records: list[dict]) -> tuple[Script, list[str
         if r["status"] != "stale" or not c or not dated:
             continue
         y, m = dated[0].published[:4], int(dated[0].published[5:7])
-        prefix = f"As reported in {MONTHS[m - 1]} {y}, "
+        when = f"as of {MONTHS[m - 1]} {y}"
 
         def dated_text(sentence: str) -> str:
-            first, _, rest = sentence.partition(" ")
-            return prefix + (first.lower() if first in LOWER_START else first) + (" " + rest if rest else "")
+            """'DeepSource aims to keep false positives under 5% (as of June 2020).' : the date goes at the end, so
+            dated sentences don't all start the same way."""
+            body = sentence.rstrip()
+            end = body[-1] if body and body[-1] in ".!?" else ""
+            return f"{body[:-1] if end else body} ({when}){end or '.'}"
 
         for i, sc in enumerate(scenes):
             if c.key not in sc.claim_keys:
@@ -148,7 +151,7 @@ def qualify_stale(script: Script, records: list[dict]) -> tuple[Script, list[str
             parts[best] = dated_text(parts[best])
             scenes[i] = sc.model_copy(update={"narration": " ".join(parts)})
             claims[c.key] = c.model_copy(update={"text": dated_text(c.text)})
-            changes.append(f"Scene {i + 1}: dated an old figure ({MONTHS[m - 1]} {y}, from its source)")
+            changes.append(f"Scene {i + 1}: dated an old figure ({when}, from its source)")
             break
     return script.model_copy(update={"scenes": scenes, "claims": list(claims.values())}), changes
 
