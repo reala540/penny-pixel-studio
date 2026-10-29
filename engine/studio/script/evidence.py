@@ -70,7 +70,13 @@ def _stale_after_days(topic: str) -> int:
     return int((config.research().get("stale_after_days") or {}).get(topic, 365))
 
 
-PAST_DATE = re.compile(r"\b(19\d{2}|20\d{2})\b|\b(last|previous) (year|quarter|month|decade)\b|\bago\b", re.I)
+PAST_WORDS = re.compile(r"\b(last|previous) (year|quarter|month|decade)\b|\bago\b", re.I)
+
+
+def names_past_date(text: str, now: datetime) -> bool:
+    """Whether a fact names an earlier date itself: a year before this one, 'last year', '3 years ago'."""
+    years = [int(y) for y in re.findall(r"\b(19\d{2}|20\d{2})\b", text)]
+    return any(y < now.year for y in years) or bool(PAST_WORDS.search(text))
 
 
 def find_passage(fact: Fact, text: str) -> str:
@@ -123,7 +129,7 @@ def attach(facts: FactSheet, sources: list[dict], now: datetime | None = None) -
             if kind == "current" and old:
                 kind = "historical"
             # a recent source's fact is history only when it names an earlier date itself (the model over-marks)
-            elif kind == "historical" and not old and not PAST_DATE.search(f"{f.text} {f.data_period or ''}"):
+            elif kind == "historical" and not old and not names_past_date(f"{f.text} {f.data_period or ''}", now):
                 kind = "current"
         kept.append(f.model_copy(update={"passage": passage, "time_kind": kind, "source_id": str(s.get("id") or ""),
                                          "published": _date(s)}))

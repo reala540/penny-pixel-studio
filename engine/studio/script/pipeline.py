@@ -376,6 +376,7 @@ def finish_long(router: Router, channel: str, script: Script, facts: FactSheet, 
     changes += ch
 
     # structural edit from the critic: remove repetition and off-topic scenes, merge duplicates, rewrite weak ones
+    before_cuts = script
     critic = _polish(lambda: critique(router, channel, script, writers), trail, "critic")
     if critic:
         report, t = critic
@@ -404,6 +405,13 @@ def finish_long(router: Router, channel: str, script: Script, facts: FactSheet, 
                 trail.append({"step": "critic_fix", **t})
             script, ch = code_repairs(script, money)
             changes += ch
+            # rewriting merged scenes can shorten them: the cuts are checked again on the rewritten script
+            too_short = script.duration(speed) < shortest <= before_cuts.duration(speed)
+            too_few = len(script.scenes) < MIN_SCENES <= len(before_cuts.scenes)
+            if too_short or too_few:
+                script = before_cuts
+                changes.append("Undid the critic's cuts: after rewriting, the video would have been too short "
+                               "(the editor's notes stay as a warning)")
 
     # repair until the checks pass or the rounds run out: code fixes first, then rewrite only the failing scenes
     claims: list[dict] = []

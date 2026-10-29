@@ -1080,7 +1080,11 @@ def repair_package(conn, router: Router, storage, project_id, job_id=None) -> di
         qr = head["quality_report"] or {}
         keep = {k: qr[k] for k in ("package_problems", "shorts_remakes") if k in qr}
         report = {**result.report, **keep, "repaired_from_version": sv["version"]}
-        report["findings"] = report["findings"] + [f for f in (qr.get("findings") or []) if f.get("code") == "package_part"]
+        # the package's own notes (title tags, search notes) are kept; its post numbers and Shorts are judged again
+        old = [f for f in (qr.get("findings") or []) if f.get("code") == "package_part"
+               and f.get("kind") in ("info", "warning")]
+        report["findings"] = report["findings"] + old + [
+            {**f, "code": "package_part"} for f in pipeline.package_findings(package_problems_now(head, result.facts))]
         db.run(conn, "update content_projects set quality_report=%s, status='rendering' where id=%s",
                (db.j(report), project_id))
         return {"script_version_id": str(new["id"]), "blockers": len(result.issues),
@@ -1093,7 +1097,6 @@ def repair_package(conn, router: Router, storage, project_id, job_id=None) -> di
         return {"project_id": str(project_id), "status": st.status, "error": st.job.get("error_message")}
     body = db.one(conn, "select body from script_versions where id=%s", (st.output["script_version_id"],))["body"]
     render_preview(conn, storage, project_id, body, head["channel_slug"], "long")
-    final_status(conn, project_id)
     has_shorts = db.one(conn, """select 1 from content_projects where parent_project_id=%s
                                  and status not in ('rejected','failed')""", (project_id,))
     shorts = None
@@ -1102,9 +1105,39 @@ def repair_package(conn, router: Router, storage, project_id, job_id=None) -> di
             shorts = remake_shorts(conn, router, storage, project_id, job_id=job_id)
         except (ValueError, StudioError) as exc:
             shorts = {"made": 0, "problems": [str(exc)[:300]]}
+    _note_missing_shorts(conn, project_id)
+    final_status(conn, project_id)
     status = db.one(conn, "select status from content_projects where id=%s", (project_id,))["status"]
     return {"project_id": str(project_id), "status": status, **st.output,
             "shorts": (shorts or {}).get("made", "kept")}
+
+
+def package_problems_now(head: dict, facts) -> list[str]:
+    """The package's post texts judged with today's rules (labels like '30-year' or 'GPT-6.1' aren't figures)."""
+    data = ((head.get("recipe") or {}).get("package") or {})
+    if not data:
+        return []
+    from .script.models import Package
+
+    pkg = Package.model_construct(x_post=data.get("x_post") or "", facebook_post=data.get("facebook_post") or "",
+                                  youtube_title=data.get("youtube_title") or "")
+    return pipeline.post_number_problems(pkg, facts)
+
+
+def _note_missing_shorts(conn, project_id) -> None:
+    """'No Shorts' is said only while the package really has none (old notes about dropped Shorts are cleared)."""
+    p = db.one(conn, "select quality_report from content_projects where id=%s", (project_id,))
+    qr = p["quality_report"] or {}
+    if "findings" not in qr:
+        return
+    has = db.one(conn, """select 1 from content_projects where parent_project_id=%s and status not in ('rejected','failed')""",
+                 (project_id,))
+    keep = [f for f in qr["findings"] if not (f.get("code") in ("package_part", "short_dropped") and f.get("kind") == "missing")]
+    if not has:
+        keep.append({"kind": "missing", "code": "package_part", "text": "No Shorts: they couldn't be made to pass the "
+                     "checks, so no Shorts, Reels, Stories or TikTok videos come from this package"})
+    qr["findings"] = keep
+    db.run(conn, "update content_projects set quality_report=%s where id=%s", (db.j(qr), project_id))
 
 
 def remake_shorts(conn, router: Router, storage, project_id, job_id=None, note: str = "") -> dict:
