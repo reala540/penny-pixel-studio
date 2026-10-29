@@ -12,6 +12,10 @@ export interface Account {
   oauth_connections?: { status: string; last_error: string | null; token_expires_at: string | null; app_publish_mode: string } | null;
 }
 
+/** One result of the checks, by kind: blocker (factual, can't go out like this), warning (editorial), missing (a part
+ *  that wasn't made) or info (what the studio changed or noticed). */
+export interface Finding { kind: "blocker" | "warning" | "missing" | "info"; code: string; text: string; detail?: string }
+
 export interface Scene {
   narration: string;
   on_screen_text?: string | null;
@@ -40,6 +44,7 @@ export interface Project {
   batch_week: string | null;
   current_script_version_id: string | null;
   quality_report: { issues?: string[]; critic?: Record<string, number>; package_problems?: string[]; duration_seconds?: number; note?: string; owner_edited?: boolean;
+    findings?: Finding[]; repairs?: string[]; repaired_from_version?: number;
     shorts_remakes?: { at: string; made: number; problems?: string[] }[] };
   recipe: { preview_key?: string; preview_seconds?: number; package?: Record<string, any>;
     render?: { scenes?: { visual?: { type?: string; fallback_reason?: string } }[] };

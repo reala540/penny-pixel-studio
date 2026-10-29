@@ -14,15 +14,18 @@ from pydantic import BaseModel
 
 from .. import config
 from ..ai.router import Router
-from ..errors import NeedsReview, QuotaError
+from ..errors import NeedsReview, QuotaError, TransientError
 from ..research.engine import source_block
-from . import quality, verify
+from . import evidence, quality, repair, verify
 from .models import (WORDS_PER_SECOND, CriticReport, FactSheet, Outline, OutlineSection, Package, SceneRewrite,
                      Script, SectionDraft, ShortScript)
 
 MAX_REWRITES = 2
 CRITIC_MIN = 7
-MIN_LONG_FACTS = 10   # checkable facts an 8-14 minute video needs; fewer means padding or invention
+MIN_LONG_FACTS = 10   # checkable facts a long video needs; fewer means padding or invention
+MINUTES_PER_FACT = 0.6  # how much honest video one checked fact carries (a worked example, context, why it matters)
+MIN_SCENES = 6         # the structure check's minimum: cuts never go below it
+REPAIR_ROUNDS = 2       # targeted rewrites of scenes that still fail, after code has fixed what it can
 FACTS_WANTED = "12-25"
 SHORT_SECTION = 0.6  # a section under this share of its words gets one follow-up to finish it
 
@@ -38,7 +41,7 @@ class ScriptResult:
 
     @property
     def needs_attention(self) -> bool:
-        return bool(self.issues) or any(c["status"] in ("unsupported", "contradicted") for c in self.claims)
+        return bool(self.issues) or any(c["status"] in repair.BAD for c in self.claims)
 
 
 def voice_brief(channel: str) -> str:
@@ -60,6 +63,9 @@ def voice_brief(channel: str) -> str:
 
 
 def build_fact_sheet(router: Router, idea: dict, sources: list[dict]) -> tuple[FactSheet, list[str], dict]:
+    """Facts with their evidence: each keeps the passage that states it, its source's id and publication date, and
+    whether it is history, current, a forecast or a general explanation. Off-topic sources are set aside first."""
+    sources, off_topic = evidence.relevant_sources(idea, sources)
     # each source's full article text is shown, within a budget the free models can read in one go
     per_source = max(1500, min(6000, 30000 // max(len(sources), 1)))
     prompt = (f"Video idea: {idea['title']}\nAngle: {idea.get('angle', '')}\n\nSources:\n"
@@ -67,15 +73,38 @@ def build_fact_sheet(router: Router, idea: dict, sources: list[dict]) -> tuple[F
               f"Extract {FACTS_WANTED} short factual statements that are directly stated in the sources, each citing its "
               "source label (S1...). Prefer specific, useful facts: numbers, dates, names, how something works, "
               "what changed and who it affects. Keep numbers exactly as written and note the period the data covers. "
-              "Do not add anything the sources do not say.")
-    res = router.complete("research_summarizer", prompt, schema=FactSheet, temperature=0.1, max_tokens=4000)
+              "For each, copy into passage the exact sentence(s) of the source that state it, and set time_kind: "
+              "historical (a past event or a figure from an earlier period), current, forecast (a prediction or "
+              "expectation: say whose) or general (a definition or how something works). Use each source's "
+              "published date to judge this. Do not add anything the sources do not say.")
+    res = router.complete("research_summarizer", prompt, schema=FactSheet, temperature=0.1, max_tokens=5000)
     grounded, dropped = verify.ground_facts(res.data, sources)
-    return grounded, dropped, res.trail()
+    linked, unlinked = evidence.attach(grounded, sources)
+    return linked, off_topic + dropped + unlinked, res.trail()
+
+
+def planned_minutes(n_facts: int) -> float:
+    """How long the evidence lets the video be: about MINUTES_PER_FACT a checked fact, between the floor and the
+    usual target. A thin topic makes a shorter honest video, never a padded one."""
+    mins = long_minutes()
+    floor = quality.shortest_long_seconds() / 60
+    return round(min(float(mins["target"]), max(floor, n_facts * MINUTES_PER_FACT)), 1)
 
 
 def _facts_block(facts: FactSheet) -> str:
-    return "\n".join(f"{f.key} ({f.source_ref}{', ' + f.data_period if f.data_period else ''}): {f.text}"
-                     for f in facts.facts)
+    """The facts the writer may use, each with its time kind and date, so history is said as history."""
+    def tag(f):
+        when = f.data_period or f.published
+        return (f"{f.source_ref}{', ' + f.data_period if f.data_period else ''}"
+                + (f", {f.time_kind}" if f.time_kind != "current" else "")
+                + (f" from {f.published}" if f.time_kind == "historical" and f.published and when == f.published else ""))
+    return "\n".join(f"{f.key} ({tag(f)}): {f.text}" for f in facts.facts)
+
+
+TIME_RULES = ("Say historical facts as history with their date ('in December 2021, ...'), forecasts as forecasts "
+              "with whose ('the Bank expected ...'), and never present an old figure as today's. General principles "
+              "(no figures, names or dates) are claims with kind=principle; your own views are kind=opinion. Never "
+              "mention the fact sheet, sources list or these instructions in the narration.")
 
 
 VISUALS = ("Choose a visual type per scene: chart (only with real numbers from the fact sheet), stat, list, steps, "
@@ -117,15 +146,16 @@ def _structure(outline: Outline) -> list[OutlineSection]:
                       first("wrap", "Wrap-up", "The takeaways and one thing to try today")])
 
 
-def draft(router: Router, channel: str, idea: dict, facts: FactSheet) -> tuple[Script, dict]:
+def draft(router: Router, channel: str, idea: dict, facts: FactSheet, minutes: float | None = None) -> tuple[Script, dict]:
     """An 8-14 minute script written in two passes: an outline with a fixed structure, then each section in turn
     with the whole outline and the end of the previous section in view, so it reads as one clear story."""
     ch = config.brand()["channels"][channel]
     speed = float(ch["voice_profile"].get("tts_speed", 1.0))
-    mins = long_minutes()
-    brief = f"{voice_brief(channel)}\n\nFact sheet (the ONLY facts you may state):\n{_facts_block(facts)}\nBackground: {facts.context}"
+    target = minutes or long_minutes()["target"]
+    brief = (f"{voice_brief(channel)}\n\nFact sheet (the ONLY facts you may state):\n{_facts_block(facts)}\n"
+             f"Background: {facts.context}\n{TIME_RULES}")
     plan = router.complete("scriptwriter", (
-        f"Plan the outline of a {mins['target']}-minute YouTube video: '{idea['title']}'. Angle: {idea.get('angle', '')}\n\n"
+        f"Plan the outline of a {target:g}-minute YouTube video: '{idea['title']}'. Angle: {idea.get('angle', '')}\n\n"
         f"{brief}\n\nSections, in this order: one 'problem' section (the concrete problem and the result), one "
         "'learn' section (what the viewer will learn), 3 to 5 'body' sections that each teach one clear step or idea "
         "and build on each other, one 'limits' section (limitations, costs, alternatives), one 'wrap' section "
@@ -136,7 +166,7 @@ def draft(router: Router, channel: str, idea: dict, facts: FactSheet) -> tuple[S
     outline = plan.data
     sections = _structure(outline)
     n_body = sum(1 for x in sections if x.kind == "body")
-    total = mins["target"] * 60
+    total = target * 60
     body_seconds = total * (1 - sum(SHARE.values())) / max(n_body, 1)
     plan_text = "\n".join(f"{i}. [{x.kind}] {x.name}: {x.purpose}" for i, x in enumerate(sections, 1))
     wrote = set(plan.companies())
@@ -199,18 +229,34 @@ def rewrite_scenes(router: Router, channel: str, script: Script, scene_numbers: 
     if not scene_numbers:
         return script, {}
     target = [script.scenes[n - 1].model_dump() for n in scene_numbers]
-    prompt = (f"{voice_brief(channel)}\n\nFact sheet:\n{_facts_block(facts)}\n\nRewrite ONLY these scenes of the "
-              f"script '{script.title}' (scene numbers {scene_numbers}):\n{json.dumps(target, indent=1)}\n\n"
-              f"Fix these problems:\n- " + "\n- ".join(instructions) +
-              "\n\nKeep claim_keys valid. If a fact cannot be supported, remove that statement. " + CALCULATIONS + " "
+    keys = {k for n in scene_numbers for k in script.scenes[n - 1].claim_keys}
+    claims = [c.model_dump(include={"key", "text", "kind", "fact_refs", "expression"}) for c in script.claims if c.key in keys]
+    before = script.scenes[scene_numbers[0] - 2].narration[-300:] if scene_numbers[0] > 1 else script.hook
+    prompt = (f"{voice_brief(channel)}\n\nFact sheet (each fact with its passage and date):\n{_evidence_block(facts)}\n\n"
+              f"{TIME_RULES}\n\nRewrite ONLY these scenes of the script '{script.title}' (scene numbers "
+              f"{scene_numbers}). Just before them the script says: \"{before}\"\nScenes:\n{json.dumps(target, indent=1)}\n"
+              f"Their claims:\n{json.dumps(claims, indent=1)}\n\nFix these problems:\n- " + "\n- ".join(instructions) +
+              "\n\nFor a claim that isn't supported: find the fact that supports it and cite it, or qualify it to what "
+              "the passage says (with its date or who said it), or remove the statement. Return the corrected claims "
+              "too (same keys where the claim stays). " + CALCULATIONS + " "
               f"Return exactly {len(scene_numbers)} scenes in the same order.")
-    res = router.complete("scriptwriter", prompt, schema=SceneRewrite, temperature=0.6, prefer=prefer)
+    res = router.complete("scriptwriter", prompt, schema=SceneRewrite, temperature=0.5, prefer=prefer)
     if len(res.data.scenes) != len(scene_numbers):
         return script, res.trail()
     scenes = list(script.scenes)
     for n, new in zip(scene_numbers, res.data.scenes):
         scenes[n - 1] = new
-    return script.model_copy(update={"scenes": scenes}), res.trail()
+    merged = {c.key: c for c in script.claims}
+    for c in res.data.claims:  # corrected or new claims replace the old ones with the same key
+        merged[c.key] = c
+    script = script.model_copy(update={"scenes": scenes, "claims": repair.prune_claims(scenes, list(merged.values()))})
+    return script, res.trail()
+
+
+def _evidence_block(facts: FactSheet) -> str:
+    return "\n".join(f"{f.key} ({f.time_kind}, {f.published or 'date unknown'}"
+                     f"{', ' + f.data_period if f.data_period else ''}): {f.text}\n   passage: {f.passage[:300]}"
+                     for f in facts.facts)
 
 
 def voice_edit(router: Router, channel: str, script: Script, writers: set[str]) -> tuple[Script, dict]:
@@ -245,8 +291,13 @@ def voice_edit(router: Router, channel: str, script: Script, writers: set[str]) 
 def critique(router: Router, channel: str, script: Script, writers: set[str]) -> tuple[CriticReport, dict]:
     numbered = "\n".join(f"Scene {i}: {s.narration}" for i, s in enumerate(script.scenes, 1))
     prompt = (f"You are a tough YouTube script editor for {config.brand()['channels'][channel]['display_name']}. "
-              f"Score 1-10 for hook, originality, clarity, pacing and value. Be honest: 7 means publishable. "
-              f"List specific fixes naming scene numbers, and weak_scenes.\n\nTitle: {script.title}\n"
+              "Score 1-10 for each, using these definitions: hook = the first 15 seconds give a concrete reason to "
+              "keep watching; originality = reasoning, examples or comparisons beyond restating the sources; "
+              "clarity = one idea at a time, plain words, no contradictions; pacing = no repeated points, no "
+              "filler, each scene moves on; value = the viewer can act on it or understands something new. "
+              "7 means publishable on that criterion; below 7 name what fails it. List specific fixes naming "
+              "scene numbers; in delete give scenes that only repeat or go off topic, in merge give groups of "
+              "scenes that say the same thing; weak_scenes are scenes to rewrite.\n\nTitle: {script.title}\n"
               f"Hook: {script.hook}\n{numbered}\nCTA: {script.cta}")
     res = router.complete("critic", prompt, schema=CriticReport, temperature=0.2, exclude=writers)
     return res.data, res.trail()
@@ -274,74 +325,230 @@ def write_long(router: Router, channel: str, idea: dict, sources: list[dict]) ->
     facts, dropped, t = build_fact_sheet(router, idea, sources)
     trail.append({"step": "fact_sheet", **t})
     if len(facts.facts) < MIN_LONG_FACTS:
-        # an honest 8-14 minute video needs real material: stop before writing rather than pad or invent
-        raise NeedsReview(f"Not enough source material for an honest 8-14 minute video on '{idea['title']}': "
-                          f"{len(facts.facts)} checkable facts from {len(sources)} source(s), at least {MIN_LONG_FACTS} "
-                          f"needed. Choose an idea with more coverage. Dropped: {dropped}"[:900])
-    script, t = draft(router, channel, idea, facts)
+        # an honest long video needs real material: stop before writing rather than pad or invent
+        raise NeedsReview(not_enough_evidence(idea, facts, sources, dropped))
+    minutes = planned_minutes(len(facts.facts))
+    script, t = draft(router, channel, idea, facts, minutes)
+    script = script.model_copy(update={"facts": facts.facts})
     # STRICT independence: every company that writes or edits any text joins `writers`, and no check (claims,
     # critic, hook choice, final review) may use a model from any of them.
     writers: set[str] = set(t["companies"])
-    trail.append({"step": "draft", **t})
+    trail.append({"step": "draft", "minutes_planned": minutes, **t})
+    return finish_long(router, channel, script, facts, sources, writers, trail, dropped=dropped, minutes=minutes)
 
-    for round_no in range(MAX_REWRITES + 1):
-        issues = quality.check_long(script, channel)
-        claims = verify.check_claims(router, script, facts, sources, exclude=writers)
-        bad = [c for c in claims if c["status"] in ("unsupported", "contradicted")]
-        if round_no == MAX_REWRITES or (not issues and not bad):
-            break
-        targets, notes = [], []
-        for i, sc in enumerate(script.scenes, 1):
-            if any(c["key"] in sc.claim_keys for c in bad):
-                targets.append(i)
-        notes += [f"Claim {c['key']} '{c['text']}' is {c['status']} ({c['note']}): fix the number or its arithmetic, "
-                  "or remove the statement" for c in bad]
-        notes += issues
-        if any(x.startswith("Too short") for x in issues):
-            notes.append("The video is too short: make each of these scenes about 90-100 words by adding a worked "
-                         "example, a concrete step or a number from the fact sheet. No padding, no repetition.")
-            targets = sorted(set(targets) | set(expansion_targets(script)))
-        if not targets:
-            targets = [1, len(script.scenes)] if issues else []
-        script, t = rewrite_scenes(router, channel, script, targets, notes, facts, prefer=writers)
-        writers |= set(t.get("companies", []))
-        trail.append({"step": f"fix_round_{round_no + 1}", **t})
 
+def not_enough_evidence(idea: dict, facts: FactSheet, sources: list[dict], dropped: list[str]) -> str:
+    off = [d for d in dropped if d.startswith("Not used")]
+    return (f"Not enough evidence for an honest long video on '{idea['title']}': {len(facts.facts)} checkable facts "
+            f"from {len(sources)} source(s), at least {MIN_LONG_FACTS} needed"
+            + (f" ({len(off)} source(s) were off-topic)" if off else "")
+            + ". Next: narrow the topic to what the sources cover, or choose an idea with more coverage."
+            + (f" The sources do cover: {'; '.join(f.text[:80] for f in facts.facts[:3])}." if facts.facts else ""))[:900]
+
+
+def _polish(step, trail: list[dict], name: str):
+    """A polishing step (voice, hook choice) that can't find a free model is skipped, never failing the package."""
     try:
-        script, t = voice_edit(router, channel, script, writers)
+        return step()
+    except (QuotaError, TransientError) as exc:
+        trail.append({"step": name, "skipped": str(exc)[:300]})
+        return None
+
+
+def finish_long(router: Router, channel: str, script: Script, facts: FactSheet, sources: list[dict], writers: set[str],
+                trail: list[dict], *, dropped: list[str] | None = None, minutes: float | None = None,
+                notes: list[str] | None = None) -> ScriptResult:
+    """Everything after the first draft, also used to repair an existing script: polish, structural edit, then
+    code repairs and targeted rewrites with their recheck, then one final check of the whole script. Bounded: one
+    structural edit, REPAIR_ROUNDS rewrites, one final critic."""
+    money = channel == "money"
+    speed = float(config.brand()["channels"][channel]["voice_profile"].get("tts_speed", 1.0))
+    shortest = quality.shortest_long_seconds()
+    changes: list[str] = list(notes or [])
+
+    edited = _polish(lambda: voice_edit(router, channel, script, writers), trail, "voice_edit")
+    if edited:
+        script, t = edited
         writers |= set(t["companies"])
         trail.append({"step": "voice_edit", **t})
-    except QuotaError as exc:  # polish, not a check: with no editor free, the checked script goes on unchanged
-        trail.append({"step": "voice_edit", "skipped": str(exc)[:300]})
-    report, t = critique(router, channel, script, writers)
-    trail.append({"step": "critic", **t})
-    if report.minimum() < CRITIC_MIN and report.weak_scenes:
-        script, t = rewrite_scenes(router, channel, script, report.weak_scenes, report.fixes, facts, prefer=writers)
+    script, ch = code_repairs(script, money)
+    changes += ch
+
+    # structural edit from the critic: remove repetition and off-topic scenes, merge duplicates, rewrite weak ones
+    critic = _polish(lambda: critique(router, channel, script, writers), trail, "critic")
+    if critic:
+        report, t = critic
+        trail.append({"step": "critic", **t})
+        if report.minimum() < CRITIC_MIN and (report.delete or report.merge or report.weak_scenes):
+            scenes, merged_at, ch = repair.apply_edit_plan(script.scenes, report.delete, report.merge)
+            if len(scenes) >= MIN_SCENES and sum(quality.est_seconds(sc.narration, speed) for sc in scenes) >= shortest:
+                script = script.model_copy(update={"scenes": scenes, "claims": repair.prune_claims(scenes, script.claims)})
+                changes += ch
+            else:
+                merged_at = []
+                changes.append("Didn't apply the critic's suggested cuts: the video would have become too short")
+            redo = sorted(set(merged_at) | {n for n in report.weak_scenes if 1 <= n <= len(script.scenes)
+                                           and not report.delete})
+            if redo:
+                script, t = rewrite_scenes(router, channel, script, redo[:8], report.fixes or ["Make this scene "
+                                           "flow from the one before, without repeating it"], facts, prefer=writers)
+                writers |= set(t.get("companies", []))
+                trail.append({"step": "critic_fix", **t})
+            script, ch = code_repairs(script, money)
+            changes += ch
+
+    # repair until the checks pass or the rounds run out: code fixes first, then rewrite only the failing scenes
+    claims: list[dict] = []
+    for round_no in range(REPAIR_ROUNDS + 1):
+        claims = verify.check_claims(router, script, facts, sources, exclude=writers)
+        script, ch = repair.fix_calculations(script, claims)
+        if ch:
+            changes += ch
+            claims = verify.check_claims(router, script, facts, sources, exclude=writers)
+        issues = quality.check_long(script, channel, min_seconds=shortest)
+        bad = [c for c in claims if c["status"] in repair.BAD]
+        if round_no == REPAIR_ROUNDS or (not bad and not blocking(issues)):
+            break
+        targets, instructions = scenes_to_fix(script, bad, issues)
+        if not targets:
+            break
+        script, t = rewrite_scenes(router, channel, script, targets[:8], instructions, facts, prefer=writers)
         writers |= set(t.get("companies", []))
-        trail.append({"step": "critic_fix", **t})
-        report, t = critique(router, channel, script, writers)
-        trail.append({"step": "critic_recheck", **t})
-    script, t = pick_hook(router, script, writers)
-    if t:
-        trail.append({"step": "hook_pick", **t})
+        trail.append({"step": f"repair_{round_no + 1}", "scenes": targets[:8], **t})
+        script, ch = code_repairs(script, money)
+        changes += ch
 
-    # last-resort cleanup of banned phrases, then final gates
+    # last resort: a scene that still states something nobody can back is removed, if the video stays long enough
+    script, ch, unresolved = repair.drop_unsupported_scenes(script, claims, shortest, speed)
+    if ch:
+        changes += ch
+        claims = verify.check_claims(router, script, facts, sources, exclude=writers)
+    picked = _polish(lambda: pick_hook(router, script, writers), trail, "hook_pick")
+    if picked:
+        script, t = picked
+        if t:
+            trail.append({"step": "hook_pick", **t})
     script = script.model_copy(update={
-        "scenes": [s.model_copy(update={"narration": quality.remove_banned(s.narration)}) for s in script.scenes],
-        "hook": quality.remove_banned(script.hook), "cta": quality.remove_banned(script.cta)})
-    claims = verify.check_claims(router, script, facts, sources, exclude=writers)
-    issues = quality.check_long(script, channel)
-    if report.minimum() < CRITIC_MIN:
-        issues.append(f"Critic score below {CRITIC_MIN}: {report.model_dump(exclude={'fixes', 'weak_scenes'})}")
-    rep = {"critic": report.model_dump(), "issues": issues, "dropped_facts": dropped,
-           "claims": {s: sum(1 for c in claims if c["status"] == s) for s in {c["status"] for c in claims}},
-           "duration_seconds": script.duration(), "writers": sorted(writers), "stats": quality.sentence_stats(script.full_text())}
-    return ScriptResult(script, facts, claims, issues, rep, trail)
+        "scenes": [sc.model_copy(update={"narration": quality.remove_banned(sc.narration)}) for sc in script.scenes],
+        "hook": quality.remove_banned(script.hook), "cta": quality.remove_banned(script.cta), "facts": facts.facts})
+
+    # final consistency check of the exact version that will be saved
+    final = _polish(lambda: critique(router, channel, script, writers), trail, "critic_final")
+    report = final[0] if final else None
+    if final:
+        trail.append({"step": "critic_final", **final[1]})
+    issues = quality.check_long(script, channel, min_seconds=shortest)
+    findings = classify(issues, claims, report, script, speed, changes)
+    rep = {"critic": report.model_dump() if report else None, "issues": [f["text"] for f in findings
+                                                                        if f["kind"] in ("blocker", "warning")],
+           "findings": findings, "dropped_facts": dropped or [], "repairs": changes,
+           "claims": {st: sum(1 for c in claims if c["status"] == st) for st in {c["status"] for c in claims}},
+           "duration_seconds": script.duration(speed), "minutes_planned": minutes, "writers": sorted(writers),
+           "stats": quality.sentence_stats(script.full_text())}
+    return ScriptResult(script, facts, claims, [f["text"] for f in findings if f["kind"] == "blocker"], rep, trail)
 
 
-SHORTS_BRIEF = ("two purpose-built Shorts that each tell a complete mini-story from the facts: 35-55 seconds each, "
-                "which is about 90-130 spoken words in total (hook plus scenes). Their own hook, 3-6 scenes, short "
-                "sentences of at most 16 words. Give each Short a YouTube caption, a different shorter tiktok_caption "
+PLAIN = {"1", "2", "3", "4", "5", "10"}
+
+
+def post_number_problems(pkg: Package, facts: FactSheet) -> list[str]:
+    """Post texts may only state numbers the checked facts give (or their dates): a number in a Facebook or X post is
+    as public as one in the video."""
+    known = set().union(*[quality.numbers_in(f.text) for f in facts.facts]) if facts.facts else set()
+    known |= evidence.date_numbers(facts.facts) | PLAIN
+    out = []
+    for name, text in (("X post", pkg.x_post), ("Facebook post", pkg.facebook_post), ("YouTube title", pkg.youtube_title)):
+        stray = sorted(quality.numbers_in(text or "") - known)
+        if stray:
+            out.append(f"{name} states numbers not in the evidence: {stray}")
+    return out
+
+
+def package_findings(problems: list[str]) -> list[dict]:
+    """Package notes by kind: a Short that couldn't be made is a missing part; a title tag or a repair is info."""
+    out = []
+    for p in problems:
+        if " dropped:" in p:
+            out.append({"kind": "missing", "code": "short_dropped", "text": p})
+        elif "states numbers not in the evidence" in p:
+            out.append({"kind": "blocker", "code": "post_numbers", "text": p})
+        elif p.startswith(("Title marked", "Short '")) or "repaired" in p or "trimmed" in p or p.startswith("Removed"):
+            out.append({"kind": "info", "code": "package", "text": p})
+        else:
+            out.append({"kind": "warning", "code": "package", "text": p})
+    return out
+
+
+def code_repairs(script: Script, money: bool) -> tuple[Script, list[str]]:
+    """The fixes code can decide on its own: claim links, repeated sentences and disclaimers, animation labels."""
+    script, a = repair.fix_claim_links(script)
+    script, b = repair.remove_repeats(script, money)
+    scenes, c = repair.fix_animations(script.scenes)
+    return script.model_copy(update={"scenes": scenes}), a + b + c
+
+
+BLOCKING = ("Too short", "Needs 6-40 scenes", "Claims a hands-on test", "states numbers", "references unknown claims",
+            "Promises returns", "Money script must say", "Too long", "Too similar", "Title too close")
+
+
+def blocking(issues: list[str]) -> list[str]:
+    return [i for i in issues if any(i.startswith(b) or b in i for b in BLOCKING)]
+
+
+def scenes_to_fix(script: Script, bad: list[dict], issues: list[str]) -> tuple[list[int], list[str]]:
+    """Only the scenes that carry a failing claim or are named by a failing check, with what to do about each."""
+    targets: set[int] = set()
+    notes = []
+    for i, sc in enumerate(script.scenes, 1):
+        if any(c["key"] in sc.claim_keys for c in bad):
+            targets.add(i)
+    for c in bad:
+        what = {"stale": "say when it applied", "contradicted": "correct it to what the evidence says"}.get(
+            c["status"], "cite the fact that supports it, qualify it to the passage, or remove it")
+        notes.append(f"Claim {c['key']} '{c['text'][:160]}' is {c['status']} ({c['note'][:160]}): {what}")
+    import re as _re
+
+    for i in issues:
+        m = _re.match(r"Scene (\d+) ", i)
+        if m and i in blocking(issues):
+            targets.add(int(m.group(1)))
+            notes.append(i)
+    return sorted(targets), notes
+
+
+def classify(issues: list[str], claims: list[dict], report: CriticReport | None, script: Script, speed: float,
+             changes: list[str]) -> list[dict]:
+    """Four kinds, never mixed: blocker (a factual problem: it can't go out like this), warning (editorial: a person
+    should look), missing (a part that wasn't made) and info (what the studio changed or noticed)."""
+    out = []
+    for c in claims:
+        if c["status"] in repair.BAD:
+            label = {"stale": "Old figure said as current", "contradicted": "Contradicted by its source"}.get(
+                c["status"], "Not backed by a source")
+            out.append({"kind": "blocker", "code": f"claim_{c['status']}", "text": f"{label}: \"{c['text'][:140]}\"",
+                        "detail": c["note"][:200]})
+    for i in issues:
+        out.append({"kind": "blocker" if i in blocking(issues) else "warning", "code": "check", "text": i})
+    if report is None:
+        out.append({"kind": "warning", "code": "critic_unavailable",
+                    "text": "Editorial score unavailable (no independent editor model was free): read it through"})
+    elif report.minimum() < CRITIC_MIN:
+        low = {k: v for k, v in report.model_dump(include={"hook", "originality", "clarity", "pacing", "value"}).items()
+               if v < CRITIC_MIN}
+        out.append({"kind": "warning", "code": "critic_low", "text": f"Editor scores below {CRITIC_MIN}: {low}",
+                    "detail": "; ".join(report.fixes[:3])})
+    secs = script.duration(speed)
+    if secs < quality.MIN_LONG_SECONDS:
+        out.append({"kind": "info", "code": "shorter_video", "text": f"About {secs / 60:.1f} minutes: that's what the "
+                    "evidence supports (YouTube shows mid-video ads from 8 minutes)"})
+    for ch in changes:
+        out.append({"kind": "info", "code": "repair", "text": ch})
+    return out
+
+
+SHORTS_BRIEF = ("two purpose-built Shorts that each tell a complete mini-story from the facts. EACH Short is 35-55 "
+                "seconds: 90-130 spoken words counting its hook and all its scenes (so 3-6 scenes of 20-30 words). "
+                "Short sentences of at most 16 words. Give each Short a YouTube caption, a different shorter tiktok_caption "
                 "and a different reel_caption for Facebook (each says what the viewer learns, no clickbait, no "
                 "'link in bio'), and 3-5 hashtags about the topic itself, never unrelated trending tags. "
                 "Only use facts listed.")
@@ -382,11 +589,43 @@ def make_shorts(router: Router, channel: str, script: Script, facts: FactSheet, 
                   + (f"\nOwner note: {note}\n" if note else ""))
         res = router.complete("repurposer", prompt, schema=ShortsOnly, temperature=0.7, max_tokens=3000)
         good, why, out = check_shorts(res.data.shorts, channel, facts)
+        # a Short that failed on length or sentence size is repaired on its own, not thrown away
+        for d, short in [(d, sh) for d in out for sh in res.data.shorts if sh.title == d["title"]]:
+            fixed = repair_short(router, channel, short, d["issues"], facts)
+            if fixed is not None:
+                good.append(fixed)
+                why = [w for w in why if f"'{short.title}'" not in w]
+                out = [x for x in out if x is not d]
         problems += [f"Retry {n}: {w}" for w in why]
         dropped += out
         if good:
             return good, problems, dropped
     return [], problems, dropped
+
+
+SHORT_REPAIRS = 2
+
+
+def repair_short(router: Router, channel: str, short: ShortScript, issues: list[str], facts: FactSheet) -> ShortScript | None:
+    """Fix one Short's own problems (too thin, too long, long sentences, a stray number), keeping its story. Returns
+    the fixed Short when it passes every check, else None. Never touches the main video."""
+    for _ in range(SHORT_REPAIRS):
+        speed = float(config.brand()["channels"][channel]["voice_profile"].get("tts_speed", 1.0))
+        secs = sum(quality.est_seconds(s.narration, speed) for s in short.scenes) + quality.est_seconds(short.hook, speed)
+        prompt = (f"{voice_brief(channel)}\n\nFacts you may use:\n{_facts_block(facts)}\n\nThis Short (about "
+                  f"{secs:.0f} seconds now) failed these checks: {'; '.join(issues)}.\n{short.model_dump_json(indent=1)}\n\n"
+                  "Fix exactly that and keep its story: it must be 90-130 spoken words in total (35-55 seconds), "
+                  "3-6 scenes, sentences of at most 16 words, and only numbers from the facts. Return the Short.")
+        try:
+            res = router.complete("repurposer", prompt, schema=ShortScript, temperature=0.5, max_tokens=2000)
+        except (QuotaError, TransientError):
+            return None
+        short = res.data
+        good, _, out = check_shorts([short], channel, facts)
+        if good:
+            return good[0]
+        issues = out[0]["issues"] if out else issues
+    return None
 
 
 STUFFING_LIMIT = 3  # the main search phrase more often than this in one description reads as keyword stuffing
@@ -427,8 +666,15 @@ def make_package(router: Router, channel: str, script: Script, facts: FactSheet,
               + (f"\n\nYour own past results (real numbers from this channel):\n{hints}" if hints else ""))
     res = router.complete("repurposer", prompt, schema=Package, temperature=0.8, max_tokens=6000)
     pkg = res.data
-    good_shorts, problems, _ = check_shorts(pkg.shorts, channel, facts)
+    good_shorts, problems, failed = check_shorts(pkg.shorts, channel, facts)
+    for d in failed:  # repair each failed Short on its own before anything is regenerated
+        short = next((sh for sh in pkg.shorts if sh.title == d["title"]), None)
+        fixed = repair_short(router, channel, short, d["issues"], facts) if short else None
+        if fixed is not None:
+            good_shorts.append(fixed)
+            problems = [p for p in problems if f"'{d['title']}'" not in p] + [f"Short '{d['title']}' repaired: {', '.join(d['issues'])}"]
     problems += search_problems(pkg)
+    problems += post_number_problems(pkg, facts)
     if not good_shorts:  # both failed the checks: one focused retry before giving up
         retry, retry_problems, _ = make_shorts(router, channel, script, facts, tries=1)
         problems += retry_problems

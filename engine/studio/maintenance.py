@@ -11,7 +11,7 @@ from .script.models import Script, ShortScript
 
 OWNER_JOBS = ("regenerate_script", "rerender_preview", "regenerate_thumbnails", "run_research", "run_production",
               "run_mission", "recheck_project", "generate_ideas", "refine_idea", "auto_review", "produce_idea",
-              "check_providers", "remake_shorts", "preview_scene")
+              "check_providers", "remake_shorts", "preview_scene", "repair_package")
 
 
 START_LABEL = {
@@ -22,6 +22,7 @@ START_LABEL = {
     "refine_idea": "Refining an idea", "auto_review": "Reviewing packages automatically",
     "produce_idea": "Making the package for your idea", "check_providers": "Testing the AI keys",
     "remake_shorts": "Making new Shorts", "preview_scene": "Previewing one scene",
+    "repair_package": "Rechecking and repairing the package",
 }
 
 
@@ -174,6 +175,8 @@ def _run_owner_job(conn, router: Router, storage, job: dict) -> dict:
     p = _project(conn, pid)
     if t == "preview_scene":
         return produce.preview_scene(conn, storage, pid, int(inp.get("scene", -1)))
+    if t == "repair_package":
+        return produce.repair_package(conn, router, storage, pid, job_id=job["id"])
     if t == "remake_shorts":
         return produce.remake_shorts(conn, router, storage, pid, job_id=job["id"], note=str(inp.get("note") or "")[:500])
     if t == "rerender_preview":
@@ -183,6 +186,10 @@ def _run_owner_job(conn, router: Router, storage, job: dict) -> dict:
         produce.render_preview(conn, storage, pid, sv["body"], p["channel_slug"], p["format"])
         qr = p["quality_report"] or {}
         qr["issues"] = issues
+        if "findings" in qr:  # the script's checks were rerun on this version: replace their findings
+            qr["findings"] = [f for f in qr["findings"] if f.get("code") != "check"] + [
+                {"kind": "blocker" if i in pipeline.blocking(issues) else "warning", "code": "check", "text": i}
+                for i in issues]
         qr["owner_edited"] = sv["origin"] == "owner_edit"
         db.run(conn, "update content_projects set quality_report=%s, status='ready_for_review' where id=%s",
                (db.j(qr), pid))

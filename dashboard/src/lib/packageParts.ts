@@ -1,5 +1,5 @@
 // What a package is made of, said plainly: the main video, its short videos, and the posts on each platform.
-import type { Claim, Project } from "./types";
+import type { Claim, Finding, Project } from "./types";
 
 export interface DroppedShort { title: string; reasons: string[] }
 
@@ -22,6 +22,7 @@ const SHORTS_LINE = /^(Retry \d+: )?Short '.+' dropped:/;
  *  and the per-Short drop lines are shown in Short videos instead. */
 export function visibleIssues(project: Pick<Project, "quality_report" | "recipe" | "format">): string[] {
   const qr = project.quality_report ?? {};
+  if (qr.findings) return qr.findings.filter((f) => (f.kind === "blocker" || f.kind === "warning") && !f.code.startsWith("claim_")).map((f) => f.text);
   const seconds = Number(project.recipe?.preview_seconds) || 0;
   const issues = [...(qr.issues ?? []), ...(qr.package_problems ?? [])].filter((i: string) => !SHORTS_LINE.test(i));
   if (project.format === "long" && seconds >= 480) return issues.filter((i: string) => !/^Too short: about /.test(i));
@@ -32,7 +33,18 @@ export function claimProblems(claims: Pick<Claim, "status">[]) {
   return {
     contradicted: claims.filter((c) => c.status === "contradicted").length,
     unsupported: claims.filter((c) => c.status === "unsupported").length,
+    stale: claims.filter((c) => c.status === "stale").length,
   };
+}
+
+/** Claim statuses that stop a package: not backed, contradicted, or an old figure said as current. */
+export const BAD_CLAIMS = ["unsupported", "contradicted", "stale"];
+
+/** The findings of a package by kind (older packages have none: their issues show as before). */
+export function groupFindings(findings: Finding[] | undefined) {
+  const by = { blocker: [] as Finding[], warning: [] as Finding[], missing: [] as Finding[], info: [] as Finding[] };
+  for (const f of findings ?? []) if (f.kind in by && !f.code.startsWith("claim_")) by[f.kind].push(f);
+  return by;
 }
 
 export const SHORTS_WAITING = ["ready_for_review", "needs_attention"];

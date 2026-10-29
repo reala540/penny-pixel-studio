@@ -131,12 +131,16 @@ def search_plan(router: Router, idea: dict, channel: str) -> SearchPlan:
     return plan
 
 
-def deepen(conn, router: Router, idea: dict, channel: str) -> dict:
+MORE_SOURCES = 4        # a second, forced round may add this many beyond MAX_SOURCES
+
+
+def deepen(conn, router: Router, idea: dict, channel: str, force: bool = False) -> dict:
     """Fill in the full text of the idea's sources and add related ones. Safe to run again: it stops early once the
-    idea has enough material, and a source is stored once."""
+    idea has enough material, and a source is stored once. `force` looks further when the facts found were too
+    few for an honest video (once per package)."""
     f = fetcher()
     rows = db.all_(conn, "select id, url, body_text from research_sources where id = any(%s)", (list(idea["source_ids"]),))
-    if f is None or sum(len(r["body_text"] or "") for r in rows) >= ENOUGH_TEXT:
+    if f is None or (not force and sum(len(r["body_text"] or "") for r in rows) >= ENOUGH_TEXT):
         return {"skipped": True}
     filled = 0
     for r in rows:
@@ -145,7 +149,7 @@ def deepen(conn, router: Router, idea: dict, channel: str) -> dict:
             if text:
                 db.run(conn, "update research_sources set body_text=%s where id=%s", (text, r["id"]))
                 filled += 1
-    room = MAX_SOURCES - len(rows)
+    room = MAX_SOURCES + (MORE_SOURCES if force else 0) - len(rows)
     added: list = []
     if room > 0:
         plan = search_plan(router, idea, channel)

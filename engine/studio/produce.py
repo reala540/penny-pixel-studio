@@ -9,7 +9,7 @@ from pathlib import Path
 
 from . import budget, capacity, config, db, jobs, links, notify, schedule, similarity
 from .ai.router import Router
-from .errors import NeedsReview
+from .errors import NeedsReview, StudioError
 from .media import render as rendering
 from .media import stock, thumbnails
 from .media.visuals import Theme
@@ -147,6 +147,15 @@ def _sources_for(conn, ids: list) -> list[dict]:
     return sorted(rows, key=lambda r: order.get(str(r["id"]), 0))
 
 
+def _claim_status(conn, c: dict) -> tuple[str, str]:
+    """Status and note to store. A general principle is stored as such once migration 22 allows it; before that it
+    is kept as an opinion with a note (both are never fact-checked as a specific figure)."""
+    if c["status"] == "general" and not db.one(conn, """select 1 from pg_constraint where conname='research_claims_status_check'
+                                                      and pg_get_constraintdef(oid) like '%%general%%'"""):
+        return "opinion", f"General principle. {c['note']}"[:500]
+    return c["status"], c["note"]
+
+
 def save_script(conn, project_id, body: dict, origin: str, trail: list, claims: list[dict] | None = None,
                 facts=None, sources: list[dict] | None = None) -> dict:
     with db.transaction(conn):
@@ -162,18 +171,19 @@ def save_script(conn, project_id, body: dict, origin: str, trail: list, claims: 
                    (sv["id"], i, sc["narration"], len(sc["narration"].split()) / 2.5, db.j(sc["visual"]),
                     sc.get("on_screen_text"), sc.get("claim_keys", [])))
         if claims is not None and facts is not None:
-            fact_src = {f.key: f.source_ref for f in facts.facts}
+            # each fact names its source by id (labels like S2 depend on which sources were shown to the model)
+            by_id = {str(s["id"]): s for s in sources or [] if s.get("id")}
             label_to_source = {f"S{i}": s for i, s in enumerate(sources or [], 1)}
+            fact_src = {f.key: (by_id.get(f.source_id or "") or label_to_source.get(f.source_ref)) for f in facts.facts}
             for c in claims:
-                ref = next((fact_src[k] for k in c["fact_refs"] if k in fact_src), None)
-                src = label_to_source.get(ref) if ref else None
+                src = next((fact_src[k] for k in c["fact_refs"] if fact_src.get(k)), None)
                 period = next((f.data_period for f in facts.facts if f.key in c["fact_refs"] and f.data_period), None)
                 db.run(conn, """insert into research_claims (project_id, script_version_id, claim_key, claim_text, source_id,
                                     source_published_at, data_period, retrieved_at, confidence, status, checker_notes)
                                 values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                        (project_id, sv["id"], c["key"], c["text"], src["id"] if src else None,
                         src.get("published_at") if src else None, period, c["checked_at"], c["confidence"],
-                        c["status"], c["note"]))
+                        *_claim_status(conn, c)))
         db.run(conn, "update content_projects set current_script_version_id=%s where id=%s", (sv["id"], project_id))
     return sv
 
@@ -234,7 +244,18 @@ def produce_project(conn, router: Router, storage, idea: dict, week: date, *, pr
     holder: dict = {}
 
     def do_script(_):
-        result = pipeline.write_long(router, channel, idea_d, sources)
+        nonlocal sources
+        try:
+            result = pipeline.write_long(router, channel, idea_d, sources)
+        except NeedsReview as exc:
+            if "Not enough evidence" not in str(exc):
+                raise
+            # too few checkable facts: look for more evidence once, then decide
+            found = deepen.deepen(conn, router, idea, channel, force=True)
+            if not found.get("added") and not found.get("filled"):
+                raise
+            sources = _sources_for(conn, list(idea["source_ids"]))
+            result = pipeline.write_long(router, channel, idea_d, sources)
         twin = repeats_earlier(conn, channel, pid, result.script)
         if twin:  # too close to a video the channel already made: a person decides (YouTube penalises repetition)
             result.issues.append(twin)
@@ -288,6 +309,11 @@ def produce_project(conn, router: Router, storage, idea: dict, week: date, *, pr
             children.append(str(child["id"]))
         qr = db.one(conn, "select quality_report from content_projects where id=%s", (pid,))["quality_report"] or {}
         qr["package_problems"] = problems
+        qr["findings"] = [f for f in (qr.get("findings") or []) if f.get("code") != "package_part"] + [
+            {**f, "code": "package_part"} for f in pipeline.package_findings(problems)]
+        if not pkg.shorts:
+            qr["findings"].append({"kind": "missing", "code": "package_part", "text": "No Shorts: they couldn't be made "
+                                   "to pass the checks, so no Shorts, Reels, Stories or TikTok videos come from this package"})
         # the post texts and Shorts were written by this model: it can't review the package either
         qr["writers"] = sorted(set(qr.get("writers") or []) | set(trail.get("companies") or []))
         db.run(conn, "update content_projects set recipe = recipe || %s, quality_report=%s where id=%s",
@@ -522,12 +548,15 @@ def final_status(conn, project_id) -> None:
     p = db.one(conn, "select status, quality_report, recipe from content_projects where id=%s", (project_id,))
     if p["status"] in ("approved", "scheduled", "published", "rejected"):
         return
-    issues = (p["quality_report"] or {}).get("issues") or []
+    qr = p["quality_report"] or {}
+    # a package needs attention for factual blockers; editorial warnings, missing parts and notes are shown in Review
+    # (and still stop automatic approval). Older packages without findings keep the old rule: any issue.
+    blockers = ([f for f in qr["findings"] if f.get("kind") == "blocker"] if "findings" in qr else qr.get("issues") or [])
     bad_claims = db.one(conn, """select count(*) n from research_claims c
                                  join content_projects p on p.current_script_version_id = c.script_version_id
-                                 where p.id=%s and c.status in ('unsupported','contradicted')""", (project_id,))["n"]
+                                 where p.id=%s and c.status in ('unsupported','contradicted','stale')""", (project_id,))["n"]
     has_preview = bool((p["recipe"] or {}).get("preview_key"))
-    status = "ready_for_review" if has_preview and not issues and not bad_claims else (
+    status = "ready_for_review" if has_preview and not blockers and not bad_claims else (
         "needs_attention" if has_preview else "failed")
     db.run(conn, "update content_projects set status=%s where id=%s", (status, project_id))
 
@@ -979,6 +1008,105 @@ def schedule_for(targets: dict, prefix: str) -> tuple[list[str], list[str]]:
     return days, times
 
 
+def saved_facts(conn, project_id, script: Script):
+    """The checked facts behind a package: saved with its script version (newer packages), else in the output of
+    the job that wrote it (older ones). None when neither exists."""
+    from .script.models import FactSheet
+
+    if script.facts:
+        return FactSheet(facts=script.facts)
+    job = db.one(conn, "select output from generation_jobs where idempotency_key=%s and status='completed'",
+                 (f"script:{project_id}",))
+    if job and (job["output"] or {}).get("facts"):
+        return FactSheet.model_validate(job["output"]["facts"])
+    return None
+
+
+REPAIRABLE = ("needs_attention", "ready_for_review", "failed")
+
+
+def repair_package(conn, router: Router, storage, project_id, job_id=None) -> dict:
+    """Recheck and repair an unfinished package with the corrected workflow. Safe by design:
+    - only unapproved packages (needs attention, ready for review, failed) with nothing published; approved,
+      scheduled and published packages are refused, so no approval or post is touched
+    - the current script is repaired, not rewritten: its facts get their passages and dates, the claims are checked
+      against them, and only failing scenes are rewritten; a new script version is saved and the old ones are kept
+    - only the preview is re-rendered (unchanged scenes come from the render cache); Shorts are made only if the
+      package has none; no project, scheduled post or publishing attempt is created twice (one run per version)"""
+    from .script import evidence
+    from .script.models import FactSheet
+
+    head = db.one(conn, "select * from content_projects where id=%s", (project_id,))
+    if not head or head["parent_project_id"] or head["format"] != "long":
+        raise ValueError("Choose the main video of a package to repair it")
+    if head["status"] not in REPAIRABLE:
+        raise ValueError(f"This package is {head['status']}: only unapproved packages can be repaired")
+    if db.one(conn, """select 1 from scheduled_posts sp join content_variants v on v.id=sp.variant_id
+                       where v.project_id in (select id from content_projects where id=%s or parent_project_id=%s)
+                         and sp.status in ('publishing','published')""", (project_id, project_id)):
+        raise ValueError("Part of this package is already posted, so it isn't changed")
+    sv = db.one(conn, "select * from script_versions where id=%s", (head["current_script_version_id"],))
+    if not sv:
+        raise ValueError("This package has no script to repair: make it again from its idea")
+    idea = db.one(conn, "select * from content_ideas where id=%s", (head["idea_id"],)) if head["idea_id"] else None
+    sources = _sources_for(conn, list(idea["source_ids"])) if idea else []
+    script = Script.model_validate(sv["body"])
+    facts = saved_facts(conn, project_id, script)
+    idea_d = {"title": head["title"], "angle": (idea or {}).get("angle") or ""}
+    trail: list[dict] = []
+    notes = [f"Rechecked and repaired version {sv['version']} with the corrected workflow"]
+    if facts is None:
+        facts, dropped, t = pipeline.build_fact_sheet(router, idea_d, sources)
+        trail.append({"step": "fact_sheet", **t})
+    else:
+        facts, unlinked = evidence.attach(facts, sources)  # passages, source ids and dates, found by code
+        kept, off_topic = evidence.relevant_sources(idea_d, sources)
+        allowed = {str(s.get("id")) for s in kept}
+        facts = FactSheet(facts=[f for f in facts.facts if f.source_id in allowed], context=facts.context)
+        dropped = off_topic + unlinked
+        if off_topic:
+            notes.append(f"{len(off_topic)} off-topic source(s) set aside, with the facts taken from them")
+        if unlinked:
+            notes.append(f"{len(unlinked)} saved fact(s) couldn't be found in their source any more and were set aside")
+    if len(facts.facts) < pipeline.MIN_LONG_FACTS:
+        raise NeedsReview(pipeline.not_enough_evidence(idea_d, facts, sources, dropped))
+    writers = set((head["quality_report"] or {}).get("writers") or [])
+
+    def do(_):
+        result = pipeline.finish_long(router, head["channel_slug"], script.model_copy(update={"facts": facts.facts}),
+                                      facts, sources, writers, trail, dropped=dropped, notes=notes)
+        new = save_script(conn, project_id, result.script.model_dump(), "repair", result.trail, result.claims,
+                          result.facts, sources)
+        qr = head["quality_report"] or {}
+        keep = {k: qr[k] for k in ("package_problems", "shorts_remakes") if k in qr}
+        report = {**result.report, **keep, "repaired_from_version": sv["version"]}
+        report["findings"] = report["findings"] + [f for f in (qr.get("findings") or []) if f.get("code") == "package_part"]
+        db.run(conn, "update content_projects set quality_report=%s, status='rendering' where id=%s",
+               (db.j(report), project_id))
+        return {"script_version_id": str(new["id"]), "blockers": len(result.issues),
+                "repairs": len(result.report.get("repairs") or [])}
+
+    st = jobs.run_stage(conn, "repair", f"repair:{project_id}:{sv['id']}", do, project_id=project_id)
+    if not st.ok:
+        db.run(conn, "update content_projects set status=%s where id=%s and status='rendering'",
+               ("needs_attention", project_id))
+        return {"project_id": str(project_id), "status": st.status, "error": st.job.get("error_message")}
+    body = db.one(conn, "select body from script_versions where id=%s", (st.output["script_version_id"],))["body"]
+    render_preview(conn, storage, project_id, body, head["channel_slug"], "long")
+    final_status(conn, project_id)
+    has_shorts = db.one(conn, """select 1 from content_projects where parent_project_id=%s
+                                 and status not in ('rejected','failed')""", (project_id,))
+    shorts = None
+    if not has_shorts:
+        try:
+            shorts = remake_shorts(conn, router, storage, project_id, job_id=job_id)
+        except (ValueError, StudioError) as exc:
+            shorts = {"made": 0, "problems": [str(exc)[:300]]}
+    status = db.one(conn, "select status from content_projects where id=%s", (project_id,))["status"]
+    return {"project_id": str(project_id), "status": status, **st.output,
+            "shorts": (shorts or {}).get("made", "kept")}
+
+
 def remake_shorts(conn, router: Router, storage, project_id, job_id=None, note: str = "") -> dict:
     """New Shorts for a package, from its own checked facts, without touching its script, main video or posts.
     The new Shorts and their posts wait for the owner's approval; posts that already exist are never planned again."""
@@ -987,15 +1115,11 @@ def remake_shorts(conn, router: Router, storage, project_id, job_id=None, note: 
         raise ValueError("Choose the main video of a package; Shorts are made from it")
     if head["status"] in ("rejected", "archived", "failed"):
         raise ValueError(f"This package is {head['status']}; Shorts can't be added to it")
-    facts_job = db.one(conn, "select output from generation_jobs where idempotency_key=%s and status='completed'",
-                       (f"script:{project_id}",))
-    if not facts_job or not (facts_job["output"] or {}).get("facts"):
-        raise ValueError("This package's checked facts weren't saved, so its Shorts can't be remade safely")
-    from .script.models import FactSheet
-
-    facts = FactSheet.model_validate(facts_job["output"]["facts"])
     sv = db.one(conn, "select body, provider_trail from script_versions where id=%s", (head["current_script_version_id"],))
     script = Script.model_validate(sv["body"])
+    facts = saved_facts(conn, project_id, script)
+    if facts is None:
+        raise ValueError("This package's checked facts weren't saved, so its Shorts can't be remade safely")
     shorts, problems, dropped = pipeline.make_shorts(router, head["channel_slug"], script, facts, tries=2, note=note)
     qr = head["quality_report"] or {}
     qr["shorts_remakes"] = (qr.get("shorts_remakes") or []) + [

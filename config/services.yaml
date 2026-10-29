@@ -49,6 +49,7 @@ render:
     long: { width: 854, height: 480, crf: 30 }
     short: { width: 480, height: 854, crf: 30 }
   min_long_minutes: 8                # long videos: 8-14 minutes, aiming for about 11
+  min_long_minutes_floor: 5          # when a topic's evidence supports less, a shorter honest video (never padding)
   target_long_minutes: 11
   max_long_minutes: 14
   max_short_seconds: 58

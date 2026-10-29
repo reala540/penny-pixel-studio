@@ -64,6 +64,32 @@ try {
       await context.close();
     });
 
+    await check("Review groups findings by kind, and 'Recheck and repair' only queues the repair", async () => {
+      const db = withProblems();
+      db.content_projects[0].status = "needs_attention";
+      db.content_projects[0].quality_report = { issues: ["Editor scores below 7: {'pacing': 5}"], findings: [
+        { kind: "warning", code: "critic_low", text: "Editor scores below 7: {'pacing': 5}" },
+        { kind: "missing", code: "package_part", text: "No Shorts: they couldn't be made to pass the checks" },
+        { kind: "info", code: "package_part", text: "Title marked as UK-specific" },
+        { kind: "info", code: "repair", text: "Recalculated C26: (1 + 0.04)**10 * 1000 - 1000 = 480 (the script said 300)" }] };
+      const { page, context, calls, errors } = await openStudio(browser, "/content/proj-1", { db });
+      await expectText(page, "Missing parts");
+      await expectText(page, "What the studio changed or noticed (2)");
+      const box = await page.getByText("Check before approving").first().locator("..").innerText();
+      if (box.includes("UK-specific")) throw new Error("an informational note was listed as a warning");
+      await shot(page, "review-findings-desktop");
+      const before = calls.length;
+      await page.getByRole("button", { name: "Recheck and repair" }).click();
+      await page.getByRole("dialog").getByRole("button", { name: "Recheck and repair" }).click();
+      await expectText(page, "Rechecking and repairing");
+      const sent = calls.slice(before).filter((c) => c.method !== "GET" && c.method !== "HEAD");
+      const queued = sent.filter((c) => c.path === "/rest/v1/rpc/enqueue_owner_job");
+      if (queued.length !== 1 || !queued[0].body.includes('"repair_package"')) throw new Error(`calls: ${JSON.stringify(sent)}`);
+      if (sent.some((c) => /approve|scheduled_posts|content_variants/.test(c.path))) throw new Error(`unexpected writes: ${JSON.stringify(sent)}`);
+      if (errors.length) throw new Error(errors.join("; "));
+      await context.close();
+    });
+
     await check("Settings → Accounts shows what each connection can really do, and the next step", async () => {
       const db = seed();
       db.settings.account_capabilities = { checked_at: iso(-30), accounts: {

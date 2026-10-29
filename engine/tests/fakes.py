@@ -56,25 +56,25 @@ def scene_text(i: int, words: int = 2) -> str:
     return " ".join(out)
 
 
-def fake_provider_config():
-    """Three fake providers so diversity/fallback logic has something to choose from."""
+def fake_provider_config(extra: tuple[str, ...] = ()):
+    """Three fake providers so diversity/fallback logic has something to choose from (plus `extra` ones)."""
     roles = ["research_summarizer", "brainstormer", "angle_selector", "scriptwriter", "voice_editor", "critic",
              "claim_checker", "repurposer", "test"]
     return {"providers": {
         name: {"enabled": True, "base_url": f"https://{name}.example/v1", "key_env": f"{name.upper()}_KEY",
                "commercial_use": "assumed",
                "models": [{"id": f"{name}-model", "roles": roles, "daily_requests": 1000, "priority": prio}]}
-        for name, prio in (("alpha", 10), ("beta", 20), ("gamma", 30))}}
+        for name, prio in (("alpha", 10), ("beta", 20), ("gamma", 30), *((n, 40 + i) for i, n in enumerate(extra)))}}
 
 
 class ScriptedRouter(Router):
     """Real Router, but `_chat_once` is answered by `respond(role, prompt)` instead of HTTP."""
 
-    def __init__(self, monkeypatch=None, failing: set[str] | None = None):
+    def __init__(self, monkeypatch=None, failing: set[str] | None = None, extra: tuple[str, ...] = ()):
         if monkeypatch:
-            for n in ("ALPHA", "BETA", "GAMMA"):
-                monkeypatch.setenv(f"{n}_KEY", "test-key")
-        super().__init__(MemoryUsageStore(), client=httpx.Client(), provider_config=fake_provider_config())
+            for n in ("ALPHA", "BETA", "GAMMA", *extra):
+                monkeypatch.setenv(f"{n.upper()}_KEY", "test-key")
+        super().__init__(MemoryUsageStore(), client=httpx.Client(), provider_config=fake_provider_config(extra))
         self.failing = failing or set()
         self.calls: list[tuple[str, str]] = []
 
@@ -170,10 +170,10 @@ def respond(role: str, prompt: str):
                 "cta": "Subscribe for one useful idea every week." + disclaimer}
     if role == "claim_checker":
         out = []
-        for key, block in re.findall(r"^(C\d+): .*?\n((?:  .*\n?)*)", prompt, flags=re.M):
-            src = re.search(r'<source id="F\d+">(.*?)</source>', block, flags=re.S)
-            quote = src.group(1).split(" ")[:12] if src else []
-            out.append({"key": key, "status": "supported" if src else "unsupported",
+        for key, block in re.findall(r'<evidence id="(C\d+)">(.*?)</evidence>', prompt, flags=re.S):
+            passage = re.search(r"Passage: (.*)", block)
+            quote = passage.group(1).split(" ")[:12] if passage else []
+            out.append({"key": key, "status": "supported" if passage else "unsupported",
                         "supporting_quote": " ".join(quote), "note": ""})
         return {"verdicts": out}
     if role == "voice_editor":

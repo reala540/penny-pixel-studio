@@ -1,6 +1,10 @@
 # Free research sources. Each adapter respects the source's terms; no scraping of pages
 # that forbid it. Keys are optional: an adapter without its key is skipped and reported.
 
+# after this many days a source's figures count as history: the script must say when they applied ("in 2021")
+stale_after_days:
+  ai: 180
+  money: 365
 freshness_days:
   ai: 10        # AI news ages fast
   money: 30     # economic data is refreshed monthly

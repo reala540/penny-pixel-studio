@@ -20,6 +20,13 @@ class Fact(BaseModel):
     text: str = Field(description="One factual statement taken from the sources")
     source_ref: str = Field(description="Source label, e.g. S2")
     data_period: str | None = Field(default=None, description="Time period the data refers to, if any")
+    passage: str = Field(default="", description="The exact sentence(s) from the source that state this fact, copied")
+    time_kind: Literal["historical", "current", "forecast", "general"] = Field(
+        default="current", description="historical = a past event or old figure; current = true now; forecast = a "
+                                       "prediction or expectation; general = a definition or how something works")
+    # filled in by code from the source itself, never by a model
+    source_id: str | None = None
+    published: str | None = None
 
 
 class FactSheet(BaseModel):
@@ -67,7 +74,10 @@ class Scene(BaseModel):
 class Claim(BaseModel):
     key: str = Field(description="C1, C2, ...")
     text: str
-    kind: Literal["fact", "opinion", "calculation"] = "fact"
+    kind: Literal["fact", "opinion", "calculation", "principle"] = Field(default="fact", description=(
+        "fact = specific and checkable (cite fact_refs); calculation = worked out (give expression); principle = a "
+        "widely accepted general idea with no numbers, names or dates, e.g. 'inflation reduces what cash can buy'; "
+        "opinion = the host's view"))
     fact_refs: list[str] = Field(default_factory=list, description="Fact keys from the fact sheet (F1...)")
     expression: str = Field(default="", description="For kind=calculation: the exact arithmetic, e.g. 200*12*10")
 
@@ -80,6 +90,8 @@ class Script(BaseModel):
     scenes: list[Scene]
     claims: list[Claim] = Field(default_factory=list)
     cta: str
+    # the checked evidence this version was written and checked against, saved with it (filled in by code)
+    facts: list[Fact] = Field(default_factory=list)
 
     def full_text(self) -> str:
         return " ".join(s.narration for s in self.scenes)
@@ -107,6 +119,8 @@ class CriticReport(BaseModel):
     value: int = Field(ge=1, le=10)
     fixes: list[str] = Field(default_factory=list, description="Specific changes, each naming a scene number")
     weak_scenes: list[int] = Field(default_factory=list, description="1-based scene numbers that need rewriting")
+    delete: list[int] = Field(default_factory=list, description="Scenes that only repeat or go off topic")
+    merge: list[list[int]] = Field(default_factory=list, description="Groups of scenes saying the same thing")
 
     def minimum(self) -> int:
         return min(self.hook, self.originality, self.clarity, self.pacing, self.value)
@@ -135,6 +149,8 @@ class SectionDraft(BaseModel):
 
 class SceneRewrite(BaseModel):
     scenes: list[Scene]
+    claims: list[Claim] = Field(default_factory=list, description="The claims of these scenes, corrected")
+
 
 
 class ShortScript(BaseModel):
