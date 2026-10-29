@@ -604,3 +604,14 @@ def test_an_old_figure_gets_its_date_from_its_source():
     assert fixed.scenes[0].narration.startswith("Static analysis has a trust problem.") and changes
     rec = verify.check_claims(Stub(claim_checker=_supported_checker), fixed, FactSheet(facts=[fact]), [old])
     assert rec[0]["status"] != "stale"
+
+
+def test_repair_finds_saved_facts_by_source_id_not_by_label():
+    """Found when the owner pressed Recheck and repair on the two real-run packages: the facts were labelled S1, S2…
+    against the sources kept at writing time, and the repair matched those labels against all of the idea's sources,
+    so every fact pointed at the wrong article and was set aside ('0 checkable facts')."""
+    off = _source(20, "Show HN: a forex API", "161 currencies", NOW)
+    fact = _fact("F1", "Inflation hit 5.1%", GUARDIAN, kind="historical", passage="as inflation hit 5.1%.")
+    fact = fact.model_copy(update={"source_ref": "S1"})          # S1 = the Guardian in the writer's filtered list
+    out, dropped = evidence.attach(FactSheet(facts=[fact]), [off, GUARDIAN], now=NOW)   # S1 = the forex page here
+    assert [f.key for f in out.facts] == ["F1"] and out.facts[0].source_id == GUARDIAN["id"] and not dropped
