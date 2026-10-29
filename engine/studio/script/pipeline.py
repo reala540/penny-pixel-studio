@@ -25,6 +25,7 @@ MAX_REWRITES = 2
 CRITIC_MIN = 7
 MIN_LONG_FACTS = 10   # checkable facts a long video needs; fewer means padding or invention
 MINUTES_PER_FACT = 0.6  # how much honest video one checked fact carries (a worked example, context, why it matters)
+EDIT_SHRINK = 0.15     # a voice edit may shorten a scene by at most this share
 MIN_SCENES = 6         # the structure check's minimum: cuts never go below it
 REPAIR_ROUNDS = 2       # targeted rewrites of scenes that still fail, after code has fixed what it can
 FACTS_WANTED = "12-25"
@@ -238,7 +239,8 @@ def rewrite_scenes(router: Router, channel: str, script: Script, scene_numbers: 
               f"{scene_numbers}). Just before them the script says: \"{before}\"\nScenes:\n{json.dumps(target, indent=1)}\n"
               f"Their claims:\n{json.dumps(claims, indent=1)}\n\nFix these problems:\n- " + "\n- ".join(instructions) +
               "\n\nFor a claim that isn't supported: find the fact that supports it and cite it, or qualify it to what "
-              "the passage says (with its date or who said it), or remove the statement. Return the corrected claims "
+              "the passage says (with its date or who said it), or remove the statement. Keep each scene about as "
+              "long as it is now unless a statement has to go. Return the corrected claims "
               "too (same keys where the claim stays). " + CALCULATIONS + " "
               f"Return exactly {len(scene_numbers)} scenes in the same order.")
     res = router.complete("scriptwriter", prompt, schema=SceneRewrite, temperature=0.5, prefer=prefer)
@@ -265,7 +267,8 @@ def voice_edit(router: Router, channel: str, script: Script, writers: set[str]) 
     narr = [{"n": i, "narration": s.narration} for i, s in enumerate(script.scenes, 1)]
     prompt = (f"{voice_brief(channel)}\n\nEdit the narration of every scene so it sounds like this host speaking "
               "to one friend: natural rhythm, contractions, varied sentence length, concrete words, no filler, no "
-              "generic AI phrasing. Keep every fact and every number exactly. Keep the same meaning and order.\n\n"
+              "generic AI phrasing. Keep every fact and every number exactly. Keep the same meaning and order, and "
+              "about the same length: this is a polish, not a cut.\n\n"
               f"Hook: {script.hook}\nScenes:\n{json.dumps(narr, indent=1)}\n\nReturn JSON "
               '{"hook": str, "scenes": [{"n": int, "narration": str}]} with all scenes.')
     from pydantic import BaseModel
@@ -280,8 +283,10 @@ def voice_edit(router: Router, channel: str, script: Script, writers: set[str]) 
     scenes = []
     for i, sc in enumerate(script.scenes, 1):
         new = edited.get(i, "").strip()
-        # code-level guard: reject edits that drop or change numbers
-        if new and quality.numbers_in(new) == quality.numbers_in(sc.narration):
+        # code-level guards: an edit may not drop or change numbers, nor shorten the scene by more than
+        # EDIT_SHRINK (a polish that loses content makes the video too short)
+        keeps_length = len(new.split()) >= len(sc.narration.split()) * (1 - EDIT_SHRINK)
+        if new and keeps_length and quality.numbers_in(new) == quality.numbers_in(sc.narration):
             scenes.append(sc.model_copy(update={"narration": new}))
         else:
             scenes.append(sc)
