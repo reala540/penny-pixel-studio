@@ -21,11 +21,18 @@ PASSAGE_CHARS = 420     # the quoted passage kept per fact
 WINDOW_CHARS = 700      # each extra piece of source text shown to the checker
 WINDOWS = 3             # at most this many extra pieces per fact
 MIN_RELEVANCE = 0.15    # share of the topic's words a source must mention to be used
+MIN_SHARED = 2          # ... or at least this many of them
 
 
 def words(text: str) -> set[str]:
-    return {w.rstrip("s") for w in re.findall(r"[a-z0-9][a-z0-9.\-]*[a-z0-9]|[a-z0-9]", (text or "").lower())
-            if w not in STOP and len(w) > 2}
+    """Topic words. A hyphenated name counts whole and by its parts: 'security-first' also matches 'security'."""
+    out = set()
+    for w in re.findall(r"[a-z0-9][a-z0-9.\-]*[a-z0-9]|[a-z0-9]", (text or "").lower()):
+        for part in [w, *w.split("-")] if "-" in w else [w]:
+            part = part.rstrip("s")
+            if part not in STOP and len(part) > 2:
+                out.add(part)
+    return out
 
 
 def source_text(s: dict) -> str:
@@ -47,8 +54,12 @@ def relevant_sources(idea: dict, sources: list[dict]) -> tuple[list[dict], list[
         return sources, []
     kept, dropped = [], []
     for s in sources:
-        overlap = len(topic & words(source_text(s)[:6000])) / len(topic)
-        (kept if overlap >= MIN_RELEVANCE else dropped).append(s)
+        shared = topic & words(source_text(s)[:6000])
+        # official figures and primary data (a rate series, a central bank statement) are kept: their short titles
+        # rarely repeat a video's wording; anything else must share two topic words or a fair share of them
+        official = (s.get("credibility") or "") in ("official", "primary_data")
+        ok = official or len(shared) >= MIN_SHARED or len(shared) / len(topic) >= MIN_RELEVANCE
+        (kept if ok else dropped).append(s)
     if not kept:
         return sources, []
     return kept, [f"Not used (off-topic for this video): {s.get('title', '')[:90]}" for s in dropped]
@@ -57,6 +68,9 @@ def relevant_sources(idea: dict, sources: list[dict]) -> tuple[list[dict], list[
 def _stale_after_days(topic: str) -> int:
     """After this many days a source's figures are history, not news (config/research.yaml: stale_after_days)."""
     return int((config.research().get("stale_after_days") or {}).get(topic, 365))
+
+
+PAST_DATE = re.compile(r"\b(19\d{2}|20\d{2})\b|\b(last|previous) (year|quarter|month|decade)\b|\bago\b", re.I)
 
 
 def find_passage(fact: Fact, text: str) -> str:
@@ -101,10 +115,14 @@ def attach(facts: FactSheet, sources: list[dict], now: datetime | None = None) -
             continue
         kind = f.time_kind
         pub = s.get("published_at")
-        if kind == "current" and isinstance(pub, datetime):
+        if isinstance(pub, datetime):
             age = (now - (pub if pub.tzinfo else pub.replace(tzinfo=timezone.utc))).days
-            if age > _stale_after_days(s.get("topic") or ""):
+            old = age > _stale_after_days(s.get("topic") or "")
+            if kind == "current" and old:
                 kind = "historical"
+            # a recent source's fact is history only when it names an earlier date itself (the model over-marks)
+            elif kind == "historical" and not old and not PAST_DATE.search(f"{f.text} {f.data_period or ''}"):
+                kind = "current"
         kept.append(f.model_copy(update={"passage": passage, "time_kind": kind, "source_id": str(s.get("id") or ""),
                                          "published": _date(s)}))
     return FactSheet(facts=kept, context=facts.context, open_questions=facts.open_questions), dropped

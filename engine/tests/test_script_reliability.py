@@ -329,7 +329,8 @@ def test_repair_flow_fixes_what_it_can_and_finishes_without_the_busy_model(monke
     steps = [t["step"] for t in trail]
     assert "voice_edit" in steps and trail[steps.index("voice_edit")].get("skipped")   # busy: skipped, not failed
     assert len(result.script.scenes) == 6                                  # the critic's cut was applied
-    assert state["rewrites"] >= 1                                          # the stale claim was rewritten with its date
+    assert state["rewrites"] == 0                                          # dated by code: no rewrite needed
+    assert "As reported in December 2021" in result.script.full_text()
     statuses = {c["key"]: c["status"] for c in result.claims}
     assert statuses == {"C2": "supported"} and not result.issues
     assert result.script.facts and result.report["findings"]
@@ -497,3 +498,109 @@ def test_each_fact_points_at_its_own_sentence():
             "rates three times in 2022.")
     passage = evidence.find_passage(eu, text)
     assert passage.startswith("In a sign") and "Samuel" not in passage and "Federal Reserve" not in passage
+
+
+# ------------------------------------------------------------------ found in the first real run (29 Oct, actual providers)
+
+def test_numbers_in_names_are_labels_not_figures():
+    s = _script([], [_scene("Picture a $200,000 mortgage on a 30-year term. GPT-6.1 Terra and Kimi K3.1 shipped in Q4.") for _ in range(6)])
+    issues = quality.check_long(s, "ai", min_seconds=0)
+    assert not [i for i in issues if "states numbers" in i and ("'30'" in i or "6.1" in i)]
+    assert [i for i in issues if "states numbers ['200000']" in i]          # a real figure still needs its claim
+    pkg = pipeline.Package.model_construct(x_post="The 30-year rate tells the story", facebook_post="GPT-6.1 is out",
+                                           youtube_title="Mortgages explained")
+    assert pipeline.post_number_problems(pkg, FactSheet(facts=[])) == []
+
+
+def test_official_and_clearly_related_sources_are_kept():
+    official = _source(4, "30-year mortgage rate — latest official data", "", NOW)
+    official["credibility"] = "primary_data"
+    fomc = _source(5, "Federal Reserve issues FOMC statement", "The Committee decided to lower the target range", NOW)
+    fomc["credibility"] = "official"
+    blog = _source(6, "Mortgage payments rise as rates climb", "Homeowners see payments rising", NOW)
+    unrelated = _source(7, "Show HN: a forex API", "161 currencies", NOW)
+    kept, notes = evidence.relevant_sources({"title": "Mortgage Rates Hit 7.32% While the Fed Cuts — Why Your Payment "
+                                             "Keeps Rising", "angle": "the gap between the policy rate and mortgage rates"},
+                                            [official, fomc, blog, unrelated])
+    assert kept == [official, fomc, blog] and len(notes) == 1
+
+
+def test_a_number_that_cannot_be_the_result_is_never_replaced():
+    calc = Claim(key="C15", kind="calculation", expression="(200000*0.05*30) - (200000*0.04*30)",
+                 text="A 1% higher rate on a $200,000 loan costs much more over the term")
+    script = _script([calc], [_scene("A 1% higher rate on a $200,000 loan costs much more over the term.", ["C15"])])
+    fixed, changes = repair.fix_calculations(script, [{"key": "C15", "status": "contradicted", "note": ""}])
+    assert fixed.claims[0].text == calc.text and not changes            # "1%" isn't a typo of 60,000
+
+
+def test_spoken_arithmetic_is_removed_from_the_narration():
+    c = Claim(key="C1", kind="calculation", expression="124*12*30", text="That adds up to $44,640, calculated as 124*12*30")
+    script = _script([c], [_scene("That adds up to an extra $44,640 in interest, calculated as 124*12*30.", ["C1"])])
+    fixed, changes = repair.remove_spoken_working(script)
+    assert fixed.scenes[0].narration == "That adds up to an extra $44,640 in interest." and changes
+    assert "calculated as" not in fixed.claims[0].text
+
+
+def test_shorts_are_built_from_the_checked_script_when_written_ones_fail():
+    lines = ["Mortgage rates climbed while the Fed cut.", "That gap surprises many buyers.", "Banks price loans off long bonds.",
+             "Long bonds did not fall with the policy rate.", "So monthly payments kept rising.", "Lenders also add a margin.",
+             "That margin widened this year.", "Buyers feel it in every payment.", "Shopping around still helps.",
+             "Compare three offers before you sign.", "Ask each lender for the full cost.", "Check the fees, not just the rate.",
+             "A small difference adds up over time.", "Write the numbers side by side.", "Then pick the offer you understand.",
+             "Do not rush the decision.", "Your future self will thank you.", "That is the whole idea in one minute."]
+    scenes = [_scene("Opening line for the main video, welcome to the show today.")] + \
+             [_scene(" ".join(lines[i:i + 3])) for i in range(0, 18, 3)] + [_scene("Thanks for watching, see you next week.")]
+    script = _script([], scenes)
+    built = pipeline.shorts_from_script(script, "money", FactSheet(facts=[]), n=2)
+    assert built and all(not quality.check_short(s, "money") for s in built)
+    words = sum(len(sc.narration.split()) for sc in built[0].scenes) + len(built[0].hook.split())
+    assert 90 <= words <= 130
+
+
+def test_the_critics_cuts_are_applied_as_far_as_the_length_allows(monkeypatch):
+    monkeypatch.setattr(quality, "MIN_LONG_SECONDS", 20)
+    monkeypatch.setattr("studio.config.services", lambda: {"render": {"min_long_minutes_floor": 0.6, "max_long_minutes": 14,
+                                                                       "target_long_minutes": 11, "min_long_minutes": 8}})
+    texts = [f"Scene {i} explains one distinct thing about saving money with a careful worked example here." for i in range(1, 10)]
+    script = _script([], [_scene(t) for t in texts])
+
+    def critic(prompt):
+        return {"hook": 8, "originality": 8, "clarity": 8, "pacing": 4, "value": 8, "fixes": ["cut repeats"],
+                "weak_scenes": [], "delete": [2, 3, 4, 5, 6, 7], "merge": []}
+
+    router = Stub(critic=critic, angle_selector=lambda p: {"best": 0, "reason": "ok"},
+                  scriptwriter=lambda p: {"scenes": [], "claims": []})
+    result = pipeline.finish_long(router, "ai", script, FactSheet(facts=[]), [], set(), [])
+    assert 6 <= len(result.script.scenes) < 9                          # some cuts applied, never below 6 scenes
+    assert any("of the critic's 6 suggested cuts" in c for c in result.report["repairs"])
+
+
+def test_a_videos_own_sources_are_never_set_aside():
+    sol = _source(8, "GPT-6.1 Sol helps CodeRabbit strengthen security across complex codebases", "CodeRabbit uses GPT-6.1 Sol", NOW, topic="ai")
+    grep = _source(9, "Greptile takes bug detection beyond code review with GPT-6 Astra", "Greptile finds bugs", NOW, topic="ai")
+    kept, notes = evidence.relevant_sources({"title": "Security-First Coding: GPT-6.1 Sol vs Greptile Bug Detector",
+                                             "angle": "which catches more real vulnerabilities"}, [sol, grep])
+    assert kept == [sol, grep] and notes == []
+
+
+def test_a_recent_fact_is_not_history_unless_it_names_an_earlier_date():
+    recent = _source(10, "CVE-Bench: benchmarking agents on real vulnerabilities", "CVE-Bench runs twenty real-world vulnerabilities.",
+                     NOW - timedelta(days=146), topic="ai")
+    sheet = FactSheet(facts=[Fact(key="F1", text="CVE-Bench runs twenty real-world vulnerabilities", source_ref="S1", time_kind="historical"),
+                             Fact(key="F2", text="CVE-Bench runs twenty real-world vulnerabilities in 2025", source_ref="S1",
+                                  time_kind="historical", passage="CVE-Bench runs twenty real-world vulnerabilities.")])
+    out, _ = evidence.attach(sheet, [recent], now=NOW)
+    assert [f.time_kind for f in out.facts] == ["current", "historical"]
+
+
+def test_an_old_figure_gets_its_date_from_its_source():
+    old = _source(11, "DeepSource false positives", "DeepSource aims to keep false positives under 5%.", datetime(2020, 6, 15, tzinfo=timezone.utc))
+    fact = _fact("F1", "DeepSource aims to keep false positives under 5%", old, kind="historical")
+    claim = Claim(key="C1", text="DeepSource aims to keep false positives under 5%.", fact_refs=["F1"])
+    script = _script([claim], [_scene("Static analysis has a trust problem. DeepSource aims to keep false positives under 5%.", ["C1"])],
+                     facts=[fact])
+    fixed, changes = repair.qualify_stale(script, [{"key": "C1", "status": "stale", "note": ""}])
+    assert "As reported in June 2020, DeepSource aims" in fixed.scenes[0].narration
+    assert fixed.scenes[0].narration.startswith("Static analysis has a trust problem.") and changes
+    rec = verify.check_claims(Stub(claim_checker=_supported_checker), fixed, FactSheet(facts=[fact]), [old])
+    assert rec[0]["status"] != "stale"

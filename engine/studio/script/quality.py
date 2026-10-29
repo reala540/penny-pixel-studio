@@ -25,6 +25,25 @@ def numbers_in(text: str) -> set[str]:
     return out
 
 
+LABEL = re.compile(r"(?<![\w.])(\d+(?:\.\d+)?)(?=-(?:year|month|week|day|hour|minute|second|point|step|page)s?\b)"
+                   r"|(?<=[A-Za-z]-)(\d+(?:\.\d+)?)|(?<=[A-Za-z])(\d+(?:\.\d+)?)", re.I)
+
+
+def label_numbers(text: str) -> set[str]:
+    """Numbers that are part of a name or term, not a figure: '30-year mortgage', 'GPT-6.1', 'Q4', 'K3.1'.
+    They need no source of their own (the facts that use them are still checked)."""
+    out = set()
+    for m in LABEL.finditer(text):
+        n = next(g for g in m.groups() if g)
+        out.add(n.rstrip("0").rstrip(".") if "." in n else n)
+    return out
+
+
+def figures_in(text: str) -> set[str]:
+    """numbers_in without the labels: the figures a sentence states."""
+    return numbers_in(text) - label_numbers(text)
+
+
 def banned_hits(text: str) -> list[str]:
     low = text.lower()
     return [p for p in config.brand().get("banned_phrases", []) if p.lower() in low]
@@ -143,7 +162,7 @@ def check_long(script: Script, channel: str, min_seconds: float | None = None) -
         if unknown:
             issues.append(f"Scene {i} references unknown claims {unknown}")
     for i, sc in enumerate(script.scenes, 1):
-        nums = numbers_in(sc.narration) - {"1", "2", "3", "4", "5", "10"}
+        nums = figures_in(sc.narration) - {"1", "2", "3", "4", "5", "10"}
         if nums and not sc.claim_keys:
             issues.append(f"Scene {i} states numbers {sorted(nums)} without a claim/source")
     issues += animation_numbers(script.scenes)

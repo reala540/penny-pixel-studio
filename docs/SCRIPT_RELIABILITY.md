@@ -115,3 +115,49 @@ A package needs attention only for blockers. Warnings still stop automatic appro
 **Not yet done: actual AI provider responses.** The rewrites and verdicts above are scripted. Running the corrected
 workflow on real packages uses the free AI services for a few minutes per package and needs the owner's approval
 first (see the pull request). Nothing has been generated, approved or posted.
+
+## First run with actual AI providers (29 Oct 2026)
+
+With the owner's approval, one new package per channel was made with the corrected workflow (job runner on GitHub,
+the studio's own free AI services). Automatic posting was off. Nothing was approved or posted.
+
+| | Penny: "Mortgage Rates Hit 7.32% While the Fed Cuts" | Pixel: "Security-First Coding: GPT-6.1 Sol vs Greptile" |
+|---|---|---|
+| Claims | 21 supported, 2 partly, 5 general, 2 opinion, **0 unsupported** | 13 supported, 1 partly, 1 general, 2 opinion, 1 unsupported, 4 stale |
+| Code repairs | 5 repeated disclaimers removed, 1 animation fixed, 3 unsupportable scenes removed | 9 unsupportable scenes removed |
+| Length | 6.4 min (11 planned) | 5.1 min (11 planned) |
+| Editor | hook 8; pacing 3 (warning) | pacing 4 (warning) |
+| Shorts | none (4 attempts, 8-11 s) | none (4 attempts, 5-7 s) |
+| Blockers left | only "30" (in "30-year mortgage") counted as a figure | 5 claims, and "6.1" (in "GPT-6.1") counted as a figure |
+| Status | needs attention | needs attention |
+
+Penny had no factual problem left. The old workflow left 14-16 unsupported claims per package. Pixel showed a serious
+bug, now fixed.
+
+What the real run found, and the fixes (branch `fix/real-run-findings`):
+
+1. **The relevance filter set aside Pixel's own two main sources** ("GPT-6.1 Sol helps CodeRabbit…", "Greptile takes
+   bug detection…"), because "security-first" didn't match "security". The script was then written from side
+   sources. Fixes:
+   - hyphenated words also match by their parts;
+   - two shared topic words are enough;
+   - official and primary-data sources are always kept (Penny's "30-year mortgage rate — latest official data" and the
+     FOMC statement had been set aside too).
+2. **Names counted as figures:** "30-year", "GPT-6.1", "Q4" and "K3.1" are labels, not numbers that need a source.
+   This was Penny's only blocker and one of Pixel's.
+3. **The writer over-marked history:** facts from a 146-day-old source were marked historical, so every mention
+   needed a date. A recent source's fact is now history only when it names an earlier date itself.
+4. **Old figures are dated by code:** "As reported in June 2020, DeepSource aims…", using the source's own date,
+   only in the sentence that states it.
+5. **The critic's cuts were all-or-nothing:** cutting everything would have made the video too short, so nothing was
+   cut and pacing stayed at 3-4. Now as many cuts as the length allows are applied, in the critic's order.
+6. **Spoken arithmetic:** "…$44,640, calculated as 124*12*30" was in the narration. That part is removed (the sum
+   stays in the fact check).
+7. **A sum correction that would have been wrong:** "1%" was replaced by 60,000 (the scene was removed later, so it
+   never reached the script). A stated number is now replaced only if it could be the result (within ×20).
+8. **Shorts were still too thin** even with explicit word counts and a repair step. When written Shorts fail,
+   Shorts are now built from the main video's own checked sentences (90-130 words, short sentences, numbers from the
+   facts), then checked like any Short.
+
+Next: recheck and repair these two packages with the fixes, after the owner approves (it uses the free AI services
+again).

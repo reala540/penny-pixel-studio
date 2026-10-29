@@ -65,6 +65,8 @@ def fix_calculations(script: Script, records: list[dict]) -> tuple[Script, list[
         new = _fmt_like(old, round(value, 2 if "." in old else 0))
         if new.replace(",", "") == old:
             continue
+        if not plausible_result(float(old), value):
+            continue  # e.g. "1%" next to a $60,000 total: that number isn't the sum's result; the rewrite step decides
         claims[c.key] = c.model_copy(update={"text": _replace_number(c.text, old, new)})
         for i, sc in enumerate(scenes):
             if c.key not in sc.claim_keys:
@@ -79,6 +81,76 @@ def fix_calculations(script: Script, records: list[dict]) -> tuple[Script, list[
                                               if sc.on_screen_text else sc.on_screen_text})
         changes.append(f"Recalculated {c.key}: {c.expression} = {new} (the script said {old})")
     return script.model_copy(update={"claims": list(claims.values()), "scenes": scenes}), changes
+
+
+MAX_RESULT_RATIO = 20  # a stated number this far from the recalculated result is something else, not a typo of it
+
+
+def plausible_result(stated: float, value: float) -> bool:
+    """Whether a stated number can be the (wrong) result of a sum: same sign, and within MAX_RESULT_RATIO of it."""
+    if stated == 0 or value == 0 or (stated > 0) != (value > 0):
+        return False
+    ratio = abs(value / stated)
+    return 1 / MAX_RESULT_RATIO <= ratio <= MAX_RESULT_RATIO
+
+
+SPOKEN_WORKING = re.compile(r",?\s*\(?(?:calculated|computed|worked out) as\s+\d[\d\s*+\-/^()x×]*(?:\.\d[\d\s*+\-/^()x×]*)*\)?",
+                            re.I)
+
+
+def remove_spoken_working(script: Script) -> tuple[Script, list[str]]:
+    """'…$44,640, calculated as 124*12*30.' : the arithmetic is for the checker, not to be read aloud."""
+    scenes, changes = [], []
+    for i, sc in enumerate(script.scenes, 1):
+        text = SPOKEN_WORKING.sub("", sc.narration)
+        if text != sc.narration:
+            changes.append(f"Scene {i}: removed spoken arithmetic (it stays in the fact check)")
+            sc = sc.model_copy(update={"narration": text})
+        scenes.append(sc)
+    claims = [c.model_copy(update={"text": SPOKEN_WORKING.sub("", c.text)}) for c in script.claims]
+    return script.model_copy(update={"scenes": scenes, "claims": claims}), changes
+
+
+MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November",
+          "December"]
+LOWER_START = {"The", "A", "An", "This", "That", "These", "Those", "It", "Its", "Their", "There", "Our", "Your"}
+
+
+def qualify_stale(script: Script, records: list[dict]) -> tuple[Script, list[str]]:
+    """An old figure said as current gets its date, from its own source: 'As reported in June 2020, DeepSource aims…'.
+    Only the sentence that states it changes (the one sharing most of the claim's words), and the claim says it too."""
+    from .evidence import words
+
+    facts = {f.key: f for f in script.facts}
+    claims = {c.key: c for c in script.claims}
+    scenes = list(script.scenes)
+    changes = []
+    for r in records:
+        c = claims.get(r["key"])
+        dated = [facts[k] for k in (c.fact_refs if c else []) if k in facts and facts[k].published]
+        if r["status"] != "stale" or not c or not dated:
+            continue
+        y, m = dated[0].published[:4], int(dated[0].published[5:7])
+        prefix = f"As reported in {MONTHS[m - 1]} {y}, "
+
+        def dated_text(sentence: str) -> str:
+            first, _, rest = sentence.partition(" ")
+            return prefix + (first.lower() if first in LOWER_START else first) + (" " + rest if rest else "")
+
+        for i, sc in enumerate(scenes):
+            if c.key not in sc.claim_keys:
+                continue
+            parts = re.split(r"(?<=[.!?])\s+", sc.narration.strip())
+            want = words(c.text)
+            best = max(range(len(parts)), key=lambda j: len(want & words(parts[j])), default=None)
+            if best is None or not want & words(parts[best]) or y in parts[best]:
+                continue
+            parts[best] = dated_text(parts[best])
+            scenes[i] = sc.model_copy(update={"narration": " ".join(parts)})
+            claims[c.key] = c.model_copy(update={"text": dated_text(c.text)})
+            changes.append(f"Scene {i + 1}: dated an old figure ({MONTHS[m - 1]} {y}, from its source)")
+            break
+    return script.model_copy(update={"scenes": scenes, "claims": list(claims.values())}), changes
 
 
 def fix_claim_links(script: Script) -> tuple[Script, list[str]]:
