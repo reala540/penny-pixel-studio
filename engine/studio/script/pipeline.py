@@ -8,6 +8,7 @@ looping forever.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 
 from pydantic import BaseModel
@@ -17,7 +18,7 @@ from ..ai.router import Router
 from ..errors import NeedsReview, QuotaError, TransientError
 from ..research.engine import source_block
 from . import evidence, quality, repair, verify
-from .models import (WORDS_PER_SECOND, CriticReport, FactSheet, Outline, OutlineSection, Package, SceneRewrite,
+from .models import (WORDS_PER_SECOND, CriticReport, Scene, FactSheet, Outline, OutlineSection, Package, SceneRewrite,
                      Script, SectionDraft, ShortScript)
 
 MAX_REWRITES = 2
@@ -380,10 +381,17 @@ def finish_long(router: Router, channel: str, script: Script, facts: FactSheet, 
         report, t = critic
         trail.append({"step": "critic", **t})
         if report.minimum() < CRITIC_MIN and (report.delete or report.merge or report.weak_scenes):
-            scenes, merged_at, ch = repair.apply_edit_plan(script.scenes, report.delete, report.merge)
-            if len(scenes) >= MIN_SCENES and sum(quality.est_seconds(sc.narration, speed) for sc in scenes) >= shortest:
-                script = script.model_copy(update={"scenes": scenes, "claims": repair.prune_claims(scenes, script.claims)})
-                changes += ch
+            # as many of the critic's cuts as keep the video long enough (in the critic's order), merges always
+            merged_at = []
+            for k in range(len(report.delete), -1, -1):
+                scenes, merged_at, ch = repair.apply_edit_plan(script.scenes, report.delete[:k], report.merge)
+                if len(scenes) >= MIN_SCENES and sum(quality.est_seconds(sc.narration, speed) for sc in scenes) >= shortest:
+                    script = script.model_copy(update={"scenes": scenes, "claims": repair.prune_claims(scenes, script.claims)})
+                    changes += ch
+                    if k < len(report.delete):
+                        changes.append(f"Applied {k} of the critic's {len(report.delete)} suggested cuts: all of them "
+                                       "would have made the video too short")
+                    break
             else:
                 merged_at = []
                 changes.append("Didn't apply the critic's suggested cuts: the video would have become too short")
@@ -402,6 +410,8 @@ def finish_long(router: Router, channel: str, script: Script, facts: FactSheet, 
     for round_no in range(REPAIR_ROUNDS + 1):
         claims = verify.check_claims(router, script, facts, sources, exclude=writers)
         script, ch = repair.fix_calculations(script, claims)
+        script, ch2 = repair.qualify_stale(script, claims)
+        ch += ch2
         if ch:
             changes += ch
             claims = verify.check_claims(router, script, facts, sources, exclude=writers)
@@ -458,7 +468,7 @@ def post_number_problems(pkg: Package, facts: FactSheet) -> list[str]:
     known |= evidence.date_numbers(facts.facts) | PLAIN
     out = []
     for name, text in (("X post", pkg.x_post), ("Facebook post", pkg.facebook_post), ("YouTube title", pkg.youtube_title)):
-        stray = sorted(quality.numbers_in(text or "") - known)
+        stray = sorted(quality.figures_in(text or "") - known)
         if stray:
             out.append(f"{name} states numbers not in the evidence: {stray}")
     return out
@@ -482,6 +492,8 @@ def package_findings(problems: list[str]) -> list[dict]:
 def code_repairs(script: Script, money: bool) -> tuple[Script, list[str]]:
     """The fixes code can decide on its own: claim links, repeated sentences and disclaimers, animation labels."""
     script, a = repair.fix_claim_links(script)
+    script, w = repair.remove_spoken_working(script)
+    a += w
     script, b = repair.remove_repeats(script, money)
     scenes, c = repair.fix_animations(script.scenes)
     return script.model_copy(update={"scenes": scenes}), a + b + c
@@ -564,7 +576,7 @@ def check_shorts(shorts: list[ShortScript], channel: str, facts: FactSheet) -> t
     good, problems, dropped = [], [], []
     for s in shorts:
         issues = quality.check_short(s, channel)
-        stray = set().union(*[quality.numbers_in(sc.narration) for sc in s.scenes]) - fact_numbers - {"1", "2", "3", "4", "5"}
+        stray = set().union(*[quality.figures_in(sc.narration) for sc in s.scenes]) - fact_numbers - {"1", "2", "3", "4", "5"}
         if stray:
             issues.append(f"Short uses numbers not in the fact sheet: {sorted(stray)}")
         if issues:
@@ -600,7 +612,58 @@ def make_shorts(router: Router, channel: str, script: Script, facts: FactSheet, 
         dropped += out
         if good:
             return good, problems, dropped
-    return [], problems, dropped
+    built = shorts_from_script(script, channel, facts)
+    if built:
+        problems.append(f"Short '{built[0].title}' repaired: made from the checked script's own sentences "
+                        "(the written Shorts were too thin)")
+    return built, problems, dropped
+
+
+SHORT_WORDS = (90, 130)
+SHORT_SENTENCE = 18  # longest sentence taken into a Short
+
+
+def shorts_from_script(script: Script, channel: str, facts: FactSheet, n: int = 2) -> list[ShortScript]:
+    """Shorts built from the main video's checked sentences when the written ones keep failing: consecutive scenes'
+    short sentences, 90-130 words, kept only if they pass every Short check (numbers from the facts included).
+    Nothing new is claimed, so nothing new needs checking."""
+    out: list[ShortScript] = []
+    used: set[int] = set()
+    body = list(range(1, len(script.scenes) - 1)) or list(range(len(script.scenes)))
+    for start in body:
+        if len(out) >= n or start in used:
+            continue
+        picked, words, keys, visuals = [], 0, [], []
+        for i in range(start, len(script.scenes)):
+            if i in used:
+                break
+            sc = script.scenes[i]
+            for sent in re.split(r"(?<=[.!?])\s+", sc.narration.strip()):
+                w = len(sent.split())
+                if 4 <= w <= SHORT_SENTENCE and words + w <= SHORT_WORDS[1]:
+                    picked.append((i, sent))
+                    words += w
+            keys += sc.claim_keys
+            visuals.append(sc.visual)
+            if words >= SHORT_WORDS[0]:
+                break
+        if words < SHORT_WORDS[0] or len(picked) < 5:
+            continue
+        hook, rest = picked[0][1], picked[1:]
+        groups = [rest[k:k + max(2, len(rest) // 4)] for k in range(0, len(rest), max(2, len(rest) // 4))][:6]
+        scenes = []
+        for g in groups:
+            src = script.scenes[g[0][0]]
+            scenes.append(Scene(narration=" ".join(x[1] for x in g), visual=src.visual,
+                                claim_keys=list(dict.fromkeys(k for j, _ in g for k in script.scenes[j].claim_keys))))
+        short = ShortScript(title=(hook.rstrip(".!?")[:60] or script.title[:60]), hook=hook, scenes=scenes,
+                            caption=hook[:150], hashtags=["money" if channel == "money" else "ai"],
+                            tiktok_caption=hook[:100], reel_caption=hook[:150])
+        good, _, _ = check_shorts([short], channel, facts)
+        if good:
+            out.append(good[0])
+            used |= {j for j, _ in picked}
+    return out
 
 
 SHORT_REPAIRS = 2
