@@ -103,9 +103,11 @@ def attach(facts: FactSheet, sources: list[dict], now: datetime | None = None) -
     fact from an old source becomes 'historical', so it is always said with its date."""
     now = now or datetime.now(timezone.utc)
     by_label = {f"S{i}": s for i, s in enumerate(sources, 1)}
+    by_id = {str(s.get("id")): s for s in sources if s.get("id")}
     kept, dropped = [], []
     for f in facts.facts:
-        s = by_label.get(f.source_ref)
+        # a saved fact names its source by id; labels (S2) only mean something in the list the writer was shown
+        s = by_id.get(f.source_id or "") if f.source_id else by_label.get(f.source_ref)
         if not s:
             dropped.append(f"{f.key}: cites unknown source {f.source_ref}")
             continue
