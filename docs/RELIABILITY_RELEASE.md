@@ -195,3 +195,16 @@ The rest is fixed here:
 Rollout: everything except points 6 and 11 works before migration 21. Before it, the old approval function is used
 (no reason asked by the database; the dashboard still asks), and separate Facebook times show a message to run the
 update. Apply it with **GitHub → Actions → First-time setup (keys only)**.
+
+## Script reliability (migration 22)
+
+Why packages never reached Ready for review, and the fix: see `docs/SCRIPT_RELIABILITY.md`. In short:
+- facts keep their passage, source and date, and are saved with each script version;
+- the checker sees the full evidence;
+- repair is targeted and bounded, with a final check of the saved version;
+- Shorts are repaired one by one;
+- results are blockers, warnings, missing parts or notes.
+
+Migration 22 allows the claim status `general` (a general principle), the script origin `repair`, and the owner job
+`repair_package` (Review → Recheck and repair). Before it is applied, new scripts store principles as opinions with a
+note, and the repair button says to run the update. Apply it with **GitHub → Actions → First-time setup (keys only)**.

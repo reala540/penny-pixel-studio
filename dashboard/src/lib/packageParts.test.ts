@@ -25,8 +25,8 @@ describe("package parts", () => {
     expect(visibleIssues({ ...long, recipe: { preview_seconds: 300 } })[0]).toMatch(/^Too short/);
   });
   it("counts contradicted and unsupported claims", () => {
-    expect(claimProblems([{ status: "contradicted" }, { status: "unsupported" }, { status: "unsupported" }, { status: "supported" }]))
-      .toEqual({ contradicted: 1, unsupported: 2 });
+    expect(claimProblems([{ status: "contradicted" }, { status: "unsupported" }, { status: "unsupported" }, { status: "supported" }, { status: "stale" }]))
+      .toEqual({ contradicted: 1, unsupported: 2, stale: 1 });
   });
 });
 
@@ -47,5 +47,24 @@ describe("checks and approval are two separate answers", () => {
       { kind: "reel", status: "ready_for_review", social_accounts: { label: "Facebook" } },
       { kind: "text_post", status: "rejected", social_accounts: { label: "Facebook" } },
     ], { reel: "Reel", text_post: "Text post" })).toEqual(["Facebook reel ×2"]);
+  });
+});
+
+describe("findings by kind", () => {
+  it("shows blockers and warnings as issues, keeps missing parts and notes apart, and never lists a note as a warning", async () => {
+    const { groupFindings, visibleIssues, BAD_CLAIMS } = await import("./packageParts");
+    const findings = [
+      { kind: "blocker" as const, code: "claim_unsupported", text: "Not backed: x" },
+      { kind: "blocker" as const, code: "check", text: "Scene 2 states numbers ['9'] without a claim/source" },
+      { kind: "warning" as const, code: "critic_low", text: "Editor scores below 7: {'pacing': 5}" },
+      { kind: "missing" as const, code: "package_part", text: "Short 'A' dropped" },
+      { kind: "info" as const, code: "package_part", text: "Title marked as UK-specific" },
+    ];
+    const issues = visibleIssues({ format: "long", recipe: {}, quality_report: { findings, issues: ["old style"] } });
+    expect(issues).toEqual(["Scene 2 states numbers ['9'] without a claim/source", "Editor scores below 7: {'pacing': 5}"]);
+    const g = groupFindings(findings);
+    expect(g.missing.map((f) => f.text)).toEqual(["Short 'A' dropped"]);
+    expect(g.info.map((f) => f.text)).toEqual(["Title marked as UK-specific"]);
+    expect(BAD_CLAIMS).toContain("stale");
   });
 });

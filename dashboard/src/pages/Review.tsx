@@ -10,7 +10,7 @@ import { safeUrl, estSeconds, fmtDateTime, fmtDuration, HOST, KIND_NAME, PLATFOR
 import { MissingFileError, signedUrl, supabase } from "../lib/supabase";
 import { ANIMATIONS, asStill, unsaidNumbers } from "../lib/animations";
 import { caption, limitProblems, parseHashtags, parseTags, rule } from "../lib/limits";
-import { checkState, claimProblems, includedPosts, droppedShorts, ownerState, REASON_MIN, reasonNeeded, SHORTS_WAITING, visibleIssues } from "../lib/packageParts";
+import { BAD_CLAIMS, checkState, claimProblems, groupFindings, includedPosts, droppedShorts, ownerState, REASON_MIN, reasonNeeded, SHORTS_WAITING, visibleIssues } from "../lib/packageParts";
 import { TriangleAlert } from "lucide-react";
 import type { Claim, Project, ScriptBody, Variant } from "../lib/types";
 
@@ -74,7 +74,7 @@ export function Detail({ id }: { id: string }) {
   const wanted = params.get("tab") as Tab | null;
   const tab: Tab = wanted && TABS.includes(wanted) ? wanted : "script";
   const setTab = (t: Tab) => { const p = new URLSearchParams(params); p.set("tab", t); setParams(p, { replace: true }); };
-  const [confirm, setConfirm] = useState<null | "approve" | "reject">(null);
+  const [confirm, setConfirm] = useState<null | "approve" | "reject" | "repair">(null);
   const [regen, setRegen] = useState(false);
   const [reason, setReason] = useState("");
   const data = useQuery({
@@ -110,6 +110,12 @@ export function Detail({ id }: { id: string }) {
     onSuccess: (n) => { qc.invalidateQueries(); setReason(""); toast(`Approved: ${n} post${n === 1 ? "" : "s"} scheduled`); },
     onError: (e) => toast((e as Error).message, "bad"),
   });
+  const repair = useMutation({
+    mutationFn: () => queueJob("repair_package", { projectId: id }),
+    onSuccess: (r) => toast(r.startsSoon ? "Rechecking and repairing: the new version appears here in a few minutes." : "Repair saved: it starts within about 15 minutes."),
+    onError: (e) => toast(/unsupported owner job/i.test((e as Error).message)
+      ? "Recheck and repair needs the latest database update. Run GitHub → Actions → First-time setup (keys only)." : (e as Error).message, "bad"),
+  });
   const reject = useMutation({
     mutationFn: async () => {
       const { data: user } = await supabase.auth.getUser();
@@ -129,7 +135,8 @@ export function Detail({ id }: { id: string }) {
     limitProblems(v.social_accounts?.platform ?? "", v.kind, { title: v.title ?? "", body: v.body ?? "", tags: v.tags ?? [], hashtags: v.hashtags ?? [] })
       .map((p) => `${v.social_accounts?.label ?? "Post"} ${(KIND_NAME[v.kind] ?? v.kind).toLowerCase()}: ${p}`))];
   const counts = claimProblems(claims);
-  const bad = claims.filter((c) => ["unsupported", "contradicted"].includes(c.status));
+  const bad = claims.filter((c) => BAD_CLAIMS.includes(c.status));
+  const found = groupFindings(project.quality_report?.findings);
   const decided = ["approved", "rejected", "scheduled", "published"].includes(project.status);
   const parts = [project, ...children];
   const checks = checkState(parts, bad.length, issues.length);
@@ -185,14 +192,27 @@ export function Detail({ id }: { id: string }) {
             <div className="rounded-xl border border-alert/40 bg-alert-soft p-4 text-sm">
               <p className="font-medium text-alert">{decided ? "Approved with these warnings" : "Check before approving"}</p>
               <ul className="mt-2 list-disc space-y-1 pl-4 text-ink">
-                {bad.map((c) => <li key={c.id}>Claim not backed by a source: “{c.claim_text.slice(0, 90)}”</li>)}
+                {bad.map((c) => <li key={c.id}>{CLAIM_PROBLEM[c.status] ?? "Claim not backed by a source"}: “{c.claim_text.slice(0, 90)}”</li>)}
                 {issues.map((i) => <li key={i}>{i}</li>)}
               </ul>
+              {project.quality_report?.findings && <p className="mt-2 text-xs text-muted">Facts listed here must be fixed before posting; the rest are an editor's notes.</p>}
             </div>
           ) : (
             <div className="rounded-xl border border-penny/30 bg-penny-soft p-4 text-sm text-penny">
               Passed every automatic check: structure, sources, wording and length.
             </div>
+          )}
+          {found.missing.length > 0 && (
+            <div className="rounded-xl border border-gold/50 bg-gold/10 p-4 text-sm">
+              <p className="font-medium">Missing parts</p>
+              <ul className="mt-2 list-disc space-y-1 pl-4 text-ink">{found.missing.map((f) => <li key={f.text}>{f.text}</li>)}</ul>
+            </div>
+          )}
+          {found.info.length > 0 && (
+            <details className="rounded-xl border border-line bg-surface p-4 text-sm">
+              <summary className="cursor-pointer font-medium">What the studio changed or noticed ({found.info.length})</summary>
+              <ul className="mt-2 list-disc space-y-1 pl-4 text-muted">{found.info.map((f, i) => <li key={i}>{f.text}</li>)}</ul>
+            </details>
           )}
           {project.quality_report?.critic && (
             <div className="rounded-xl border border-line bg-surface p-4">
@@ -207,6 +227,9 @@ export function Detail({ id }: { id: string }) {
           {!decided && (
             <div className="flex flex-col gap-2">
               <button className="btn-primary" onClick={() => setConfirm("approve")} disabled={approve.isPending}>Approve package</button>
+              {project.format === "long" && ["needs_attention", "ready_for_review", "failed"].includes(project.status) && (
+                <button className="btn-quiet" onClick={() => setConfirm("repair")} disabled={repair.isPending}>{repair.isPending ? "Asking…" : "Recheck and repair"}</button>
+              )}
               <button className="btn-quiet" onClick={() => setRegen(true)}>Rewrite with a note</button>
               <button className="btn-danger" onClick={() => setConfirm("reject")}>Discard package</button>
             </div>
@@ -231,6 +254,7 @@ export function Detail({ id }: { id: string }) {
               <ul className="mt-1 list-disc space-y-0.5 pl-4">
                 {counts.contradicted > 0 && <li>{counts.contradicted} claim{counts.contradicted === 1 ? " is" : "s are"} contradicted by the sources</li>}
                 {counts.unsupported > 0 && <li>{counts.unsupported} claim{counts.unsupported === 1 ? " has" : "s have"} no source behind {counts.unsupported === 1 ? "it" : "them"}</li>}
+                {counts.stale > 0 && <li>{counts.stale} old figure{counts.stale === 1 ? " is" : "s are"} said as if current</li>}
                 {issues.slice(0, 6).map((i) => <li key={i}>{i}</li>)}
               </ul>
             </div>
@@ -248,6 +272,9 @@ export function Detail({ id }: { id: string }) {
         confirmDisabled={!reasonOk}
         confirmLabel={bad.length + issues.length > 0 ? "Approve anyway" : "Approve package"}
         onCancel={() => { setConfirm(null); setReason(""); }} onConfirm={() => { setConfirm(null); approve.mutate(); }} />
+      <Confirm open={confirm === "repair"} title="Recheck and repair this package?"
+        body="The studio checks every statement against its evidence again, fixes what it can (sums, dates, repeated parts, failing scenes) and saves a new version. The current version is kept in History. It uses the free AI services for a few minutes. Nothing is approved, scheduled or posted."
+        confirmLabel="Recheck and repair" onCancel={() => setConfirm(null)} onConfirm={() => { setConfirm(null); repair.mutate(); }} />
       <Confirm open={confirm === "reject"} title="Discard this package?" danger
         body="The video, its Shorts and all their posts are rejected and their slots freed. It stays in Content → Not used."
         confirmLabel="Discard package" onCancel={() => setConfirm(null)} onConfirm={() => { setConfirm(null); reject.mutate(); }} />
@@ -389,6 +416,9 @@ function ScriptEditor({ project, version }: { project: Project; version: { id: s
   );
 }
 
+const CLAIM_PROBLEM: Record<string, string> = { stale: "Old figure said as current", contradicted: "Contradicted by its source", unsupported: "Not backed by a source" };
+const CLAIM_LABEL: Record<string, string> = { general: "general principle (no specific figure)", stale: "old figure said as current: say when it applied", partially_supported: "partly supported" };
+
 function Facts({ claims }: { claims: Claim[] }) {
   if (!claims.length) return <p className="text-sm text-muted">No factual claims in this script.</p>;
   return (
@@ -397,10 +427,10 @@ function Facts({ claims }: { claims: Claim[] }) {
         <li key={c.id} className="rounded-xl border border-line bg-surface p-4">
           <div className="flex items-start justify-between gap-3">
             <p className="text-sm">{c.claim_text}</p>
-            <StatusBadge status={c.status === "supported" ? "approved" : c.status === "opinion" ? "proposed" : c.status === "partially_supported" ? "needs_attention" : "failed"} />
+            <StatusBadge status={c.status === "supported" ? "approved" : ["opinion", "general"].includes(c.status) ? "proposed" : ["partially_supported", "stale"].includes(c.status) ? "needs_attention" : "failed"} />
           </div>
           <p className="mt-2 text-xs text-muted">
-            {c.status.replace(/_/g, " ")}{c.data_period ? ` · data period ${c.data_period}` : ""}
+            {CLAIM_LABEL[c.status] ?? c.status.replace(/_/g, " ")}{c.data_period ? ` · data period ${c.data_period}` : ""}
             {c.checker_notes ? ` · ${c.checker_notes}` : ""}
           </p>
           {c.research_sources && (

@@ -26,14 +26,14 @@ export const JOB_LABEL: Record<string, string> = {
   weekly_research: "Weekly research", run_production: "Making this week's videos", weekly_production: "Weekly video production",
   run_mission: "Running your mission", regenerate_script: "Rewriting a script", rerender_preview: "Rebuilding a preview video",
   regenerate_thumbnails: "Making new thumbnails", recheck_project: "Re-checking facts", auto_review: "Automatic review",
-  produce_idea: "Making a package", check_providers: "Testing the AI keys", remake_shorts: "Making new Shorts", preview_scene: "Previewing one scene",
+  produce_idea: "Making a package", check_providers: "Testing the AI keys", remake_shorts: "Making new Shorts", preview_scene: "Previewing one scene", repair_package: "Rechecking and repairing a package",
 };
 
 const JOB_CATEGORY: Record<string, Category> = {
   generate_ideas: "ideas", refine_idea: "ideas", run_research: "research", weekly_research: "research",
   run_production: "production", weekly_production: "production", run_mission: "production", regenerate_script: "production",
   rerender_preview: "production", regenerate_thumbnails: "production", recheck_project: "review", auto_review: "review",
-  produce_idea: "production", check_providers: "production", remake_shorts: "production", preview_scene: "production",
+  produce_idea: "production", check_providers: "production", remake_shorts: "production", preview_scene: "production", repair_package: "production",
 };
 
 const NOTE_CATEGORY: Record<string, Category> = {

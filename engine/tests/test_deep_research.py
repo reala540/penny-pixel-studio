@@ -74,7 +74,7 @@ def test_too_little_material_stops_before_any_script_is_written(monkeypatch):
     router = ScriptedRouter(monkeypatch)
     sources = [{"adapter": "hacker_news", "title": "No signs of AI payoff outside the tech sector", "publisher": "HN",
                 "summary": "Discussion", "credibility": "community", "published_at": None, "body_text": None}]
-    with pytest.raises(NeedsReview, match="Not enough source material"):
+    with pytest.raises(NeedsReview, match="Not enough evidence.*Next: narrow the topic"):
         pipeline.write_long(router, "ai", {"title": "AI ROI", "angle": ""}, sources)
     assert [r for r, _ in router.calls] == ["research_summarizer"]
 

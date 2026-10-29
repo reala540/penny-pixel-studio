@@ -90,22 +90,35 @@ def with_country(title: str, country: str | None, limit: int = 100) -> str:
     return tagged if len(tagged) <= limit else title
 
 
+REQUIRED_LINES = re.compile(r"not (personal|financial) advice|general education", re.I)
+
+
 def repeated_sentences(text: str, min_words: int = 7) -> list[str]:
-    """Sentences (7+ words) that appear more than once: padding, not content."""
-    seen = Counter(re.sub(r"[^a-z0-9 ]", "", s.lower()).strip() for s in re.split(r"(?<=[.!?])\s+", text))
+    """Sentences (7+ words) that appear more than once: padding, not content. The required disclaimer isn't padding
+    (the repair step keeps it once; a second copy is tidied there, not counted against the script)."""
+    seen = Counter(re.sub(r"[^a-z0-9 ]", "", s.lower()).strip() for s in re.split(r"(?<=[.!?])\s+", text)
+                   if not REQUIRED_LINES.search(s))
     return [s for s, n in seen.items() if n > 1 and len(s.split()) >= min_words]
 
 
-def check_long(script: Script, channel: str) -> list[str]:
+def shortest_long_seconds() -> float:
+    """The shortest honest long video: the usual minimum, or less when the evidence supports less (the floor in
+    config/services.yaml render.min_long_minutes_floor). Below this a video is too thin to publish."""
+    floor = float(config.services()["render"].get("min_long_minutes_floor", 5)) * 60
+    return min(MIN_LONG_SECONDS, floor)
+
+
+def check_long(script: Script, channel: str, min_seconds: float | None = None) -> list[str]:
     issues: list[str] = []
     cfg = config.services()["render"]
     ch = config.brand()["channels"][channel]
     speed = float(ch["voice_profile"].get("tts_speed", 1.0))
     dur = script.duration(speed)
+    shortest = MIN_LONG_SECONDS if min_seconds is None else min_seconds
     if not 6 <= len(script.scenes) <= 40:
         issues.append(f"Needs 6-40 scenes, has {len(script.scenes)}")
-    if dur < MIN_LONG_SECONDS:
-        issues.append(f"Too short: about {dur / 60:.1f} min (aim for {MIN_LONG_SECONDS // 60}-{cfg['max_long_minutes']} min)")
+    if dur < shortest:
+        issues.append(f"Too short: about {dur / 60:.1f} min (at least {shortest / 60:.0f} min)")
     if dur > cfg["max_long_minutes"] * 60:
         issues.append(f"Too long: about {dur / 60:.1f} min (max {cfg['max_long_minutes']})")
     claimed = invented_tests(script.full_text() + " " + script.hook + " " + script.title)
