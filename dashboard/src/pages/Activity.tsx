@@ -62,16 +62,15 @@ export default function Activity() {
     },
   });
   const today = useToday(tz);
-  const items = useMemo(() => (feed.data ?? []).slice(0,150).filter((i) => i.error || i.deliveryError || visibleAfterClear([i], cleared.map, "activity", (x) => x.at).length > 0), [feed.data, cleared.map]);
-  const shown = items.filter((i) => inFilter(i, filter));
+  const all = useMemo(() => (feed.data ?? []).slice(0,150), [feed.data]);
+  // "Clear all" hides everything listed now, problems included; the Problems tab still lists cleared problems, so
+  // a failure is never lost from sight
+  const items = useMemo(() => visibleAfterClear(all, cleared.map, "activity", (x) => x.at), [all, cleared.map]);
+  const shown = (filter === "errors" ? all : items).filter((i) => inFilter(i, filter));
 
   return (
     <>
-      <PageHeader title="Activity" intro="Everything the studio is doing and has done, in plain words. Problems come with a button that takes you to the fix."
-        actions={<ClearButton label="Clear history" title="Clear the activity history?" done="Activity history cleared"
-          disabled={!items.length}
-          body={<>This hides the {items.length} event{items.length === 1 ? "" : "s"} listed now. Work in progress stays, new events keep appearing, and the audit log is never cleared. You can undo this.</>}
-          onClear={() => cleared.clear("activity")} />} />
+      <PageHeader title="Activity" intro="Everything the studio is doing and has done, in plain words. Problems come with a button that takes you to the fix." />
 
       <JobDetail />
       <QuickActions />
@@ -111,16 +110,22 @@ export default function Activity() {
       <section aria-labelledby="timeline-title">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h2 id="timeline-title" className="section-title">Timeline</h2>
-          <div role="tablist" aria-label="Show" className="flex flex-wrap gap-1">
-            {FILTERS.map(([v, label]) => (
-              <button key={v} role="tab" aria-selected={filter === v} onClick={() => setFilter(v)}
-                className={`rounded-lg px-3 py-1.5 text-sm ${filter === v ? "bg-ink text-surface" : "text-muted hover:bg-sunken hover:text-ink"}`}>{label}</button>
-            ))}
+          <div className="flex flex-wrap items-center gap-2">
+            <div role="tablist" aria-label="Show" className="flex flex-wrap gap-1">
+              {FILTERS.map(([v, label]) => (
+                <button key={v} role="tab" aria-selected={filter === v} onClick={() => setFilter(v)}
+                  className={`rounded-lg px-3 py-1.5 text-sm ${filter === v ? "bg-ink text-surface" : "text-muted hover:bg-sunken hover:text-ink"}`}>{label}</button>
+              ))}
+            </div>
+            <ClearButton label="Clear all" title="Clear the timeline?" done="Timeline cleared"
+              disabled={!items.length}
+              body={<>This hides the {items.length} event{items.length === 1 ? "" : "s"} on the timeline now. Nothing is deleted: work in progress stays, new events keep appearing, cleared problems are still listed under Problems, and the audit log is kept. You can undo this.</>}
+              onClear={() => cleared.clear("activity")} />
           </div>
         </div>
         {feed.isLoading ? <Loading /> : feed.isError ? <NotConfirmed q={feed} what="the timeline" /> : shown.length === 0 ? (
-          <Empty title={filter === "errors" ? "No problems" : "Nothing here yet"}>
-            {filter === "errors" ? "Everything that ran recently worked." : "Events appear here as the studio works: ideas, research, videos, reviews and posts."}
+          <Empty title={filter === "errors" ? "No problems" : cleared.since("activity") && all.length ? "Timeline cleared" : "Nothing here yet"}>
+            {filter === "errors" ? "Everything that ran recently worked." : cleared.since("activity") && all.length ? "New events will appear here as the studio works." : "Events appear here as the studio works: ideas, research, videos, reviews and posts."}
           </Empty>
         ) : (
           <ol className="divide-y divide-line rounded-xl border border-line bg-surface">

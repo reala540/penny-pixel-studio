@@ -80,7 +80,10 @@ def build_fact_sheet(router: Router, idea: dict, sources: list[dict]) -> tuple[F
               "expectation: say whose) or general (a definition or how something works). Use each source's "
               "published date to judge this. Do not add anything the sources do not say.")
     res = router.complete("research_summarizer", prompt, schema=FactSheet, temperature=0.1, max_tokens=5000)
-    grounded, dropped = verify.ground_facts(res.data, sources)
+    # where each fact comes from and when is decided by code from its label, whatever the model wrote
+    sheet = res.data.model_copy(update={"facts": [f.model_copy(update={"source_id": None, "published": None})
+                                                  for f in res.data.facts]})
+    grounded, dropped = verify.ground_facts(sheet, sources)
     linked, unlinked = evidence.attach(grounded, sources)
     return linked, off_topic + dropped + unlinked, res.trail()
 
@@ -345,9 +348,11 @@ def write_long(router: Router, channel: str, idea: dict, sources: list[dict]) ->
 
 def not_enough_evidence(idea: dict, facts: FactSheet, sources: list[dict], dropped: list[str]) -> str:
     off = [d for d in dropped if d.startswith("Not used")]
+    unchecked = [d for d in dropped if not d.startswith("Not used")]   # facts the model gave that code couldn't link
     return (f"Not enough evidence for an honest long video on '{idea['title']}': {len(facts.facts)} checkable facts "
             f"from {len(sources)} source(s), at least {MIN_LONG_FACTS} needed"
             + (f" ({len(off)} source(s) were off-topic)" if off else "")
+            + (f" ({len(unchecked)} more found but set aside: {unchecked[0][:120]})" if unchecked else "")
             + ". Next: narrow the topic to what the sources cover, or choose an idea with more coverage."
             + (f" The sources do cover: {'; '.join(f.text[:80] for f in facts.facts[:3])}." if facts.facts else ""))[:900]
 

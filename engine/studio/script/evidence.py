@@ -70,6 +70,7 @@ def _stale_after_days(topic: str) -> int:
     return int((config.research().get("stale_after_days") or {}).get(topic, 365))
 
 
+LABEL = re.compile(r"S\d+", re.I)   # a source label in the writer's list (S1, S2…)
 PAST_WORDS = re.compile(r"\b(last|previous) (year|quarter|month|decade)\b|\bago\b", re.I)
 
 
@@ -112,8 +113,10 @@ def attach(facts: FactSheet, sources: list[dict], now: datetime | None = None) -
     by_id = {str(s.get("id")): s for s in sources if s.get("id")}
     kept, dropped = [], []
     for f in facts.facts:
-        # a saved fact names its source by id; labels (S2) only mean something in the list the writer was shown
-        s = by_id.get(f.source_id or "") if f.source_id else by_label.get(f.source_ref)
+        # a saved fact names its source by id; labels (S2) only mean something in the list the writer was shown.
+        # A model that fills in the id itself writes the label there: that is a label, not an id.
+        sid = f.source_id if f.source_id and not LABEL.fullmatch(f.source_id.strip()) else None
+        s = by_id.get(sid) if sid else by_label.get(f.source_ref)
         if not s:
             dropped.append(f"{f.key}: cites unknown source {f.source_ref}")
             continue

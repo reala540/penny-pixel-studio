@@ -682,3 +682,37 @@ def test_a_voice_edit_may_not_shorten_the_video():
     edited, _ = pipeline.voice_edit(Stub(voice_editor=editor), "ai", script, set())
     assert all(len(s.narration.split()) >= 17 for s in edited.scenes)      # the cut-down edits were refused
     assert edited.scenes[1].narration.startswith("Here's")                 # a real polish was kept
+
+
+# ------------------------------------------------------------------ found on the owner's chosen topics (30 Oct, actual providers)
+
+def test_a_source_label_the_model_writes_as_the_id_still_links_the_fact():
+    """Found on 30 Oct: both new packages stopped at '0 checkable facts' although Pixel's six sources had full articles.
+    The fact-finder saw source_id in its answer format and filled it with the label (S1), and code then looked that
+    up as a database id, so every fact was set aside."""
+    other = _source(20, "Bank of England interest rates: a guide", "How the Bank of England sets interest rates.", NOW)
+
+    def finder(prompt):
+        return {"facts": [{"key": "F1", "text": "The Bank of England raised interest rates to 0.25% from 0.1%",
+                           "source_ref": "S2", "source_id": "S2", "published": "2026-10-01", "time_kind": "historical",
+                           "passage": "The Bank of England raised interest rates to 0.25% from 0.1%, as inflation hit 5.1%."}]}
+
+    idea = {"title": "Bank of England interest rates and inflation", "angle": "rates hiked"}
+    sheet, dropped, _ = pipeline.build_fact_sheet(Stub(research_summarizer=finder), idea, [other, GUARDIAN])
+    assert [f.key for f in sheet.facts] == ["F1"], dropped
+    assert sheet.facts[0].source_id == GUARDIAN["id"] and sheet.facts[0].published == "2021-12-16"   # set by code
+    # and the label is never taken for an id when facts are linked again later
+    out, _ = evidence.attach(FactSheet(facts=[sheet.facts[0].model_copy(update={"source_id": "S1", "source_ref": "S1"})]),
+                             [GUARDIAN], now=NOW)
+    assert out.facts[0].source_id == GUARDIAN["id"]
+
+
+def test_the_fact_finder_is_not_asked_for_fields_code_fills_in():
+    props = FactSheet.model_json_schema()["$defs"]["Fact"]["properties"]
+    assert "source_id" not in props and "published" not in props and "passage" in props
+
+
+def test_when_facts_are_set_aside_the_owner_is_told_why():
+    msg = pipeline.not_enough_evidence({"title": "T"}, FactSheet(facts=[]), [GUARDIAN],
+                                       ["F1: its words weren't found in S1", "F2: cites unknown source S9"])
+    assert "2 more found but set aside: F1: its words weren't found in S1" in msg
