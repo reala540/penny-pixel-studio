@@ -161,3 +161,21 @@ What the real run found, and the fixes (branch `fix/real-run-findings`):
 
 Next: recheck and repair these two packages with the fixes, after the owner approves (it uses the free AI services
 again).
+
+## The owner's chosen topics (30 Oct 2026)
+
+Both new packages ("Voice-First LLMs in Action", "Why Everyone's Googling MSFT & NOW Stocks") stopped in about three
+minutes with "0 checkable facts", although Pixel's six sources held full articles (2,500-11,800 characters each).
+
+Cause: a bug from the repair fix of 29 Oct. The fact-finder is shown the fact's answer format, which included the
+`source_id` and `published` fields that code fills in. The model filled `source_id` with the label ("S1"), and code
+then looked that up as a database id, found nothing and set every fact aside. The reason was never shown.
+
+Fixes (branch `fix/fact-source-links`):
+- those two fields are left out of the format the model sees, and anything it writes there is ignored: the source and
+  date always come from the label, by code;
+- a label written as an id is read as a label;
+- "Not enough evidence" now says how many facts were found but set aside, and why.
+
+Replayed on the two ideas' real sources (no AI calls), every fact that quotes its source is linked. Penny's idea
+remains thin even after the fix: three of its four sources are search-trend entries with no text.

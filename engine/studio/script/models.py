@@ -6,6 +6,7 @@ import re
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
+from pydantic.json_schema import SkipJsonSchema
 
 WORDS_PER_SECOND = 2.5  # ~150 words per minute narration
 
@@ -24,9 +25,9 @@ class Fact(BaseModel):
     time_kind: Literal["historical", "current", "forecast", "general"] = Field(
         default="current", description="historical = a past event or old figure; current = true now; forecast = a "
                                        "prediction or expectation; general = a definition or how something works")
-    # filled in by code from the source itself, never by a model
-    source_id: str | None = None
-    published: str | None = None
+    # filled in by code from the source itself, never by a model (so they are left out of the schema it is shown)
+    source_id: SkipJsonSchema[str | None] = None
+    published: SkipJsonSchema[str | None] = None
 
 
 class FactSheet(BaseModel):

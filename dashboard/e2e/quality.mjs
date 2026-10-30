@@ -140,6 +140,33 @@ try {
       await shot(page, "facebook-own-times-desktop");
       await context.close();
     });
+    await check("Timeline 'Clear all' hides every event, problems stay under Problems, and Undo brings them back", async () => {
+      const db = seed();
+      db.generation_jobs.push(
+        { id: "job-ok", job_type: "produce_idea", status: "completed", progress: {}, input: { channel: "ai" }, error_message: null, requested_by: "owner",
+          created_at: iso(-50), started_at: iso(-50), updated_at: iso(-40), finished_at: iso(-40), project_id: "proj-1", content_projects: { title: "Done video" } },
+        { id: "job-bad", job_type: "produce_idea", status: "failed", progress: {}, input: { channel: "ai" }, error_message: "Not enough evidence for an honest long video",
+          requested_by: "owner", created_at: iso(-30), started_at: iso(-30), updated_at: iso(-20), finished_at: iso(-20), project_id: "proj-1", content_projects: { title: "Thin video" } });
+      const { page, context, errors } = await openStudio(browser, "/activity", { db });
+      const timeline = page.locator('section[aria-labelledby="timeline-title"]');
+      await timeline.getByText("Not enough evidence").first().waitFor({ timeout: 15000 });
+      await timeline.getByRole("button", { name: "Clear all" }).click();
+      await page.getByRole("dialog").getByRole("button", { name: "Clear all" }).click();
+      await timeline.getByText("Timeline cleared").waitFor({ timeout: 10000 });
+      if (await timeline.getByText("Not enough evidence").count()) throw new Error("a cleared problem is still on the main timeline");
+      if (!db.settings.ui_cleared?.activity) throw new Error("the clear was not saved");
+      if (db.generation_jobs.length !== 3) throw new Error("clearing deleted jobs");
+      await page.getByRole("tab", { name: "Problems" }).click();
+      await timeline.getByText("Not enough evidence").first().waitFor({ timeout: 10000 });
+      await page.getByRole("tab", { name: "Everything" }).click();
+      await shot(page, "timeline-cleared-desktop");
+      await page.getByRole("button", { name: "Undo" }).click();
+      await timeline.getByText("Not enough evidence").first().waitFor({ timeout: 10000 });
+      if (errors.length) throw new Error(errors.join("; "));
+      await page.setViewportSize(PHONE);
+      await shot(page, "timeline-clear-phone");
+      await context.close();
+    });
   });
 } finally {
   server.kill();
