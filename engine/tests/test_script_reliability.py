@@ -666,3 +666,19 @@ def test_repair_judges_post_texts_and_shorts_again(produced, monkeypatch):
     assert not any("states numbers not in the evidence" in t for t in texts)        # '30-year' is a label
     assert not any(t.startswith("No Shorts") for t in texts)                         # it has Shorts
     assert now["status"] == "ready_for_review"
+
+
+def test_a_voice_edit_may_not_shorten_the_video():
+    """Found on 29 Oct: repairs shrank the mortgage video from 4.5 to 3.1 minutes; the voice edit was cutting text."""
+    long = "Here is a careful and complete explanation of why the monthly payment keeps rising for ordinary buyers today."
+    script = _script([], [_scene(long) for _ in range(6)])
+
+    def editor(prompt):
+        import json, re
+        scenes = json.loads(prompt.split("Scenes:\n", 1)[1].split("\n\nReturn JSON", 1)[0])
+        return {"hook": "Hook here.", "scenes": [{"n": s["n"], "narration": "Payments rise." if s["n"] % 2 else
+                                                 s["narration"].replace("Here is", "Here's")} for s in scenes]}
+
+    edited, _ = pipeline.voice_edit(Stub(voice_editor=editor), "ai", script, set())
+    assert all(len(s.narration.split()) >= 17 for s in edited.scenes)      # the cut-down edits were refused
+    assert edited.scenes[1].narration.startswith("Here's")                 # a real polish was kept
