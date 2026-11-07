@@ -107,6 +107,20 @@ def companies(provider: str, model: str) -> frozenset[str]:
     return frozenset({host_company(provider), model_maker(model, provider)} - {""})
 
 
+def reply_text(content: Any) -> str:
+    """A reply's text. Some models (Mistral's reasoning models) send a list of parts, with their thinking apart
+    from the answer: only the answer's text parts are kept."""
+    if isinstance(content, list):
+        parts = []
+        for p in content:
+            if isinstance(p, str):
+                parts.append(p)
+            elif isinstance(p, dict) and p.get("type", "text") == "text" and isinstance(p.get("text"), str):
+                parts.append(p["text"])
+        content = "".join(parts)
+    return content.strip() if isinstance(content, str) else ""
+
+
 def extract_json(text: str) -> Any:
     """Parse JSON from a model reply, tolerating code fences and surrounding prose."""
     cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.MULTILINE).strip()
@@ -361,7 +375,7 @@ class Router:
             payload.pop("response_format", None)  # some providers reject response_format
             data = self._post(cand, "/chat/completions", payload, role)
         choice = (data.get("choices") or [{}])[0]
-        text = ((choice.get("message") or {}).get("content") or "").strip()
+        text = reply_text((choice.get("message") or {}).get("content"))
         if not text:
             raise TransientError(f"{cand.provider}: empty reply")
         usage = data.get("usage") or {}
