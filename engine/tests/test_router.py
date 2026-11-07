@@ -197,3 +197,22 @@ def test_an_archived_model_message_counts_as_retired_but_a_plain_404_does_not():
     assert RETIRED.search("Model zai-glm-4.7 is archived and unavailable for the organization.")
     assert RETIRED.search("This model has been deprecated and is no longer available")
     assert not RETIRED.search("Function 'abc': Not found for account 'x'")
+
+
+def test_a_reply_sent_as_parts_keeps_only_the_answer():
+    """Found on 7 Nov: Mistral's reasoning model sent its reply as a list of parts (thinking, then text), and both
+    'Recheck and repair' runs stopped with "'list' object has no attribute 'strip'"."""
+    parts = [{"type": "thinking", "thinking": [{"type": "text", "text": "Let me think: {\"answer\": \"wrong\"}"}]},
+             {"type": "text", "text": '{"answer": '}, {"type": "text", "text": '"right"}'}]
+    res = make(lambda req: reply(parts)).complete("critic", "hi", schema=Out)
+    assert res.data.answer == "right"
+
+
+def test_a_reply_with_no_answer_text_moves_to_the_next_provider():
+    def handler(req):
+        if req.url.host == "first.test":
+            return reply([{"type": "thinking", "thinking": "only thoughts"}])
+        return reply(json.dumps({"answer": "second"}))
+
+    res = make(handler).complete("critic", "hi", schema=Out)
+    assert res.data.answer == "second" and res.provider == "second"
