@@ -19,7 +19,7 @@ const SCOPES: Record<Platform, string> = {
   youtube: "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly https://www.googleapis.com/auth/yt-analytics-monetary.readonly",
   facebook: "pages_show_list,pages_read_engagement,pages_manage_posts,business_management",
   tiktok: "user.info.basic,video.upload,video.publish",
-  x: "tweet.read tweet.write users.read offline.access",
+  x: "tweet.read tweet.write users.read media.write offline.access",
 };
 
 export function callbackUrl(req: Request, platform: Platform): string {

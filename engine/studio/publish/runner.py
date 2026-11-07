@@ -119,6 +119,9 @@ def _manual(conn, post, ctx, reason: str, status: str = "needs_manual", storage=
 def final_media(conn, storage, ctx: dict) -> tuple[Path | None, Path | None]:
     """Render the final-quality file from the stored recipe, plus the selected thumbnail."""
     if ctx["kind"] in ("text_post",):
+        # a Facebook or X post goes out with a picture (the video's thumbnail) and the text as its caption
+        if ctx.get("platform") in ("facebook", "x"):
+            return None, _thumbnail(conn, storage, ctx["project_id"], config.runtime().work_dir / "final" / str(ctx["project_id"]))
         return None, None
     recipe = (ctx["recipe"] or {}).get("render")
     if not recipe:
@@ -157,13 +160,23 @@ def final_media(conn, storage, ctx: dict) -> tuple[Path | None, Path | None]:
         from .. import capacity
 
         capacity.record_render(conn, ctx["project_id"], "final", res.seconds_taken, res.duration, res.bytes)
-    thumb = None
-    if ctx["kind"] == "long_video":
-        t = db.one(conn, """select t.options from thumbnails t where t.project_id=%s order by selected desc, variant_label
-                            limit 1""", (ctx["project_id"],))
-        if t and t["options"].get("key"):
-            thumb = storage.download(t["options"]["key"], work / "thumb.jpg")
+    thumb = _thumbnail(conn, storage, ctx["project_id"], work) if ctx["kind"] == "long_video" else None
     return out, thumb
+
+
+def _thumbnail(conn, storage, project_id, work: Path) -> Path | None:
+    """The package's selected thumbnail (a Short or post uses its main video's), or None if it has none."""
+    t = db.one(conn, """select t.options from thumbnails t
+                         where t.project_id in (select id from content_projects where id=%s
+                                                union select parent_project_id from content_projects where id=%s)
+                         order by (t.project_id = %s) desc, selected desc, variant_label limit 1""",
+               (project_id, project_id, project_id))
+    if not (t and (t["options"] or {}).get("key")):
+        return None
+    try:
+        return storage.download(t["options"]["key"], work / "thumb.jpg")
+    except Exception:  # a missing picture never stops a post: it goes out as text
+        return None
 
 
 def recipe_fingerprint(recipe: dict, photos: dict, videos: dict, effects: dict) -> str:

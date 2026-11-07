@@ -149,6 +149,16 @@ class Facebook:
 
     def publish(self, conn, account, variant, video: Path | None, thumb, token: str, page_id: str) -> PublishResult:
         g = f"https://graph.facebook.com/{self.ver}"
+        if variant["kind"] == "text_post" and thumb and Path(thumb).exists():
+            # a picture post (the video's thumbnail with the text as its caption) reaches more people than plain text
+            r = self.client.post(f"{g}/{page_id}/photos",
+                                 data={"caption": variant.get("body") or "", "published": "true", "access_token": token},
+                                 files={"source": ("thumb.jpg", Path(thumb).read_bytes(), "image/jpeg")})
+            _raise_for(r, "facebook", after_upload=True)
+            pid = r.json().get("post_id") or r.json().get("id")
+            if not pid:
+                raise AmbiguousPublish("facebook: the picture post wasn't confirmed (no post id came back): check the Page")
+            return PublishResult(str(pid), f"https://www.facebook.com/{pid}", "public", "api")
         if variant["kind"] == "text_post":
             r = self.client.post(f"{g}/{page_id}/feed", data={"message": variant.get("body") or "", "access_token": token})
             _raise_for(r, "facebook", after_upload=True)
@@ -320,8 +330,10 @@ class X:
             raise PermanentError("x: post must be 1-280 characters")
         cost = self.cost_for(text)
         budget.reserve(conn, "x_api", cost, reference)  # raises BudgetExceeded before any paid call
+        media_id = self._upload_picture(thumb, token)
+        payload: dict = {"text": text, **({"media": {"media_ids": [media_id]}} if media_id else {})}
         try:
-            r = self.client.post("https://api.x.com/2/tweets", json={"text": text},
+            r = self.client.post("https://api.x.com/2/tweets", json=payload,
                                  headers={"Authorization": f"Bearer {token}"})
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             raise AmbiguousPublish("x: request timed out — the post may exist; budget kept reserved") from exc
@@ -332,6 +344,24 @@ class X:
         budget.commit(conn, reference)
         tid = (r.json().get("data") or {}).get("id")
         return PublishResult(tid, f"https://x.com/i/web/status/{tid}" if tid else None, "public", "api")
+
+
+    def _upload_picture(self, thumb, token: str) -> str | None:
+        """The video's thumbnail uploaded for the post. Nothing is posted yet, so any problem (an older login without
+        the media permission, a busy server) just sends the post as text."""
+        if not (thumb and Path(thumb).exists()):
+            return None
+        try:
+            r = self.client.post("https://api.x.com/2/media/upload", headers={"Authorization": f"Bearer {token}"},
+                                 data={"media_category": "tweet_image", "media_type": "image/jpeg"},
+                                 files={"media": ("thumb.jpg", Path(thumb).read_bytes(), "image/jpeg")})
+        except (httpx.TimeoutException, httpx.TransportError):
+            return None
+        if r.status_code >= 400:
+            return None
+        body = r.json() if r.content else {}
+        mid = (body.get("data") or {}).get("id") or body.get("media_id_string")
+        return str(mid) if mid else None
 
 
 ADAPTERS = {"youtube": YouTube, "facebook": Facebook, "tiktok": TikTok, "x": X}
