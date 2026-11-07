@@ -185,6 +185,10 @@ class Platform:
             return httpx.Response(200, json={"success": True})
         if "/feed" in u:
             return httpx.Response(200, json={"id": "page_post1"})
+        if "/photos" in u:  # a post with its picture
+            return httpx.Response(200, json={"id": "photo1", "post_id": "page_photo1"})
+        if "api.x.com/2/media/upload" in u:
+            return httpx.Response(200, json={"data": {"id": "xm1"}})
         if "inbox/video/init" in u:
             return httpx.Response(200, json={"data": {"publish_id": "tt1", "upload_url": "https://tt-upload.example/1"},
                                              "error": {"code": "ok"}})
@@ -247,6 +251,8 @@ def test_journey_approval_schedule_publish_and_no_duplicates(produced):
     assert ("youtube", "api_draft") in methods          # unaudited API -> private upload + manual follow-up
     assert ("tiktok", "api_draft") in methods           # unaudited -> inbox draft
     assert ("facebook", "api") in methods and ("x", "api") in methods
+    sent = " ".join(u for _, u in platform.requests)
+    assert "/photos" in sent and "media/upload" in sent  # written posts go out with the video's picture
     assert db.one(conn, "select count(*) n from manual_tasks")["n"] >= 1
     # X spend recorded within budget
     spent = db.one(conn, "select coalesce(sum(amount_usd),0) s from budget_reservations where status='committed'")["s"]

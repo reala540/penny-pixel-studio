@@ -129,3 +129,33 @@ def test_schedule_accepts_facebook_stories_and_long_videos_only_on_facebook(sync
     check = db.one(c, """select pg_get_constraintdef(oid) d from pg_constraint
                          where conname='content_variants_kind_check'""")["d"]
     assert "'story'" in check
+
+
+
+def test_a_facebook_post_goes_out_as_a_picture_with_its_text(tmp_path):
+    """Owner's request (7 Nov): posts with a picture (the video's thumbnail) and the description, not plain words."""
+    thumb = tmp_path / "thumb.jpg"
+    thumb.write_bytes(b"\xff\xd8jpeg")
+    seen = []
+
+    def handler(req):
+        seen.append((str(req.url), req.content))
+        return httpx.Response(200, json={"id": "photo1", "post_id": "123_456"})
+
+    fb = adapters.Facebook(httpx.Client(transport=httpx.MockTransport(handler)))
+    res = fb.publish(None, {}, {"kind": "text_post", "body": "Minimum wage, explained."}, None, thumb, "tok", "123")
+    assert res.platform_post_id == "123_456" and res.url.endswith("/123_456")
+    url, body = seen[0]
+    assert url.endswith("/123/photos") and b"Minimum wage, explained." in body and b"\xff\xd8jpeg" in body
+
+
+def test_without_a_picture_the_post_is_still_sent_as_text():
+    seen = []
+
+    def handler(req):
+        seen.append(str(req.url))
+        return httpx.Response(200, json={"id": "123_789"})
+
+    fb = adapters.Facebook(httpx.Client(transport=httpx.MockTransport(handler)))
+    res = fb.publish(None, {}, {"kind": "text_post", "body": "Plain words."}, None, None, "tok", "123")
+    assert res.platform_post_id == "123_789" and seen[0].endswith("/123/feed")
