@@ -16,8 +16,10 @@ stops objecting would defeat the check.
 
 Smart Mode (always on inside Auto Review & Post): only low-risk packages may be approved automatically. A person
 always approves a channel's first packages (its trust period), money videos about investing, tax, credit, loans,
-insurance or retirement accounts, time-sensitive news, anything flagged sensitive, and anything with claims that are
-only partly supported. Anything not fixed in time, or any error, waits for the owner and goes to
+insurance or retirement accounts, anything flagged sensitive, and anything with claims that are only partly supported.
+Time-sensitive news waits too when `news_needs_person` is on (otherwise the freshness check guards it). Editor scores
+below the bar are rewritten like any other problem; with `accept_editor_warnings_after_fixes`, scores still low after
+every fix attempt no longer hold a package whose facts are all backed and that has no blocker. Anything not fixed in time, or any error, waits for the owner and goes to
 Telegram. The mode is re-read before every fix and right before approving, so switching it OFF stops at once.
 """
 
@@ -40,6 +42,10 @@ FALLBACK_DISCLAIMER = "This is general financial education, not personal financi
 
 SMART = config.services().get("smart_mode") or {}
 TRUST_PERIOD = SMART.get("trust_period", {"ai": 5, "money": 10})  # owner-approved packages before any auto-approval
+NEWS_NEEDS_PERSON = bool(SMART.get("news_needs_person", True))
+ACCEPT_WARNINGS = bool(SMART.get("accept_editor_warnings_after_fixes", False))
+# failed checks that stop being a reason to wait once every fix attempt is used (ACCEPT_WARNINGS)
+WAIVED_AFTER_FIXES = ("editor",)
 MONEY_SENSITIVE = re.compile(SMART.get("money_sensitive_pattern", (
     r"(?<!\w)(invest\w*|stocks?|etfs?|index funds?|crypto\w*|bitcoin|dividends?|brokerage|options trading|forex|"
     r"retirement accounts?|401\(?k\)?|iras?|roth|pensions?|superannuation|rrsp|tfsa|isas?|annuit\w*|"
@@ -62,7 +68,7 @@ def risk_reasons(conn, family: list[dict]) -> list[str]:
         out.append(f"Trust period: you approve this channel's first {need} packages yourself ({owned} so far)")
     idea = db.one(conn, "select * from content_ideas where id=%s", (head["idea_id"],)) if head.get("idea_id") else None
     sb = (idea or {}).get("score_breakdown") or {}
-    if idea is not None and not sb.get("evergreen"):
+    if NEWS_NEEDS_PERSON and idea is not None and not sb.get("evergreen"):
         out.append("Time-sensitive (news): a person checks it before it goes out")
     if sb.get("from_generated_idea"):
         g = db.one(conn, "select sensitivity, sensitivity_note from generated_ideas where id=%s", (sb["from_generated_idea"],))
@@ -86,7 +92,7 @@ def risk_reasons(conn, family: list[dict]) -> list[str]:
 
 # What each failed check needs. None: a person has to decide.
 FIX_FOR = {
-    "quality_gates": "rewrite", "open_issues": "rewrite", "claims": "rewrite",
+    "quality_gates": "rewrite", "open_issues": "rewrite", "editor": "rewrite", "claims": "rewrite",
     "ai_publishable": "rewrite", "ai_confidence": "rewrite", "ai_issues": "rewrite",
     "fresh": "recheck", "licences": "rerender",
     "variants_ready": "sync_posts", "banned": "clean_posts", "disclaimer": "add_disclaimer",
@@ -161,8 +167,16 @@ def deterministic_checks(conn, family: list[dict], variants: list[dict], now: da
 
     bad = [p["title"] for p in family if p["status"] != "ready_for_review"]
     check("quality_gates", "All parts passed the quality gates", not bad, ", ".join(bad) and f"Not ready: {', '.join(bad)}")
-    issues = [i for p in family for i in ((p["quality_report"] or {}).get("issues") or [])]
+    issues, warnings = [], []
+    for p in family:
+        qr = p["quality_report"] or {}
+        if "findings" in qr:  # newer packages say which problems block and which are editorial warnings
+            issues += [f["text"] for f in qr["findings"] if f.get("kind") == "blocker"]
+            warnings += [f["text"] for f in qr["findings"] if f.get("kind") == "warning"]
+        else:                 # older ones: every issue counts as blocking
+            issues += qr.get("issues") or []
     check("open_issues", "No open quality issues", not issues, "; ".join(issues[:3]))
+    check("editor", "No editorial warnings", not warnings, "; ".join(warnings[:3]))
     claims = db.one(conn, """select count(*) filter (where c.status in ('unsupported','contradicted')) bad,
                                     count(*) filter (where c.status = 'supported') good
                                from research_claims c join content_projects p on p.current_script_version_id = c.script_version_id
@@ -424,6 +438,7 @@ def review_project(conn, router: Router, project_id, now: datetime | None = None
     limit = max_attempts(conn)
     used = db.one(conn, "select count(*) n from auto_reviews where project_id=%s and verdict='fixing'", (head["id"],))["n"]
     checks, reasons, reviewer, confidence, verdict, scheduled, fixes_done = [], [], None, None, "needs_review", 0, []
+    accepted: list[str] = []
     jobs.progress(conn, f"Reviewing: {head['title']}")
     try:
         while True:
@@ -432,6 +447,12 @@ def review_project(conn, router: Router, project_id, now: datetime | None = None
             checks = deterministic_checks(conn, family, variants, now)
             reviewer = confidence = None
             failed = [c for c in checks if not c["ok"]]
+            if failed and ACCEPT_WARNINGS and used >= limit and all(c["code"] in WAIVED_AFTER_FIXES for c in failed):
+                # only editorial warnings are left after every fix attempt: every fact is backed and nothing blocks
+                for c in failed:
+                    c.update(ok=True, detail=f"{c['detail']} (accepted after {used} fix attempt(s))")
+                accepted = [c["detail"] for c in failed]
+                failed = []
             if not failed:
                 review, reviewer = ai_review(router, family, variants, conn)
                 confidence = review.confidence
@@ -485,6 +506,8 @@ def review_project(conn, router: Router, project_id, now: datetime | None = None
         first = db.one(conn, """select min(scheduled_at) t from scheduled_posts sp join content_variants v on v.id=sp.variant_id
                                 where v.project_id = any(%s) and sp.status='scheduled'""", ([p["id"] for p in family],))["t"]
         fixed = f" Fixed automatically first ({used} attempt(s))." if used else ""
+        if accepted:
+            fixed += f" Posted with editor notes left: {'; '.join(accepted)[:200]}."
         notify.send(conn, "auto_approved", f"✅ Auto-approved: {head['title']}",
                     f"Passed {len(checks)} checks (AI reviewer {confidence:.0%} confident).{fixed} {scheduled} post(s) scheduled"
                     + (f", first at {first:%a %d %b %H:%M} UTC." if first else ".") + " Send /autopost off to stop.",
