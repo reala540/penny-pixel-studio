@@ -244,3 +244,32 @@ async function saveConnection(env: Env, accountId: string, platform: Platform, t
   await db.update("social_accounts", `id=eq.${accountId}`, { external_id: externalId, handle });
   await db.audit("account_connected", { platform, account: accountId, handle, page_id: platform === "facebook" ? externalId : undefined });
 }
+
+/** Disconnect an account: Google is asked to revoke the studio's access (YouTube), then the stored login is deleted
+ * and the account shows as disconnected. Posts waiting for it are not sent until it is connected again. */
+export async function disconnect(env: Env, accountId: string): Promise<{ platform: string; revoked: boolean }> {
+  const db = new Supabase(env);
+  const acc = await db.select<{ id: string; platform: string; handle: string | null }>("social_accounts",
+    `id=eq.${encodeURIComponent(accountId)}&select=id,platform,handle`);
+  if (!acc.length) throw new Error("unknown account");
+  const platform = acc[0].platform;
+  let revoked = false;
+  const sec = await db.select<{ ciphertext: string }>("oauth_secrets", `social_account_id=eq.${encodeURIComponent(accountId)}&select=ciphertext`);
+  if (sec.length && platform === "youtube") {
+    try {
+      const t = await decryptJson<{ refresh_token?: string; access_token?: string }>(env.TOKEN_ENCRYPTION_KEY, sec[0].ciphertext);
+      const token = t.refresh_token ?? t.access_token;
+      if (token) {
+        const r = await fetch("https://oauth2.googleapis.com/revoke", {
+          method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ token }),
+        });
+        revoked = r.ok;
+      }
+    } catch { /* the stored login is deleted below either way */ }
+  }
+  await db.remove("oauth_secrets", `social_account_id=eq.${encodeURIComponent(accountId)}`);
+  await db.update("oauth_connections", `social_account_id=eq.${encodeURIComponent(accountId)}`,
+    { status: "disconnected", scopes: [], last_error: null, token_expires_at: null, last_checked_at: new Date().toISOString() });
+  await db.audit("account_disconnected", { platform, account: accountId, handle: acc[0].handle, revoked_at_provider: revoked });
+  return { platform, revoked };
+}
