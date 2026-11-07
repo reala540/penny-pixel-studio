@@ -9,7 +9,7 @@ import ThemeControl from "../components/ThemeControl";
 import { useCleared, visibleAfterClear } from "../lib/clear";
 import { STALE_HOURS, useKeyCheck, useReadiness } from "../lib/readiness";
 import { SETTINGS_SECTIONS, type SettingsSection } from "../lib/routes";
-import { ErrorNote, Loading, NotConfirmed, PageHeader, useToast } from "../components/ui";
+import { Confirm, ErrorNote, Loading, NotConfirmed, PageHeader, useToast } from "../components/ui";
 import { cleanCategories, cleanRegions, DEFAULT_IDEA_CONFIG, SOURCES } from "../lib/ideas";
 import { useIdeaRuns } from "../lib/ideasApi";
 import type { IdeaGeneratorConfig } from "../lib/types";
@@ -279,6 +279,17 @@ function Accounts() {
     onSuccess: (url) => { window.location.href = url; },
     onError: (e) => toast((e as Error).message, "bad"),
   });
+  const qc = useQueryClient();
+  const [leaving, setLeaving] = useState<{ id: string; label: string; platform: string } | null>(null);
+  const disconnect = useMutation({
+    mutationFn: async (id: string) => callWorker<{ platform: string; revoked: boolean }>("/api/oauth/disconnect", { account_id: id }),
+    onSuccess: (r, id) => {
+      const name = (accounts.data ?? []).find((a) => a.id === id)?.label ?? "Account";
+      toast(`${name} disconnected${r.platform === "youtube" ? (r.revoked ? ": Google access revoked and the saved login deleted" : ": saved login deleted (also check Google's permissions page)") : ": saved login deleted"}`, "good");
+      qc.invalidateQueries({ queryKey: ["accounts"] });
+    },
+    onError: (e) => toast((e as Error).message, "bad"),
+  });
   return (
     <Section id="accounts" title="Accounts" intro="Sign in once per account. Your login tokens are encrypted; the dashboard never sees them.">
       <PagePicker />
@@ -297,6 +308,10 @@ function Accounts() {
                 <button className="btn-quiet" onClick={() => connect.mutate(a.id)} disabled={connect.isPending || !workerUrl}>
                   {status === "connected" ? "Reconnect" : "Connect"}
                 </button>
+                {status !== "disconnected" && (
+                  <button className="btn-quiet" onClick={() => setLeaving({ id: a.id, label: a.label, platform: a.platform })}
+                    disabled={disconnect.isPending || !workerUrl}>Disconnect</button>
+                )}
                 <div className="basis-full"><Capability info={caps.data?.accounts?.[a.id]} checkedAt={caps.data?.checked_at} loaded={caps.isSuccess} /></div>
               </li>
             );
@@ -304,6 +319,10 @@ function Accounts() {
         </ul>
       )}
       {!workerUrl && <p className="mt-2 text-sm text-alert">Connecting needs the Worker. See Settings → Getting started.</p>}
+      <Confirm open={!!leaving} danger title={`Disconnect ${leaving?.label ?? ""}?`} confirmLabel="Disconnect"
+        body={<>The saved login is deleted{leaving?.platform === "youtube" ? " and Google is asked to revoke the studio's access" : ""}. Nothing more is posted to this account until you connect it again; posts waiting for it stay in the schedule. Videos already posted are not affected.</>}
+        onCancel={() => setLeaving(null)}
+        onConfirm={() => { if (leaving) disconnect.mutate(leaving.id); setLeaving(null); }} />
     </Section>
   );
 }
