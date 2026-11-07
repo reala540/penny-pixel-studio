@@ -118,6 +118,12 @@ function Shell({ children }: { children: ReactNode }) {
           <p className="font-display text-xl font-bold">Penny &amp; Pixel Studio</p>
         </div>
         {children}
+        <footer className="mt-10 border-t border-line pt-4 text-xs text-muted">
+          <p>Penny &amp; Pixel Studio is a private tool that uses YouTube API Services to publish to the owner's own YouTube channels.
+            See the <a className="underline" href="https://www.youtube.com/t/terms">YouTube Terms of Service</a> and
+            the <a className="underline" href="https://policies.google.com/privacy">Google Privacy Policy</a>.</p>
+          <p className="mt-2"><Link to="/privacy" className="underline">Privacy policy</Link> · <Link to="/terms" className="underline">Terms of use</Link></p>
+        </footer>
       </div>
     </div>
   );
