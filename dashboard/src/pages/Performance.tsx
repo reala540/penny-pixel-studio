@@ -33,6 +33,7 @@ function Stat({ label, value, note }: { label: string; value: string | null; not
 
 export default function Performance() {
   const tz = useTimezone();
+  const automation = useQuery({ queryKey: ["performance", "automation"], queryFn: () => rpc<{reviewed:number;repair_started:number;approved:number;public:number;review_attempts:number;repair_jobs:number;repair_completed:number;baseline?:{at:string;reviewed:number;approved:number;repair_jobs:number}}>("studio_automation_funnel", {}) });
   const posts = useQuery({ queryKey: ["performance", "posts"], queryFn: () => rpc<PostRow[]>("studio_performance", { p_days: 90 }) });
   const accounts = useQuery({
     queryKey: ["performance", "accounts"],
@@ -70,6 +71,20 @@ export default function Performance() {
   return (
     <>
       <PageHeader title="Performance" intro="Read-only numbers from your platforms, checked once a day. Looking here never posts, approves or spends anything." />
+
+      <section aria-labelledby="automation-funnel" className="mb-6 rounded-xl border border-line bg-surface p-4">
+        <h2 id="automation-funnel" className="section-title mb-2">Automatic publishing journey</h2>
+        {automation.isLoading ? <p role="status">Loading automation results…</p> : automation.isError ? <NotConfirmed q={automation} what="automation results" /> : automation.data === NEEDS_UPDATE ? <p role="status">Automation results need the latest database update.</p> : automation.data ? <>
+          <div className="grid gap-3 sm:grid-cols-4">
+            <Stat label="Packages reviewed" value={fmtCount(automation.data.reviewed)} />
+            <Stat label="Packages sent for repair" value={fmtCount(automation.data.repair_started)} />
+            <Stat label="Automatically approved" value={fmtCount(automation.data.approved)} />
+            <Stat label="Confirmed public via API" value={fmtCount(automation.data.public)} />
+          </div>
+          <p className="mt-2 text-sm text-muted">All-time unique packages at each stage; stages overlap. {automation.data.review_attempts} review attempts; {automation.data.repair_completed} of {automation.data.repair_jobs} repair jobs completed. Private uploads and unknown visibility are excluded.</p>
+          {automation.data.baseline && <p className="mt-2 text-sm text-muted">Before this update ({fmtDateTime(automation.data.baseline.at,tz)}): {automation.data.baseline.reviewed} packages reviewed, {automation.data.baseline.repair_jobs} repair jobs, {automation.data.baseline.approved} automatically approved.</p>}
+        </> : <p role="status">Automation results are not available yet.</p>}
+      </section>
 
       <section aria-labelledby="sources" className="mb-6">
         <h2 id="sources" className="section-title mb-2">Where the numbers come from</h2>

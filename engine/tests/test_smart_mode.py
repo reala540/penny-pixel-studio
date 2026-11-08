@@ -40,7 +40,9 @@ def test_risky_packages_always_wait_for_a_person(synced, monkeypatch, silent_tts
     db.run(synced, """update research_claims set status='partially_supported'
                       where script_version_id=%s and ctid in (select ctid from research_claims where script_version_id=%s limit 1)""",
            (heads["ai"]["current_script_version_id"], heads["ai"]["current_script_version_id"]))
-    assert any("partly supported" in r for r in auto.risk_reasons(synced, ai))
+    assert not any("partly supported" in r for r in auto.risk_reasons(synced, ai))
+    checks = auto.deterministic_checks(synced, ai, auto._variants(synced,[p["id"] for p in ai]), __import__("datetime").datetime.now(__import__("datetime").timezone.utc))
+    assert not next(c for c in checks if c["code"]=="claims")["ok"]
     assert money  # sanity
 
 

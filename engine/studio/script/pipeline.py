@@ -113,7 +113,7 @@ TIME_RULES = ("Say historical facts as history with their date ('in December 202
 
 
 VISUALS = ("Choose a visual type per scene: chart (only with real numbers from the fact sheet), stat, list, steps, "
-           "comparison, quote, title_card or stock (with a short stock_query). For a few scenes where movement explains "
+           "comparison, quote, title_card or stock (with a short stock_query). For concrete tasks use relevant illustrative stock with a specific stock_query; preserve charts for sourced numbers and steps for instructions. Avoid consecutive title cards. Never invent screenshots or demonstrations. For a few scenes where movement explains "
            "the sentence (at most 4 in a long video, 1 in a Short), use type=animated with an animation: "
            "budget_jars (money split into 2-4 parts: items 'Label|amount'), price_basket (prices that change: items "
            "'Item|before|after', 1-4 rows), agent_handoff (AI agents passing a task: items are 2-5 step names) or "
@@ -242,8 +242,8 @@ def rewrite_scenes(router: Router, channel: str, script: Script, scene_numbers: 
               f"{scene_numbers}). Just before them the script says: \"{before}\"\nScenes:\n{json.dumps(target, indent=1)}\n"
               f"Their claims:\n{json.dumps(claims, indent=1)}\n\nFix these problems:\n- " + "\n- ".join(instructions) +
               "\n\nFor a claim that isn't supported: find the fact that supports it and cite it, or qualify it to what "
-              "the passage says (with its date or who said it), or remove the statement. Keep each scene about as "
-              "long as it is now unless a statement has to go. Return the corrected claims "
+              "the passage says (with its date or who said it), or remove the statement. Remove repeated explanations and filler. Keep one clear question and a concrete sourced example. "
+              "Shorter is better when the remaining scene teaches the point accurately. Return the corrected claims "
               "too (same keys where the claim stays). " + CALCULATIONS + " "
               f"Return exactly {len(scene_numbers)} scenes in the same order.")
     res = router.complete("scriptwriter", prompt, schema=SceneRewrite, temperature=0.5, prefer=prefer)
@@ -265,7 +265,7 @@ def _evidence_block(facts: FactSheet) -> str:
                      for f in facts.facts)
 
 
-def voice_edit(router: Router, channel: str, script: Script, writers: set[str]) -> tuple[Script, dict]:
+def voice_edit(router: Router, channel: str, script: Script, writers: set[str], *, reuse_writers: bool = False) -> tuple[Script, dict]:
     """A different model rewrites narration in the host's voice. Numbers must survive unchanged."""
     narr = [{"n": i, "narration": s.narration} for i, s in enumerate(script.scenes, 1)]
     prompt = (f"{voice_brief(channel)}\n\nEdit the narration of every scene so it sounds like this host speaking "
@@ -280,7 +280,15 @@ def voice_edit(router: Router, channel: str, script: Script, writers: set[str]) 
         hook: str
         scenes: list[dict]
 
-    res = router.complete("voice_editor", prompt, schema=Edited, temperature=0.7, exclude=writers,
+    editor = None
+    if reuse_writers:
+        from ..ai.router import companies
+        eligible = [c for c in router.candidates("voice_editor") if companies(c.provider,c.model) <= writers]
+        if not eligible:
+            raise QuotaError("No original editor available; preserve independent checker capacity")
+        editor = eligible[0]
+    res = router.complete("voice_editor", prompt, schema=Edited, temperature=0.7, only=editor, exclude=None if reuse_writers else writers,
+                          prefer=writers if reuse_writers else None,
                           max_tokens=8000)
     edited = {int(s.get("n", 0)): str(s.get("narration", "")) for s in res.data.scenes}
     scenes = []
@@ -303,7 +311,7 @@ def critique(router: Router, channel: str, script: Script, writers: set[str]) ->
               "Score 1-10 for each, using these definitions: hook = the first 15 seconds give a concrete reason to "
               "keep watching; originality = reasoning, examples or comparisons beyond restating the sources; "
               "clarity = one idea at a time, plain words, no contradictions; pacing = no repeated points, no "
-              "filler, each scene moves on; value = the viewer can act on it or understands something new. "
+              "filler, each scene moves on; score narration only, never infer footage quality; value = the viewer can act on it or understands something new. "
               "7 means publishable on that criterion; below 7 name what fails it. List specific fixes naming "
               "scene numbers; in delete give scenes that only repeat or go off topic, in merge give groups of "
               "scenes that say the same thing; weak_scenes are scenes to rewrite.\n\nTitle: {script.title}\n"
@@ -368,7 +376,7 @@ def _polish(step, trail: list[dict], name: str):
 
 def finish_long(router: Router, channel: str, script: Script, facts: FactSheet, sources: list[dict], writers: set[str],
                 trail: list[dict], *, dropped: list[str] | None = None, minutes: float | None = None,
-                notes: list[str] | None = None) -> ScriptResult:
+                notes: list[str] | None = None, reuse_editors: bool = False) -> ScriptResult:
     """Everything after the first draft, also used to repair an existing script: polish, structural edit, then
     code repairs and targeted rewrites with their recheck, then one final check of the whole script. Bounded: one
     structural edit, REPAIR_ROUNDS rewrites, one final critic."""
@@ -377,7 +385,7 @@ def finish_long(router: Router, channel: str, script: Script, facts: FactSheet, 
     shortest = quality.shortest_long_seconds()
     changes: list[str] = list(notes or [])
 
-    edited = _polish(lambda: voice_edit(router, channel, script, writers), trail, "voice_edit")
+    edited = _polish(lambda: voice_edit(router, channel, script, writers, reuse_writers=reuse_editors), trail, "voice_edit")
     if edited:
         script, t = edited
         writers |= set(t["companies"])
@@ -391,7 +399,7 @@ def finish_long(router: Router, channel: str, script: Script, facts: FactSheet, 
     if critic:
         report, t = critic
         trail.append({"step": "critic", **t})
-        if report.minimum() < CRITIC_MIN and (report.delete or report.merge or report.weak_scenes):
+        if report.minimum() < CRITIC_MIN:
             # as many of the critic's cuts as keep the video long enough (in the critic's order), merges always
             merged_at = []
             for k in range(len(report.delete), -1, -1):
@@ -406,8 +414,8 @@ def finish_long(router: Router, channel: str, script: Script, facts: FactSheet, 
             else:
                 merged_at = []
                 changes.append("Didn't apply the critic's suggested cuts: the video would have become too short")
-            redo = sorted(set(merged_at) | {n for n in report.weak_scenes if 1 <= n <= len(script.scenes)
-                                           and not report.delete})
+            redo = sorted(set(merged_at) | {n for n in (report.weak_scenes or list(range(1, min(len(script.scenes), 8) + 1)))
+                                           if 1 <= n <= len(script.scenes) and not report.delete})
             if redo:
                 script, t = rewrite_scenes(router, channel, script, redo[:8], report.fixes or ["Make this scene "
                                            "flow from the one before, without repeating it"], facts, prefer=writers)
@@ -459,6 +467,9 @@ def finish_long(router: Router, channel: str, script: Script, facts: FactSheet, 
     script = script.model_copy(update={
         "scenes": [sc.model_copy(update={"narration": quality.remove_banned(sc.narration)}) for sc in script.scenes],
         "hook": quality.remove_banned(script.hook), "cta": quality.remove_banned(script.cta), "facts": facts.facts})
+
+    # Recheck after final text cleanup; the saved version is the version whose claims were checked.
+    claims = verify.check_claims(router, script, facts, sources, exclude=writers)
 
     # final consistency check of the exact version that will be saved
     final = _polish(lambda: critique(router, channel, script, writers), trail, "critic_final")

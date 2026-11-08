@@ -314,4 +314,4 @@ def est(text: str, speed: float = 1.0) -> float:
     return est_seconds(text, speed)
 
 
-BAD = ("unsupported", "contradicted", "stale")
+BAD = ("unsupported", "contradicted", "stale", "partially_supported")

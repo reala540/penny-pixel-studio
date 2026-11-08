@@ -16,7 +16,7 @@ stops objecting would defeat the check.
 
 Smart Mode (always on inside Auto Review & Post): only low-risk packages may be approved automatically. A person
 always approves a channel's first packages (its trust period), money videos about investing, tax, credit, loans,
-insurance or retirement accounts, anything flagged sensitive, and anything with claims that are only partly supported.
+insurance or retirement accounts when making recommendations, and anything flagged sensitive. Partly supported claims are repaired and rechecked.
 Time-sensitive news waits too when `news_needs_person` is on (otherwise the freshness check guards it). Editor scores
 below the bar are rewritten like any other problem; with `accept_editor_warnings_after_fixes`, scores still low after
 every fix attempt no longer hold a package whose facts are all backed and that has no blocker. Anything not fixed in time, or any error, waits for the owner and goes to
@@ -53,6 +53,25 @@ MONEY_SENSITIVE = re.compile(SMART.get("money_sensitive_pattern", (
     re.IGNORECASE)
 
 
+# Words identify the subject; an actionable recommendation identifies the risk.
+# The independent policy reviewer remains mandatory even if no pattern matches.
+ADVICE = re.compile(r"\b(you (?:should|must|need to|ought to)|(?:i|we) recommend|buy|sell|invest in|"
+                   r"put .{0,35}(?:money|savings)|choose|switch to|apply for|claim .{0,25}deduction|"
+                   r"file .{0,20}tax|avoid|never|do not|don't|best .{0,20}(?:stock|fund|loan)|"
+                   r"guaranteed? .{0,20}(?:return|profit))\b", re.I)
+CHOICE = re.compile(r"\b(which (?:one |comes )?(?:first|should|to choose|to buy)|which .{0,35}"
+                    r"(?:should|buy|choose)|what .{0,25}should|(?:roth|ira|401\(k\)).{0,30}which first)\b", re.I)
+
+
+def money_advice_hits(text: str) -> list[str]:
+    hits = set()
+    for sentence in re.split(r"[.!?\n]+", text):
+        terms = {m.group(0).lower() for m in MONEY_SENSITIVE.finditer(sentence)}
+        if terms and (ADVICE.search(sentence) or CHOICE.search(sentence)):
+            hits |= terms
+    return sorted(hits)
+
+
 def risk_reasons(conn, family: list[dict]) -> list[str]:
     """Why a person must approve this package (Smart Mode). Empty means it's low-risk."""
     if not family:
@@ -80,13 +99,9 @@ def risk_reasons(conn, family: list[dict]) -> list[str]:
                                            .get("title", "") for p in family])
         sv = db.one(conn, "select body from script_versions where id=%s", (head["current_script_version_id"],)) or {}
         text += " " + " ".join(sc.get("narration", "") for sc in (sv.get("body") or {}).get("scenes", []))
-        hits = sorted({m.group(0).lower() for m in MONEY_SENSITIVE.finditer(text)})
+        hits = money_advice_hits(text)
         if hits:
-            out.append(f"Money topic that always needs a person: {', '.join(hits[:5])}")
-    partial = db.one(conn, """select count(*) n from research_claims c join content_projects p on p.current_script_version_id = c.script_version_id
-                              where p.id = any(%s) and c.status = 'partially_supported'""", ([p["id"] for p in family],))["n"]
-    if partial:
-        out.append(f"{partial} claim(s) are only partly supported by their sources")
+            out.append(f"Money topic that needs a person: {', '.join(hits[:5])}")
     return out
 
 
@@ -95,7 +110,7 @@ FIX_FOR = {
     "quality_gates": "rewrite", "open_issues": "rewrite", "editor": "rewrite", "claims": "rewrite",
     "ai_publishable": "rewrite", "ai_confidence": "rewrite", "ai_issues": "rewrite",
     "fresh": "recheck", "licences": "rerender",
-    "variants_ready": "sync_posts", "banned": "clean_posts", "disclaimer": "add_disclaimer",
+    "variants_ready": "sync_posts", "banned": "clean_posts", "disclaimer": "add_disclaimer", "limits": "rewrite",
     "posts": None, "destination": None, "policy": None, "smart_mode": None,
 }
 INLINE = ("sync_posts", "clean_posts", "add_disclaimer")
@@ -126,6 +141,15 @@ def max_attempts(conn) -> int:
         return DEFAULT_MAX_ATTEMPTS
 
 
+def fix_attempts(conn, project_id) -> int:
+    """Count inline fixes plus repair jobs once, across review and publishing recovery."""
+    return int(db.one(conn,"""select greatest(
+        (select count(*) from auto_reviews where project_id=%s and verdict='fixing') +
+        (select count(*) from generation_jobs where project_id=%s and input->>'auto_fix'='true' and idempotency_key like 'preflight-repair:%%'),
+        (select count(*) from generation_jobs where project_id=%s and input->>'auto_fix'='true')) n""",
+        (project_id,project_id,project_id))["n"])
+
+
 class PolicyReview(BaseModel):
     publishable: bool
     confidence: float = Field(ge=0, le=1, description="How sure you are, 0-1. Below 0.85 means a person should look.")
@@ -142,7 +166,7 @@ class PostRewrite(BaseModel):
 
 
 def _family(conn, project_id) -> list[dict]:
-    return db.all_(conn, """select * from content_projects where id=%s or parent_project_id=%s
+    return db.all_(conn, """select * from content_projects where (id=%s or parent_project_id=%s) and status not in ('rejected','archived')
                             order by parent_project_id nulls first, created_at""", (project_id, project_id))
 
 
@@ -177,12 +201,12 @@ def deterministic_checks(conn, family: list[dict], variants: list[dict], now: da
             issues += qr.get("issues") or []
     check("open_issues", "No open quality issues", not issues, "; ".join(issues[:3]))
     check("editor", "No editorial warnings", not warnings, "; ".join(warnings[:3]))
-    claims = db.one(conn, """select count(*) filter (where c.status in ('unsupported','contradicted')) bad,
+    claims = db.one(conn, """select count(*) filter (where c.status in ('unsupported','contradicted','stale','partially_supported')) bad,
                                     count(*) filter (where c.status = 'supported') good
                                from research_claims c join content_projects p on p.current_script_version_id = c.script_version_id
                               where p.id = any(%s)""", ([p["id"] for p in family],))
     check("claims", "Every claim is supported by a source", claims["bad"] == 0 and claims["good"] > 0,
-          f"{claims['bad']} unsupported, {claims['good']} supported")
+          f"{claims['bad']} not fully supported, {claims['good']} supported")
     expiring = [p["title"] for p in family if p["fresh_until"] and p["fresh_until"] < now + FRESH_MARGIN]
     check("fresh", "Facts stay fresh for at least 48 hours", not expiring, ", ".join(expiring))
     check("posts", "There are posts to schedule", any(v["pending"] for v in variants), "")
@@ -331,7 +355,8 @@ def _fix_notes(failed: list[dict]) -> str:
 
 def _queue_job(conn, head: dict, kind: str, attempt: int, failed: list[dict]) -> str:
     job_type = JOB_FOR[kind]
-    inp = {"auto_fix": True, "attempt": attempt, "project_id": str(head["id"])}
+    inp = {"auto_fix": True, "attempt": attempt, "project_id": str(head["id"]),
+           "expected_version": str(head["current_script_version_id"]), "review_policy": "recovery_v2"}
     if kind == "rewrite":
         inp["instructions"] = _fix_notes(failed)
     db.run(conn, """insert into generation_jobs (job_type, project_id, idempotency_key, status, requested_by, input)
@@ -387,7 +412,7 @@ def _approve(conn, family: list[dict], variants: list[dict], note: str, now: dat
     """Same effect as the owner's approve_project, recorded as an automatic decision. Returns posts scheduled."""
     ids = [p["id"] for p in family]
     with db.transaction(conn):
-        locked = db.all_(conn, "select id, status, current_script_version_id from content_projects where id = any(%s) for update",
+        locked = db.all_(conn, "select id, status, current_script_version_id from content_projects where id = any(%s) order by parent_project_id nulls first,id for update",
                          (ids,))
         reviewed = {p["id"]: p["current_script_version_id"] for p in family}
         if (any(r["status"] != "ready_for_review" for r in locked) or not mode_on(conn)
@@ -415,6 +440,7 @@ def _approve(conn, family: list[dict], variants: list[dict], note: str, now: dat
 
 def _record(conn, head: dict, key, verdict: str, attempt: int, checks: list, reasons: list, reviewer, confidence,
             scheduled: int = 0, fix: str | None = None) -> None:
+    attempt = max(attempt, db.one(conn, "select coalesce(max(attempt),0)+1 n from auto_reviews where project_id=%s and script_version_id is not distinct from %s", (head["id"],key))["n"])
     db.run(conn, """insert into auto_reviews (project_id, script_version_id, verdict, checks, reasons, reviewer, confidence,
                                               posts_scheduled, attempt, fix)
                     values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) on conflict (project_id, script_version_id, attempt) do nothing""",
@@ -422,6 +448,13 @@ def _record(conn, head: dict, key, verdict: str, attempt: int, checks: list, rea
 
 
 def review_project(conn, router: Router, project_id, now: datetime | None = None) -> dict:
+    with db.run_lock(conn, f"auto-review:{project_id}") as free:
+        if not free:
+            return {"verdict":"skipped","reason":"another review is running"}
+        return _review_project(conn, router, project_id, now)
+
+
+def _review_project(conn, router, project_id, now=None):
     now = now or datetime.now(timezone.utc)
     family = _family(conn, project_id)
     if not family:
@@ -431,12 +464,16 @@ def review_project(conn, router: Router, project_id, now: datetime | None = None
     latest = db.one(conn, """select verdict, script_version_id from auto_reviews where project_id=%s
                              order by created_at desc, attempt desc limit 1""", (head["id"],))
     if latest and latest["verdict"] != "fixing" and latest["script_version_id"] == key:
-        return {"verdict": "skipped", "reason": "already reviewed"}
+        # Existing holds get one review under the corrected repair policy; repeated unchanged holds do not loop.
+        old = db.one(conn, "select 1 from audit_logs where action='auto_review_policy_v2' and target_id=%s and details->>'version'=%s", (str(head["id"]), str(key)))
+        if old or latest["verdict"] != "needs_review":
+            return {"verdict": "skipped", "reason": "already reviewed"}
+    db.audit(conn, "auto_review_policy_v2", "project", head["id"], {"version": str(key)})
     if latest and latest["verdict"] == "fixing" and _fix_in_progress(conn, head["id"]):
         return {"verdict": "skipped", "reason": "a fix is in progress"}
     link = f"{config.runtime().dashboard_url}/review/{head['id']}"
     limit = max_attempts(conn)
-    used = db.one(conn, "select count(*) n from auto_reviews where project_id=%s and verdict='fixing'", (head["id"],))["n"]
+    used = fix_attempts(conn, head["id"])
     checks, reasons, reviewer, confidence, verdict, scheduled, fixes_done = [], [], None, None, "needs_review", 0, []
     accepted: list[str] = []
     jobs.progress(conn, f"Reviewing: {head['title']}")

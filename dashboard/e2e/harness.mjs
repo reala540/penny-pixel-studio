@@ -125,6 +125,7 @@ export async function openStudio(browser, path = "/", opts = {}) {
         out = existing.id;
       }
       if (rpc[1] === "studio_performance") out = db.performance ?? [];
+      if (rpc[1] === "studio_automation_funnel") out = db.automation_funnel ?? null;
       if (rpc[1] === "studio_package_costs") out = db.package_costs ?? [];
       if (rpc[1] === "patch_studio_setting") {
         db.settings[data.p_key] = {...(db.settings[data.p_key] ?? {}), ...data.p_patch}; out = db.settings[data.p_key];

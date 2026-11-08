@@ -354,7 +354,7 @@ def run_due(conn, storage, adapters=None, now: datetime | None = None, router=No
                     last_error='Runner stopped mid-publish; check the platform before retrying'
                     where status='publishing' and locked_until < now()""")
     for _ in range(20):  # batches of 10, at most 200 posts per run
-        batch = claim_due(conn, now=now)
+        batch = claim_due(conn, limit=1 if router is not None else 10, now=now)
         if not batch:
             break
         for post in batch:
@@ -362,11 +362,23 @@ def run_due(conn, storage, adapters=None, now: datetime | None = None, router=No
             if router is not None and ctx and not safety_problems(conn, post, ctx, now):
                 from .. import preflight
                 try:
-                    preflight.check(conn, router, ctx["project_id"])
+                    preflight.check(conn, router, ctx["project_id"], expected_version=ctx["current_script_version_id"])
+                    preflight._unchanged(conn,ctx["project_id"],ctx["current_script_version_id"])
+                except (TransientError, QuotaError) as exc:
+                    retry = post["attempts"] < MAX_ATTEMPTS
+                    db.run(conn, "update scheduled_posts set status=%s,last_error=%s,locked_until=%s where id=%s",
+                           ("scheduled" if retry else "needs_review", f"Final check temporarily unavailable: {str(exc)[:350]}",
+                            now+timedelta(minutes=15*post["attempts"]) if retry else None,post["id"]))
+                    out["check_retry" if retry else "needs_review"] = out.get("check_retry" if retry else "needs_review",0)+1
+                    continue
                 except Exception as exc:
                     db.run(conn, "update scheduled_posts set status='blocked', last_error=%s, locked_until=null where id=%s",
                            (f"Final check: {str(exc)[:450]}", post["id"]))
-                    out["blocked"] = out.get("blocked", 0) + 1
+                    db.audit(conn,"final_check_failed","scheduled_post",post["id"],{"reason":str(exc)[:500],"records":getattr(exc,"records",[])})
+                    from ..review import recovery
+                    queued = isinstance(exc, preflight.Failed) and recovery.queue_final(conn,ctx["project_id"],exc.records,str(exc),exc.version)
+                    key = "repair_queued" if queued else "blocked"
+                    out[key] = out.get(key,0)+1
                     continue
             res = publish_post(conn, storage, post, adapters, now)
             out[res] = out.get(res, 0) + 1

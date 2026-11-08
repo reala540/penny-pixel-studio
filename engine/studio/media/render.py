@@ -110,6 +110,8 @@ def recipe_from_script(script: dict, channel: str, fmt: str, title: str) -> dict
     elif fmt == "short":
         scenes.append({"narration": "", "visual": {"type": "title_card", "headline": f"Follow {brand['handles']['tiktok']}"},
                        "kicker": brand["name"], "silent_seconds": 1.5})
+    from .visual_plan import plan
+    scenes = plan(scenes)
     return {"version": 1, "format": fmt, "channel": channel, "title": title, "voice": vp["tts_voice"],
             "speed": float(vp.get("tts_speed", 1.0)), "scenes": scenes}
 

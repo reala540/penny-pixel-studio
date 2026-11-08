@@ -59,7 +59,7 @@ def _process_round(conn, router: Router, storage, limit: int) -> list[dict]:
     rows = []
     for _ in range(limit):
         job = db.one(conn, """update generation_jobs set status='running', started_at=now(), updated_at=now(), attempts=attempts+1
-                            where id = (select id from generation_jobs where status='queued' and requested_by='owner'
+                            where id = (select id from generation_jobs where status='queued' and requested_by='owner' and coalesce(next_attempt_at,now())<=now()
                                         order by created_at limit 1 for update skip locked)
                             returning *""")
         if job is None:
@@ -81,7 +81,21 @@ def _process_round(conn, router: Router, storage, limit: int) -> list[dict]:
                         link=links.job(job), dedupe_key=f"cancelled:{job['id']}")
             done.append({"id": str(job["id"]), "type": job["job_type"], "status": "cancelled"})
         except Exception as exc:  # report to owner, never crash the queue
+            from .errors import TransientError, QuotaError
+            current_job = db.one(conn,"select input from generation_jobs where id=%s",(job["id"],))
+            current_input = (current_job or {}).get("input") or {}
+            expected = current_input.get("resume_version") or current_input.get("expected_version")
+            project = db.one(conn,"select current_script_version_id from content_projects where id=%s",(job["project_id"],)) if job["project_id"] else None
+            if (current_input.get("auto_fix") and isinstance(exc,(TransientError,QuotaError)) and job["attempts"]<3
+                    and current_input.get("recovery_stage") != "rendering" and project and expected
+                    and str(project["current_script_version_id"])==str(expected)):
+                retry_at = datetime.now(timezone.utc)+timedelta(minutes=15*job["attempts"])
+                db.run(conn,"update generation_jobs set status='queued',next_attempt_at=%s,error_message=%s,progress=null where id=%s",(retry_at,str(exc)[:1000],job["id"]))
+                done.append({"id":str(job["id"]),"type":job["job_type"],"status":"retrying"})
+                continue
             _finish(conn, job, "failed", error=str(exc)[:1000])
+            if current_input.get("auto_fix"):
+                db.run(conn,"update content_projects set status='needs_attention' where id=%s and status='rendering'",(job["project_id"],))
             notify.send(conn, "job_failed", f"Request failed: {job['job_type']}", str(exc)[:300],
                         link=links.job(job), dedupe_key=f"jobfail:{job['id']}")
             done.append({"id": str(job["id"]), "type": job["job_type"], "status": "failed", "error": str(exc)[:200]})
@@ -148,9 +162,13 @@ def _run_owner_job(conn, router: Router, storage, job: dict) -> dict:
                     link=links.job(job), dedupe_key=f"keycheck:{job['id']}")
         return output
     if t == "auto_review":
-        from .review import auto
-
-        return {"reviewed": auto.run(conn, router)}
+        from .review import auto, recovery
+        recovered = 0
+        if auto.mode_on(conn) and inp.get("recover_final_checks"):
+            for row in db.all_(conn,"""select distinct v.project_id from scheduled_posts sp join content_variants v on v.id=sp.variant_id
+                    where sp.status='blocked' and sp.last_error like 'Final check:%'"""):
+                recovered += bool(recovery.queue_final(conn,row["project_id"],[],"Previously blocked final check; repair the saved script against its evidence"))
+        return {"recovered": recovered,"reviewed": auto.run(conn, router)}
     if t == "generate_ideas":
         # Ideas only go to the Idea Library; nothing here starts research-to-production or publishing.
         from .ideas import generator
@@ -202,6 +220,9 @@ def _run_owner_job(conn, router: Router, storage, job: dict) -> dict:
             db.run(conn, """update content_projects set recipe = jsonb_set(recipe, '{package,thumbnail_headlines}', %s)
                             where id=%s""", (db.j(inp["headlines"]), pid))
         return produce.make_thumbnails(conn, storage, pid, p["channel_slug"])
+    if t == "regenerate_script" and inp.get("auto_fix"):
+        from .review import recovery
+        return recovery.repair(conn, router, storage, job)
     if t == "regenerate_script":
         if p["format"] != "long":
             raise ValueError("Regenerate the parent long video; Shorts are rebuilt from it")

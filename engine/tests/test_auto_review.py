@@ -111,10 +111,15 @@ def test_rewrite_fix_runs_and_the_package_is_approved_afterwards(synced, monkeyp
         PolicyReview(publishable=True, confidence=next(verdicts, 0.95), summary="ok"), "beta/b1"))
     router, storage, _, out = _produce_week(c, monkeypatch)
     assert {r["verdict"] for r in out["auto_review"]} == {"fixing"}
+    # A repair preserves the original writers' provenance; another company must remain available to check it.
+    from .fakes import fake_provider_config
+    router.cfg = fake_provider_config(extra=("delta","epsilon"))
+    monkeypatch.setenv("DELTA_KEY","test-key")
+    monkeypatch.setenv("EPSILON_KEY","test-key")
     done = maintenance.process_owner_jobs(c, router, storage)
     assert [d["status"] for d in done] == ["completed", "completed"], done
-    assert statuses(c) == ["scheduled"]
-    assert db.one(c, "select count(*) n from script_versions where origin='rewrite'")["n"] == 2
+    assert statuses(c) == ["cancelled", "scheduled"]  # superseded Shorts never remain scheduled
+    assert db.one(c, "select count(*) n from script_versions sv join content_projects p on p.id=sv.project_id where sv.origin='rewrite' and p.parent_project_id is null")["n"] == 2
     final = db.all_(c, "select verdict, attempt from auto_reviews where verdict='approved'")
     assert len(final) == 2 and all(r["attempt"] == 2 for r in final)
     assert "Fixed automatically" in db.one(c, "select body from notifications where kind='auto_approved' limit 1")["body"]

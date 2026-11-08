@@ -36,7 +36,7 @@ def test_pexels_clip_is_found_with_a_licence_and_a_sensible_size(tmp_path, monke
         if "api.pexels.com/videos/search" in str(req.url):
             return httpx.Response(200, json={"videos": [
                 {"url": "https://pexels.test/v/short", "duration": 2, "user": {"name": "A"}, "video_files": []},
-                {"url": "https://pexels.test/v/1", "duration": 12, "user": {"name": "Ana"}, "video_files": [
+                {"url": "https://pexels.test/v/people-shopping-1", "duration": 12, "user": {"name": "Ana"}, "video_files": [
                     {"link": "https://cdn.test/4k.mp4", "width": 3840, "height": 2160, "file_type": "video/mp4"},
                     {"link": "https://cdn.test/hd.mp4", "width": 1920, "height": 1080, "file_type": "video/mp4"},
                     {"link": "https://cdn.test/sd.mp4", "width": 640, "height": 360, "file_type": "video/mp4"}]}]})
@@ -45,7 +45,7 @@ def test_pexels_clip_is_found_with_a_licence_and_a_sensible_size(tmp_path, monke
         return httpx.Response(404)
     hit = stock.find_video("people shopping", tmp_path / "raw", "landscape",
                            client=httpx.Client(transport=httpx.MockTransport(handler)))
-    assert hit and hit.provider == "pexels-video" and hit.source_url == "https://pexels.test/v/1"
+    assert hit and hit.provider == "pexels-video" and hit.source_url == "https://pexels.test/v/people-shopping-1"
     assert "Pexels License" in hit.license and hit.path.exists()
     assert any("hd.mp4" in u for u in seen) and not any("4k.mp4" in u for u in seen)   # the smallest full-HD file
 

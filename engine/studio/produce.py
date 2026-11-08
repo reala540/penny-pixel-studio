@@ -555,7 +555,7 @@ def final_status(conn, project_id) -> None:
     blockers = ([f for f in qr["findings"] if f.get("kind") == "blocker"] if "findings" in qr else qr.get("issues") or [])
     bad_claims = db.one(conn, """select count(*) n from research_claims c
                                  join content_projects p on p.current_script_version_id = c.script_version_id
-                                 where p.id=%s and c.status in ('unsupported','contradicted','stale')""", (project_id,))["n"]
+                                 where p.id=%s and c.status in ('unsupported','contradicted','stale','partially_supported')""", (project_id,))["n"]
     has_preview = bool((p["recipe"] or {}).get("preview_key"))
     status = "ready_for_review" if has_preview and not blockers and not bad_claims else (
         "needs_attention" if has_preview else "failed")

@@ -282,7 +282,7 @@ def collect(conn, storage, work: Path, check_video=video_is_public, router=None)
                     and saved_article["title"] == title and saved_article["blocks"] == [list(b) for b in blocks]
                     and saved_article["checked_at"] > datetime.now(timezone.utc) - timedelta(hours=48))
                 if not unchanged:
-                    preflight.check(conn, router, p["id"], article=True)
+                    preflight.check(conn, router, p["id"], article=True, expected_version=p["sv_id"])
                     review = check_meaning(router, title, article_blocks(body), blocks,
                                            set((p["quality_report"] or {}).get("writers") or []))
                 else:

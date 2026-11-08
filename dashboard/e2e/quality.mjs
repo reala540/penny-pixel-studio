@@ -215,6 +215,24 @@ try {
       await shot(page, "home-website-card-phone");
       await context.close();
     });
+    await check("automation funnel shows real zeros and handles unavailable data", async () => {
+      const db = seed();
+      db.automation_funnel = { reviewed:16,repair_started:2,approved:0,public:0,review_attempts:24,repair_jobs:2,repair_completed:2,
+        baseline:{at:"2026-11-08T19:14:25Z",reviewed:16,repair_jobs:2,approved:0} };
+      const {page,context}=await openStudio(browser,"/performance",{db,viewport:PHONE});
+      const section=page.locator('[aria-labelledby="automation-funnel"]');
+      await section.getByText("Confirmed public via API",{exact:true}).waitFor();
+      await section.getByText("24 review attempts",{exact:false}).waitFor();
+      await section.getByText("Before this update",{exact:false}).waitFor();
+      if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth))throw new Error("mobile overflow");
+      await shot(page,"automation-funnel-phone");
+      await context.close();
+      const broken=await openStudio(browser,"/performance",{fail:{"rpc:studio_automation_funnel":503}});
+      await broken.page.getByText("automation results",{exact:false}).first().waitFor();
+      const failedSection=broken.page.locator('[aria-labelledby="automation-funnel"]');
+      if(await failedSection.getByText("Confirmed public via API",{exact:true}).count())throw new Error("failed request presented as counts");
+      await broken.context.close();
+    });
   });
 } finally {
   server.kill();

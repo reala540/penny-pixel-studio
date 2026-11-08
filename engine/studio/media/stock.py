@@ -8,6 +8,9 @@ If nothing is found, the caller falls back to original typographic cards.
 from __future__ import annotations
 
 import hashlib
+import json
+import tempfile
+import time
 import os
 import re
 from dataclasses import dataclass
@@ -45,7 +48,8 @@ def best(items: list, query: str, describe, size) -> object | None:
     """The result that matches the search best; ties go to the bigger picture. The first result isn't always best."""
     if not items:
         return None
-    return max(enumerate(items), key=lambda x: (round(relevance(query, describe(x[1])), 2), size(x[1]), -x[0]))[1]
+    matched = [(i,x) for i,x in enumerate(items) if relevance(query, describe(x)) >= 0.2]
+    return max(matched, key=lambda x: (round(relevance(query, describe(x[1])), 2), size(x[1]), -x[0]))[1] if matched else None
 
 
 def find_photo(query: str, out_dir: Path, orientation: str = "landscape",
@@ -99,24 +103,48 @@ def _pexels(client, query, orientation):
         return None
     # Pexels describes a photo in its alt text and its page address (e.g. /photo/woman-counting-coins-123/)
     p = best(photos, query, lambda x: f"{x.get('alt') or ''} {x.get('url') or ''}", lambda x: (x.get("width") or 0) * (x.get("height") or 0))
+    if p is None:
+        return None
     return p["src"].get("large2x") or p["src"]["original"], {
         "source_url": p["url"], "provider": "pexels", "creator": p.get("photographer"),
         "license": "Pexels License (free commercial use, no attribution required)",
         "attribution_required": False, "attribution_text": f"Photo by {p.get('photographer')} on Pexels"}
 
 
+def _pixabay_data(client, path, params):
+    # Pixabay requires query responses to be cached for 24 hours. Never persist the API key.
+    from .. import config
+    root = config.runtime().work_dir / "render" / "shared" / "stock_queries" / "pixabay"
+    root.mkdir(parents=True,exist_ok=True)
+    ident = hashlib.sha256(json.dumps({"path":path,"params":params},sort_keys=True).encode()).hexdigest()
+    cached = root / f"{ident}.json"
+    try:
+        if time.time()-cached.stat().st_mtime < 86400:
+            return json.loads(cached.read_text())
+    except (OSError,ValueError):
+        pass
+    response = client.get("https://pixabay.com"+path, params=params)
+    response.raise_for_status()
+    data = response.json()
+    with tempfile.NamedTemporaryFile(mode="w",dir=root,delete=False) as temp:
+        json.dump(data,temp)
+    Path(temp.name).replace(cached)
+    return data
+
+
 def _pixabay(client, query, orientation):
     key = os.environ.get("PIXABAY_API_KEY")
     if not key:
         return None
-    r = client.get("https://pixabay.com/api/", params={
+    data = _pixabay_data(client,"/api/",{
         "key": key, "q": query[:100], "image_type": "photo", "safesearch": "true", "per_page": 10,
         "orientation": "horizontal" if orientation == "landscape" else "vertical"})
-    r.raise_for_status()
-    hits = r.json().get("hits") or []
+    hits = data.get("hits") or []
     if not hits:
         return None
     h = best(hits, query, lambda x: x.get("tags") or "", lambda x: (x.get("imageWidth") or 0) * (x.get("imageHeight") or 0))
+    if h is None:
+        return None
     return h.get("largeImageURL") or h["webformatURL"], {
         "source_url": h["pageURL"], "provider": "pixabay", "creator": h.get("user"),
         "license": "Pixabay Content License (free commercial use)", "attribution_required": False,
@@ -201,7 +229,7 @@ def _pexels_video(client, query, orientation, min_seconds):
     r.raise_for_status()
     # best match first (Pexels describes a clip in its page address); clips too short or without a usable file are skipped
     for v in sorted(r.json().get("videos") or [], key=lambda x: -relevance(query, x.get("url") or "")):
-        if float(v.get("duration") or 0) < min_seconds:
+        if relevance(query, v.get("url") or "") < 0.2 or float(v.get("duration") or 0) < min_seconds:
             continue
         pick = _best_file([{"url": f.get("link"), "width": f.get("width"), "height": f.get("height")}
                            for f in v.get("video_files") or [] if (f.get("file_type") or "") == "video/mp4"], orientation)
@@ -218,11 +246,9 @@ def _pixabay_video(client, query, orientation, min_seconds):
     key = os.environ.get("PIXABAY_API_KEY")
     if not key:
         return None
-    r = client.get("https://pixabay.com/api/videos/", params={"key": key, "q": query[:100], "safesearch": "true",
-                                                               "per_page": 8})
-    r.raise_for_status()
-    for h in sorted(r.json().get("hits") or [], key=lambda x: -relevance(query, x.get("tags") or "")):
-        if float(h.get("duration") or 0) < min_seconds:
+    data = _pixabay_data(client,"/api/videos/",{"key": key, "q": query[:100], "safesearch": "true","per_page": 8})
+    for h in sorted(data.get("hits") or [], key=lambda x: -relevance(query, x.get("tags") or "")):
+        if relevance(query, h.get("tags") or "") < 0.2 or float(h.get("duration") or 0) < min_seconds:
             continue
         pick = _best_file(list((h.get("videos") or {}).values()), orientation)
         if pick:
