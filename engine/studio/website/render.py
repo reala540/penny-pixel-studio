@@ -165,7 +165,7 @@ class Site:
 <form action="{e(n['form_action'])}" method="post" target="_blank" rel="noopener">
 <label class="sr" for="nl-email">Email address</label><div class="field"><input id="nl-email" name="email" type="email" autocomplete="email" required placeholder="you@example.com">
 <button type="submit">Subscribe</button></div>
-<label class="consent"><input type="checkbox" required> I agree to receive emails from {SITE_HTML}. Sign-ups are handled by {e(n.get('provider', 'our newsletter provider'))}; see our <a href="/privacy/">privacy policy</a>.</label>
+<label class="consent"><input type="checkbox" required><span>I agree to receive emails from {SITE_HTML}. Sign-ups are handled by {e(n.get('provider', 'our newsletter provider'))}; see our <a href="/privacy/">privacy policy</a>.</span></label>
 </form></div></div></section>"""
 
     # ------------------------------------------------------------------ pages

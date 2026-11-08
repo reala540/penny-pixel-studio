@@ -104,8 +104,8 @@ a:hover{text-decoration-thickness:2px}
 .related{border-top:1px solid var(--line);margin-top:36px;padding-top:26px}
 /* search and forms */
 .field{display:flex;gap:8px;flex-wrap:wrap}
-.field input{flex:1;min-width:0;min-height:48px;font:17px var(--sans);padding:10px 14px;border-radius:12px;border:1px solid var(--line);background:var(--surface);color:var(--ink)}
-.field button{min-height:48px;padding:0 18px;border-radius:12px;border:0;background:var(--blue-ink);color:#fff;font:700 16px var(--sans);cursor:pointer}
+.field input{flex:1 1 200px;min-width:0;min-height:48px;font:17px var(--sans);padding:10px 14px;border-radius:12px;border:1px solid var(--line);background:var(--surface);color:var(--ink)}
+.field button{flex:0 0 auto;min-height:48px;padding:0 18px;border-radius:12px;border:0;background:var(--blue-ink);color:#fff;font:700 16px var(--sans);cursor:pointer}
 .results{list-style:none;padding:0;margin:20px 0 0;display:grid;gap:14px}
 .results li{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
 .results a{font-weight:700;font-size:18px}

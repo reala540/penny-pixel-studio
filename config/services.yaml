@@ -87,8 +87,8 @@ website:
   project: "pennyandpixel"                  # the Cloudflare Pages project name
   contact_email: "pennyandpixel.contact@gmail.com"   # shown on Contact/Corrections/Advertise when set; otherwise readers are sent to the social accounts
   newsletter:               # a free provider's sign-up address (e.g. Buttondown's embed form); no form is shown until set
-    form_action: null
-    provider: null
+    form_action: "https://buttondown.com/api/emails/embed-subscribe/pennyandpixel"
+    provider: "Buttondown"
   google_site_verification: "GQRIrOqueWfPASl3qUfIEJ5BWopqUKThygzs3VrBDL4"   # Search Console's HTML-tag check
   ai_rewrite: true          # rewrite each article from its checked narration (code checks numbers and names; cached)
   german: true              # German versions of AI-tools articles (same checks; money stays English)

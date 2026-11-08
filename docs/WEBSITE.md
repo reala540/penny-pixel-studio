@@ -126,8 +126,8 @@ Limits change; check the providers' pricing pages before relying on them.
 
 - **Google AdSense:** it won't accept a free `pages.dev` address; a custom domain (about $10 a year) would be needed. No
   advertising code is included.
-- **Newsletter:** needs the owner's free provider account (e.g. Buttondown); until its sign-up address is set, no form is
-  shown. Analytics is switched on in Cloudflare (Web Analytics).
+- Newsletter: connected to Buttondown (`pennyandpixel`). Sign-ups go straight to Buttondown, which sends the confirmation
+  email and handles unsubscribing. Analytics is switched on in Cloudflare (Web Analytics).
 - **"Popular" articles:** no analytics data yet, so the home page shows newest first instead of inventing popularity.
 - **Videos on the site:** YouTube uploads stay private until Google's API audit passes, so no video is embedded yet;
   articles show the thumbnail. Embeds appear by themselves once videos are public.
