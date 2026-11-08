@@ -167,10 +167,11 @@ try {
       await shot(page, "timeline-clear-phone");
       await context.close();
     });
-    await check("Home shows the website: its address, article count, and what was left off and why; the menu links to it", async () => {
+    await check("Home shows the website, what was left off and why, and lets the owner take an article off and put it back; the menu links to it", async () => {
       const db = seed();
       db.audit_logs.push({ id: "a-web", actor: "engine", action: "website_built", created_at: iso(-30),
-        details: { articles: 1, left_out: ["Can robots.txt Stop AI Training?: claims a hands-on test that didn't happen"] } });
+        details: { articles: 1, left_out: ["Can robots.txt Stop AI Training?: claims a hands-on test that didn't happen"],
+                   published: [{ id: "proj-9", title: "Minimum Wage Search Spike", slug: "minimum-wage-search-spike-9e25db" }] } });
       const { page, context, errors } = await openStudio(browser, "/", { db });
       const card = page.locator('section[aria-labelledby="website-title"]');
       await card.getByText("1 article").waitFor({ timeout: 15000 });
@@ -180,6 +181,17 @@ try {
       await card.getByText("1 video left off the website, and why").click();
       await card.getByText("claims a hands-on test").waitFor();
       if (!(await page.getByRole("link", { name: "Website ↗" }).count())) throw new Error("no Website link in the menu");
+      // corrections: take an article off the website, then put it back
+      await card.getByText("On the website (1)").click();
+      await card.getByRole("button", { name: "Take off website" }).click();
+      await page.getByRole("dialog").getByRole("button", { name: "Take off website" }).click();
+      await card.getByText("Taken off by you (1)").waitFor({ timeout: 10000 });
+      const saved = (db.settings.website_hidden || {}).hidden || {};
+      if (!saved["proj-9"] || saved["proj-9"].title !== "Minimum Wage Search Spike") throw new Error("take-off not saved: " + JSON.stringify(db.settings.website_hidden));
+      await card.getByText("Taken off by you (1)").click();
+      await card.getByRole("button", { name: "Put back" }).click();
+      await card.getByText("On the website (1)").waitFor({ timeout: 10000 });
+      if (Object.keys((db.settings.website_hidden || {}).hidden || {}).length) throw new Error("put back not saved");
       if (errors.length) throw new Error(errors.join("; "));
       await shot(page, "home-website-card-desktop");
       await page.setViewportSize(PHONE);

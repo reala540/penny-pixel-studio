@@ -18,7 +18,7 @@ import { useKeyCheck, useReadiness } from "../lib/readiness";
 import { projectPath } from "../lib/routes";
 import { MissingFileError, signedUrl, supabase } from "../lib/supabase";
 import type { Post, Project } from "../lib/types";
-import { SITE_URL, useWebsiteStatus } from "../lib/website";
+import { SITE_URL, useWebsiteStatus, type WebsiteHidden } from "../lib/website";
 
 export const POST_SELECT =
   "id, scheduled_at, status, last_error, social_account_id, variant_id, content_variants(title, kind, body, project_id, content_projects(channel_slug, title)), social_accounts(label, platform), published_posts(url, method)";
@@ -408,10 +408,21 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 }
 
 
-/** The public website: its address, how many articles it has, and which packages were left off and why. */
+/** The public website: its address, how many articles it has, what was left off and why, and the owner's corrections
+ *  control: take an article off the website, or put it back. Changes show at the website's next update. */
 function WebsiteCard({ tz }: { tz: string }) {
   const site = useWebsiteStatus();
+  const hiddenSetting = useSetting<WebsiteHidden>("website_hidden", {});
+  const save = useSaveSetting();
+  const toast = useToast();
+  const [ask, setAsk] = useState<{ id: string; title: string } | null>(null);
   const b = site.data;
+  const hidden = hiddenSetting.data?.hidden ?? {};
+  const live = (b?.published ?? []).filter((a) => !hidden[a.id]);
+  const setHidden = async (next: Record<string, { title: string; at: string }>, done: string) => {
+    try { await save.mutateAsync({ key: "website_hidden", value: { hidden: next } }); toast(done, "good"); }
+    catch (err) { toast((err as Error).message, "bad"); }
+  };
   return (
     <section aria-labelledby="website-title" className="mt-8 rounded-xl border border-line bg-surface p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -425,12 +436,43 @@ function WebsiteCard({ tz }: { tz: string }) {
         </div>
         <a href={SITE_URL} target="_blank" rel="noopener" className="btn-quiet">{SITE_URL.replace(/^https:\/\//, "")} ↗</a>
       </div>
+      {live.length > 0 && (
+        <details className="mt-3 text-sm">
+          <summary className="cursor-pointer text-muted">On the website ({live.length})</summary>
+          <ul className="mt-2 space-y-2">{live.map((a) => (
+            <li key={a.id} className="flex flex-wrap items-center justify-between gap-2">
+              <a className="underline" href={`${SITE_URL}/articles/${a.slug}/`} target="_blank" rel="noopener">{a.title}</a>
+              <button className="btn-quiet" disabled={save.isPending} onClick={() => setAsk({ id: a.id, title: a.title })}>Take off website</button>
+            </li>))}</ul>
+        </details>
+      )}
+      {Object.keys(hidden).length > 0 && (
+        <details className="mt-3 text-sm">
+          <summary className="cursor-pointer text-muted">Taken off by you ({Object.keys(hidden).length})</summary>
+          <ul className="mt-2 space-y-2">{Object.entries(hidden).map(([id, h]) => (
+            <li key={id} className="flex flex-wrap items-center justify-between gap-2">
+              <span>{h.title}</span>
+              <button className="btn-quiet" disabled={save.isPending} onClick={() => {
+                const next = { ...hidden }; delete next[id];
+                void setHidden(next, "It goes back on the website at its next update");
+              }}>Put back</button>
+            </li>))}</ul>
+        </details>
+      )}
       {b && b.leftOut.length > 0 && (
         <details className="mt-3 text-sm">
           <summary className="cursor-pointer text-muted">{b.leftOut.length} video{b.leftOut.length === 1 ? "" : "s"} left off the website, and why</summary>
           <ul className="mt-2 list-disc space-y-1 pl-5 text-muted">{b.leftOut.map((x) => <li key={x}>{x}</li>)}</ul>
         </details>
       )}
+      <Confirm open={!!ask} title="Take this article off the website?" confirmLabel="Take off website"
+        body={<>"{ask?.title}" disappears from the website at its next update (after the next posting run, or every morning). Its
+          video and posts aren't affected. You can put it back at any time.</>}
+        onCancel={() => setAsk(null)}
+        onConfirm={() => {
+          if (ask) void setHidden({ ...hidden, [ask.id]: { title: ask.title, at: new Date().toISOString() } }, "Taken off: gone at the website's next update");
+          setAsk(null);
+        }} />
     </section>
   );
 }
