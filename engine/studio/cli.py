@@ -471,6 +471,15 @@ def cmd_ideas(a):
             _print(generator.run(conn, router, trigger="manual", overrides={"count": a.count} if a.count else None))
 
 
+def cmd_site(a):
+    """Build the public website (plain files) into --out, ready for Cloudflare Pages."""
+    from . import website
+    from .storage import default_storage
+
+    with _conn() as conn:
+        _print(website.build_site(conn, default_storage(), Path(a.out)))
+
+
 def cmd_status(a):
     from . import budget, capacity
 
@@ -537,6 +546,9 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("capacity").set_defaults(fn=cmd_capacity)
     sub.add_parser("providers").set_defaults(fn=cmd_providers)
     sub.add_parser("status").set_defaults(fn=cmd_status)
+    sp = sub.add_parser("site")
+    sp.add_argument("--out", default="site_out", help="folder to write the website into")
+    sp.set_defaults(fn=cmd_site)
     ip = sub.add_parser("ideas")
     ip.add_argument("--count", type=int, help="number of ideas (default from settings, normally 10)")
     ip.set_defaults(fn=cmd_ideas)
