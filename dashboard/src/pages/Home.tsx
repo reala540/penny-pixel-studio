@@ -18,6 +18,7 @@ import { useKeyCheck, useReadiness } from "../lib/readiness";
 import { projectPath } from "../lib/routes";
 import { MissingFileError, signedUrl, supabase } from "../lib/supabase";
 import type { Post, Project } from "../lib/types";
+import { SITE_URL, useWebsiteStatus } from "../lib/website";
 
 export const POST_SELECT =
   "id, scheduled_at, status, last_error, social_account_id, variant_id, content_variants(title, kind, body, project_id, content_projects(channel_slug, title)), social_accounts(label, platform), published_posts(url, method)";
@@ -55,6 +56,7 @@ export default function Home() {
         <BeingMade />
         <NextPosts tz={tz} />
       </div>
+      <WebsiteCard tz={tz} />
       <section aria-labelledby="rundown-title" className="mt-10">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h2 id="rundown-title" className="section-title">This week</h2>
@@ -402,5 +404,33 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
       <dt className="text-muted">{label}</dt>
       <dd>{children}</dd>
     </div>
+  );
+}
+
+
+/** The public website: its address, how many articles it has, and which packages were left off and why. */
+function WebsiteCard({ tz }: { tz: string }) {
+  const site = useWebsiteStatus();
+  const b = site.data;
+  return (
+    <section aria-labelledby="website-title" className="mt-8 rounded-xl border border-line bg-surface p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 id="website-title" className="section-title">Your website</h2>
+          <p className="text-sm text-muted">
+            {site.isLoading ? "Checking…" : site.isError ? "Couldn't check the website's last update." : b
+              ? `${b.articles} article${b.articles === 1 ? "" : "s"} · updated ${fmtDateTime(b.at, tz)} · updates itself after posts go out and every morning`
+              : "Not built yet. It builds itself after the next posting run."}
+          </p>
+        </div>
+        <a href={SITE_URL} target="_blank" rel="noopener" className="btn-quiet">{SITE_URL.replace(/^https:\/\//, "")} ↗</a>
+      </div>
+      {b && b.leftOut.length > 0 && (
+        <details className="mt-3 text-sm">
+          <summary className="cursor-pointer text-muted">{b.leftOut.length} video{b.leftOut.length === 1 ? "" : "s"} left off the website, and why</summary>
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-muted">{b.leftOut.map((x) => <li key={x}>{x}</li>)}</ul>
+        </details>
+      )}
+    </section>
   );
 }
