@@ -167,6 +167,25 @@ try {
       await shot(page, "timeline-clear-phone");
       await context.close();
     });
+    await check("Home shows the website: its address, article count, and what was left off and why; the menu links to it", async () => {
+      const db = seed();
+      db.audit_logs.push({ id: "a-web", actor: "engine", action: "website_built", created_at: iso(-30),
+        details: { articles: 1, left_out: ["Can robots.txt Stop AI Training?: claims a hands-on test that didn't happen"] } });
+      const { page, context, errors } = await openStudio(browser, "/", { db });
+      const card = page.locator('section[aria-labelledby="website-title"]');
+      await card.getByText("1 article").waitFor({ timeout: 15000 });
+      const link = card.getByRole("link", { name: /pennyandpixel\.pages\.dev/ });
+      if ((await link.getAttribute("href")) !== "https://pennyandpixel.pages.dev") throw new Error("wrong website link");
+      if ((await link.getAttribute("target")) !== "_blank") throw new Error("website should open in a new tab");
+      await card.getByText("1 video left off the website, and why").click();
+      await card.getByText("claims a hands-on test").waitFor();
+      if (!(await page.getByRole("link", { name: "Website ↗" }).count())) throw new Error("no Website link in the menu");
+      if (errors.length) throw new Error(errors.join("; "));
+      await shot(page, "home-website-card-desktop");
+      await page.setViewportSize(PHONE);
+      await shot(page, "home-website-card-phone");
+      await context.close();
+    });
   });
 } finally {
   server.kill();
