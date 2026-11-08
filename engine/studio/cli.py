@@ -477,7 +477,7 @@ def cmd_site(a):
     from .storage import default_storage
 
     with _conn() as conn:
-        _print(website.build_site(conn, default_storage(), Path(a.out)))
+        _print(website.build_site(conn, default_storage(), Path(a.out), router=_router(conn)))
 
 
 def cmd_status(a):

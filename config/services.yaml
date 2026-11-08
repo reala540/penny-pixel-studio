@@ -85,3 +85,12 @@ website:
   # files, no login, no database, no keys. Built by .github/workflows/site.yml after posts go out and daily.
   url: "https://pennyandpixel.pages.dev"   # the SITE_URL repository variable wins, if Cloudflare gives another address
   project: "pennyandpixel"                  # the Cloudflare Pages project name
+  contact_email: "pennyandpixel.contact@gmail.com"   # shown on Contact/Corrections/Advertise when set; otherwise readers are sent to the social accounts
+  newsletter:               # a free provider's sign-up address (e.g. Buttondown's embed form); no form is shown until set
+    form_action: "https://buttondown.com/api/emails/embed-subscribe/pennyandpixel"
+    provider: "Buttondown"
+  google_site_verification: "GQRIrOqueWfPASl3qUfIEJ5BWopqUKThygzs3VrBDL4"   # Search Console's HTML-tag check
+  ai_rewrite: true          # rewrite each article from its checked narration (code checks numbers and names; cached)
+  german: true              # German versions of AI-tools articles (same checks; money stays English)
+  analytics:                # optional: Cloudflare Web Analytics token (free, no cookies). Or switch it on in the Pages
+    cloudflare_token: null  # project (Metrics -> Web Analytics): the site's security policy already allows it
