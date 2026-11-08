@@ -528,3 +528,23 @@ def test_pixabay_queries_are_cached_for_24_hours_without_saving_key(
     os.utime(cache, (time.time() - 86401, time.time() - 86401))
     stock._pixabay_data(client, "/api/", params)
     assert len(calls) == 2
+
+
+def test_activation_consumed_by_old_engine_is_replayed_once(synced, monkeypatch):
+    db.set_setting(synced, "auto_review_post", True)
+    db.run(
+        synced,
+        "insert into generation_jobs(job_type,idempotency_key,status,requested_by,input,output) values('auto_review','auto-review:recovery-v2','completed','owner',%s,%s)",
+        (db.j({"recover_final_checks": True}), db.j({"reviewed": []})),
+    )
+    monkeypatch.setattr(auto, "run", lambda *args: [])
+    first = maintenance.process_owner_jobs(synced, None, None)
+    assert [j["status"] for j in first] == ["completed"]
+    assert (
+        db.one(
+            synced,
+            "select output from generation_jobs where idempotency_key='auto-review:recovery-v2'",
+        )["output"]["review_policy"]
+        == "recovery_v2"
+    )
+    assert maintenance.process_owner_jobs(synced, None, None) == []

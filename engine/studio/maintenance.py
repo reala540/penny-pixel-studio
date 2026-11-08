@@ -31,8 +31,20 @@ def _finish(conn, job, status: str, output: dict | None = None, error: str | Non
                     where id=%s""", (status, db.j(output or {}), error, job["id"]))
 
 
+def _ensure_current_review_policy(conn):
+    """A queued older deployment may consume the activation job; replay it once on updated code."""
+    if db.get_setting(conn,"auto_review_post",False) is not True:
+        return
+    db.run(conn,"""update generation_jobs set status='queued',finished_at=null,next_attempt_at=null,
+        input=jsonb_set(input,'{activation_replayed}','true'::jsonb)
+        where idempotency_key='auto-review:recovery-v2' and status='completed'
+          and coalesce(output->>'review_policy','')<>'recovery_v2'
+          and coalesce(input->>'activation_replayed','false')<>'true'""")
+
+
 def process_owner_jobs(conn, router: Router, storage, limit: int = 10, rounds: int = 4) -> list[dict]:
     """Run queued owner jobs. Fixes queued by Auto Review & Post during a round run in the next one (bounded)."""
+    _ensure_current_review_policy(conn)
     notify.retry_pending(conn)
     produce.apply_brand_overrides(conn)
     jobs.check_stop(conn)  # notes when this run started, so a later Stop & clear stops it
@@ -168,7 +180,7 @@ def _run_owner_job(conn, router: Router, storage, job: dict) -> dict:
             for row in db.all_(conn,"""select distinct v.project_id from scheduled_posts sp join content_variants v on v.id=sp.variant_id
                     where sp.status='blocked' and sp.last_error like 'Final check:%'"""):
                 recovered += bool(recovery.queue_final(conn,row["project_id"],[],"Previously blocked final check; repair the saved script against its evidence"))
-        return {"recovered": recovered,"reviewed": auto.run(conn, router)}
+        return {"review_policy":"recovery_v2","recovered": recovered,"reviewed": auto.run(conn, router)}
     if t == "generate_ideas":
         # Ideas only go to the Idea Library; nothing here starts research-to-production or publishing.
         from .ideas import generator

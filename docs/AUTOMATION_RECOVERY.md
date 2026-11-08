@@ -27,3 +27,7 @@ Tests exercise the full database journey from a partial claim to a repaired vers
 - Focused editor/script checks: 75 passed. Final recovery/media checks: 34 passed, including budget sharing, rejected/archived packages, outage resumption and the public-receipt journey. Additional version and author-reservation cases passed in the recovery checks.
 - Dashboard type checking, all 103 unit tests and production build passed. The full browser page sweep passed; quality checks passed 10/10 including phone-sized automation counters and unavailable-data handling.
 - No real social posts were uploaded during local testing. Production deployment, queue progress, account readiness and actual public receipts must be checked separately.
+
+## Live deployment observations
+
+The migration was applied in production, the owner-only funnel function exists, and Supabase health advisors returned no findings. Vercel reported successful dashboard and engine deployments for the main release. The activation review is queued. An older owner-request workflow was still running at deployment, so this is not yet evidence of a new live automatic approval or public post. Updated queue startup detects an activation review completed by older code without the new policy marker and replays it once; the handover regression and all recovery cases passed (26 tests).
