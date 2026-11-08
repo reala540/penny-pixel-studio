@@ -228,7 +228,8 @@ export function Detail({ id }: { id: string }) {
             <div className="flex flex-col gap-2">
               <button className="btn-primary" onClick={() => setConfirm("approve")} disabled={approve.isPending}>Approve package</button>
               {project.format === "long" && ["needs_attention", "ready_for_review", "failed"].includes(project.status) && (
-                <button className="btn-quiet" onClick={() => setConfirm("repair")} disabled={repair.isPending}>{repair.isPending ? "Asking…" : "Recheck and repair"}</button>
+                <button className="btn-quiet" onClick={() => setConfirm("repair")} disabled={repair.isPending}>
+                  {repair.isPending ? "Asking…" : project.current_script_version_id ? "Recheck and repair" : "Make this package again"}</button>
               )}
               <button className="btn-quiet" onClick={() => setRegen(true)}>Rewrite with a note</button>
               <button className="btn-danger" onClick={() => setConfirm("reject")}>Discard package</button>
@@ -272,9 +273,11 @@ export function Detail({ id }: { id: string }) {
         confirmDisabled={!reasonOk}
         confirmLabel={bad.length + issues.length > 0 ? "Approve anyway" : "Approve package"}
         onCancel={() => { setConfirm(null); setReason(""); }} onConfirm={() => { setConfirm(null); approve.mutate(); }} />
-      <Confirm open={confirm === "repair"} title="Recheck and repair this package?"
-        body="The studio checks every statement against its evidence again, fixes what it can (sums, dates, repeated parts, failing scenes) and saves a new version. The current version is kept in History. It uses the free AI services for a few minutes. Nothing is approved, scheduled or posted."
-        confirmLabel="Recheck and repair" onCancel={() => setConfirm(null)} onConfirm={() => { setConfirm(null); repair.mutate(); }} />
+      <Confirm open={confirm === "repair"} title={project.current_script_version_id ? "Recheck and repair this package?" : "Make this package again?"}
+        body={project.current_script_version_id
+          ? "The studio checks every statement against its evidence again, fixes what it can (sums, dates, repeated parts, failing scenes) and saves a new version. The current version is kept in History. It uses the free AI services for a few minutes. Nothing is approved, scheduled or posted."
+          : "This package has no script yet (making it stopped early). The studio researches its idea again and writes, checks and renders it from the start. It uses the free AI services for several minutes. Nothing is approved, scheduled or posted."}
+        confirmLabel={project.current_script_version_id ? "Recheck and repair" : "Make it again"} onCancel={() => setConfirm(null)} onConfirm={() => { setConfirm(null); repair.mutate(); }} />
       <Confirm open={confirm === "reject"} title="Discard this package?" danger
         body="The video, its Shorts and all their posts are rejected and their slots freed. It stays in Content → Not used."
         confirmLabel="Discard package" onCancel={() => setConfirm(null)} onConfirm={() => { setConfirm(null); reject.mutate(); }} />
