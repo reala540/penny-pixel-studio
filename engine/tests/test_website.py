@@ -109,3 +109,17 @@ def test_a_package_whose_title_or_opening_claims_a_test_is_left_out(produced):
     conn, _ = produced
     p = {"title": REAL["title"], "channel_slug": "ai", "quality_report": {}, "sv_id": None}
     assert website.why_left_out(conn, p, REAL) == "claims a hands-on test that didn't happen"
+
+
+def test_the_feed_and_sitemap_are_valid_xml(tmp_path):
+    """Found on 8 Nov: the RSS feed wouldn't open ('xmlParseEntityRef: no name') because of the bare & in the name."""
+    import xml.etree.ElementTree as ET
+
+    a = website.Article("p1", "money", "pay-1", "Pay & prices: what changed", "Wages & inflation", ["Text & more."],
+                        datetime(2026, 11, 8, tzinfo=timezone.utc))
+    website.build([a], tmp_path / "site")
+    for name in ("feed.xml", "sitemap.xml"):
+        ET.parse(tmp_path / "site" / name)                                  # raises if the file isn't valid XML
+    assert ET.parse(tmp_path / "site" / "feed.xml").find("channel/title").text == "Penny & Pixel"
+    page = (tmp_path / "site" / "articles" / "pay-1" / "index.html").read_text()
+    assert "<title>Pay &amp; prices: what changed · Penny &amp; Pixel</title>" in page and "&amp;amp;" not in page
