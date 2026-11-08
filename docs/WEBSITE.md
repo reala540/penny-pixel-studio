@@ -35,6 +35,22 @@ Left off, with the reason shown on the dashboard's Home ("Your website") and in 
 | Title too similar to an earlier article | No near-duplicates |
 | Taken off by the owner (`settings.website_hidden`) | Corrections and unpublishing |
 
+## AI rewrite and German version (`enhance.py`)
+
+1. **Rewrite:** the cleaned narration is rewritten as a proper article by a free model (role `repurposer`). It is used
+   only if code confirms: no number that isn't in the checked narration, no new product, company or place name, no
+   video talk or hands-on test claim, and a length within 60–130% of the original. Otherwise the cleaned narration is
+   published as before.
+2. **German:** AI-tools articles only, translated from the final English text. Used only if every number is kept (German
+   decimal commas allowed), at least 80% of names are kept, and the length is sensible. Pages: `/de/`, `/de/artikel/…/`,
+   `/de/ueber-uns/`, each marked `lang="de"`, with `hreflang` links to the English original (and back), and a note that
+   the text is an automatic translation. **Money articles stay English**: a German speaker would need to check them.
+
+Each result (including a failed check) is saved once per script version in storage (`website/cache/<version>-v1.json`),
+so an article costs at most one rewrite and one translation. If no free model answers, nothing is saved and the next
+build tries again. Switch either step off with `website.ai_rewrite: false` or `website.german: false`. The build summary
+and the `website_built` audit entry list what each step did ("notes").
+
 Code: `engine/studio/website/__init__.py` (collecting and rules), `render.py` (pages), `pages.py` (standing pages),
 `assets.py` (design system: CSS, logo, one script). Tests: `engine/tests/test_website.py`.
 
@@ -86,9 +102,11 @@ and `Permissions-Policy`. All text is escaped; affiliate links are `rel="sponsor
 |---|---|---|
 | `url` | `https://pennyandpixel.pages.dev` | The address used in links and the sitemap (`SITE_URL` repository variable wins) |
 | `project` | `pennyandpixel` | Cloudflare Pages project (`SITE_PROJECT` variable wins) |
-| `contact_email` | none | Shown on Contact, Corrections and Advertise; otherwise readers are sent to the social accounts |
+| `contact_email` | `pennyandpixel.contact@gmail.com` | Shown on Contact, Corrections and Advertise; otherwise readers are sent to the social accounts |
 | `newsletter.form_action`, `.provider` | none | A free provider's sign-up address (e.g. Buttondown's embed form). The form appears only when set; consent is required; the provider stores subscriptions and handles unsubscribing |
-| `analytics.cloudflare_token` | none | Cloudflare Web Analytics (free, cookie-free). Alternatively switch it on in the Pages project (Metrics → Web Analytics) |
+| `google_site_verification` | set | Search Console's HTML-tag check, on every page |
+| `ai_rewrite`, `german` | on | The two AI steps above |
+| `analytics.cloudflare_token` | none (switched on in Cloudflare instead) | Cloudflare Web Analytics (free, cookie-free). Alternatively switch it on in the Pages project (Metrics → Web Analytics) |
 
 Secrets used by the workflow: `CLOUDFLARE_API_TOKEN` (needs Cloudflare Pages: Edit; it already works),
 `CLOUDFLARE_ACCOUNT_ID`, and the studio's usual database and storage secrets.
@@ -108,11 +126,11 @@ Limits change; check the providers' pricing pages before relying on them.
 
 - **Google AdSense:** it won't accept a free `pages.dev` address; a custom domain (about $10 a year) would be needed. No
   advertising code is included.
-- **Newsletter, analytics, contact email:** need the owner's free accounts or settings (see above); until then nothing is
-  shown, so nothing pretends to work.
+- **Newsletter:** needs the owner's free provider account (e.g. Buttondown); until its sign-up address is set, no form is
+  shown. Analytics is switched on in Cloudflare (Web Analytics).
 - **"Popular" articles:** no analytics data yet, so the home page shows newest first instead of inventing popularity.
 - **Videos on the site:** YouTube uploads stay private until Google's API audit passes, so no video is embedded yet;
   articles show the thumbnail. Embeds appear by themselves once videos are public.
-- **German-language section:** not started. Translating money content needs checking by someone who reads German.
-- **Article quality:** articles are cleaned video scripts, so some read a little repetitively. A rewrite-and-recheck step
-  would improve them; it isn't built yet.
+- **German money articles:** not published; they need checking by someone who reads German.
+- **Rewrite checks are by code**, not a second fact-check by a model: they guarantee no new numbers or names, not that
+  every sentence keeps exactly its original meaning.

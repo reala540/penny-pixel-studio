@@ -57,12 +57,19 @@ class Site:
         return links
 
     def page(self, title: str, description: str, path: str, body: str, *, image: str | None = None,
-             og_type: str = "website", ld: list | None = None, noindex: bool = False) -> str:
+             og_type: str = "website", ld: list | None = None, noindex: bool = False, lang: str = "en",
+             alternates: dict[str, str] | None = None, nav_links: list | None = None, footer: str | None = None) -> str:
         url = self.url + path
         full = title if title == SITE_NAME else f"{title} · {SITE_NAME}"
         img = self.url + (f"/images/{image}" if image else "/og-default.png")
-        nav = "".join(f'<a href="{h}"{" aria-current=\"page\"" if path.startswith(h) else ""}>{e(t)}</a>'
-                      for h, t in self.nav_links(path))
+        items = []
+        for link in nav_links or self.nav_links(path):
+            href, text, hl = (*link, None)[:3]   # an optional third value is the linked page's language
+            current = ' aria-current="page"' if href != "/" and path.startswith(href) else ""
+            other = f' lang="{hl}" hreflang="{hl}"' if hl else ""
+            items.append(f'<a href="{href}"{current}{other}>{e(text)}</a>')
+        nav = "".join(items)
+        alt = "".join(f'<link rel="alternate" hreflang="{k}" href="{e(self.url + v)}">' for k, v in (alternates or {}).items())
         analytics = ""
         token = (self.opt.get("analytics") or {}).get("cloudflare_token")
         if token:   # Cloudflare Web Analytics: free, cookie-free; only when the owner has added a token
@@ -70,10 +77,10 @@ class Site:
                          f"data-cf-beacon='{e(json.dumps({'token': token}))}'></script>")
         lds = "".join(_json_ld(x) for x in (ld or []))
         return f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<html lang="{lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>{e(full)}</title><meta name="description" content="{e(description)}"><link rel="canonical" href="{e(url)}">
 {'<meta name="robots" content="noindex">' if noindex else ''}
-<meta name="theme-color" content="#101B32"><meta property="og:site_name" content="{SITE_HTML}"><meta property="og:locale" content="en_US">
+<meta name="theme-color" content="#101B32"><meta property="og:site_name" content="{SITE_HTML}"><meta property="og:locale" content="{"de_DE" if lang == "de" else "en_US"}">{alt}{self.verification()}
 <meta property="og:title" content="{e(title)}"><meta property="og:description" content="{e(description)}">
 <meta property="og:url" content="{e(url)}"><meta property="og:type" content="{og_type}"><meta property="og:image" content="{e(img)}">
 <meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="{e(title)}">
@@ -82,16 +89,24 @@ class Site:
 <link rel="alternate" type="application/rss+xml" title="{SITE_HTML}" href="/feed.xml">
 <link rel="stylesheet" href="/assets/site.css"><script defer src="/assets/site.js"></script>{analytics}{lds}
 </head><body>
-<a class="skip" href="#main">Skip to content</a>
+<a class="skip" href="#main">{"Zum Inhalt" if lang == "de" else "Skip to content"}</a>
 <header class="top"><div class="wrap">
 <a class="brand" href="/" aria-label="{SITE_HTML} home">{assets.logo(32)}<span>{SITE_HTML}</span></a>
 <nav class="nav desktop" aria-label="Main">{nav}</nav>
-<details class="menu"><summary>Menu</summary><nav class="nav" aria-label="Main (mobile)">{nav}</nav></details>
+<details class="menu"><summary>{"Menü" if lang == "de" else "Menu"}</summary><nav class="nav" aria-label="Main (mobile)">{nav}</nav></details>
 </div></header>
 <main id="main">{body}</main>
-{self.footer()}
+{footer if footer is not None else self.footer()}
 </body></html>
 """
+
+    def verification(self) -> str:
+        code = self.opt.get("google_site_verification")
+        return f'<meta name="google-site-verification" content="{e(code)}">' if code else ""
+
+    @property
+    def german(self) -> list:
+        return [a for a in self.articles if a.de_blocks]
 
     def footer(self) -> str:
         cats = "".join(f'<li><a href="/{c}/">{e(CHANNELS[c][0])}</a></li>' for c in self.channels)
@@ -103,7 +118,7 @@ class Site:
 <li><a href="/editorial-policy/">Editorial policy</a></li><li><a href="/ai-content-policy/">AI content policy</a></li>
 <li><a href="/corrections/">Corrections</a></li><li><a href="/advertise/">Advertise with us</a></li></ul></nav>
 <nav aria-label="Legal"><h2>Legal</h2><ul><li><a href="/privacy/">Privacy policy</a></li><li><a href="/terms/">Terms of use</a></li>
-<li><a href="/affiliate-disclosure/">Affiliate disclosure</a></li><li><a href="/feed.xml">RSS feed</a></li></ul></nav>
+<li><a href="/affiliate-disclosure/">Affiliate disclosure</a></li><li><a href="/feed.xml">RSS feed</a></li>{'<li><a href="/de/" lang="de" hreflang="de">Deutsch</a></li>' if self.german else ''}</ul></nav>
 {f'<nav aria-label="Follow"><h2>Follow</h2><ul>{follow}</ul></nav>' if follow else ''}
 </div><p class="small">&copy; {self.year} {SITE_HTML}. General education only, not personal financial advice.</p></div></footer>"""
 
@@ -184,7 +199,7 @@ class Site:
                "logo": self.url + "/icon-512.png", **({"sameAs": [s["url"] for s in self.socials]} if self.socials else {})},
               {"@context": "https://schema.org", "@type": "WebSite", "name": SITE_NAME, "url": self.url + "/"}]
         return self.page(SITE_NAME, f"{TAGLINE}. Practical AI guides and money explainers, every fact checked against its source.",
-                         "/", "".join(body), ld=ld)
+                         "/", "".join(body), ld=ld, alternates={"en": "/", "de": "/de/", "x-default": "/"} if self.german else None)
 
     def listing(self, path: str, title: str, intro: str, items: list) -> dict[str, str]:
         """A paginated list of cards: {path: html} for every page."""
@@ -234,7 +249,9 @@ class Site:
                  f'<li aria-current="page">{e(a.title[:60])}{"…" if len(a.title) > 60 else ""}</li></ol></nav>',
                  f'<article class="article">{self.tag(a.channel)}<h1>{e(a.title)}</h1>',
                  f'<p class="byline"><span>By the {SITE_HTML} team</span><span>Published <time datetime="{a.published.date().isoformat()}">{date(a.published)}</time>'
-                 f' · facts as of this date</span><span>{a.minutes} min read</span></p>']
+                 f' · facts as of this date</span><span>{a.minutes} min read</span>'
+                 + (f'<span><a href="/de/artikel/{e(a.slug)}/" lang="de" hreflang="de">Auf Deutsch lesen</a></span>' if a.de_blocks else "")
+                 + '</p>']
         if a.video_id:
             parts.append(self.video_box(a))
         elif a.image:
@@ -291,14 +308,90 @@ class Site:
                        "uploadDate": a.published.isoformat(), "thumbnailUrl": f"https://i.ytimg.com/vi/{a.video_id}/hqdefault.jpg",
                        "embedUrl": f"https://www.youtube-nocookie.com/embed/{a.video_id}",
                        "contentUrl": f"https://www.youtube.com/watch?v={a.video_id}"})
+        alts = {"en": path, "de": f"/de/artikel/{a.slug}/", "x-default": path} if a.de_blocks else None
         return self.page(a.title, a.description, path, f'<div class="wrap">{"".join(parts)}</div>', image=a.image,
-                         og_type="article", ld=ld)
+                         og_type="article", ld=ld, alternates=alts)
 
     def simple(self, path: str, title: str, description: str, body_html: str) -> str:
-        return self.page(title, description, path, f'<div class="wrap"><div class="page"><h1>{e(title)}</h1>{body_html}</div></div>')
+        alts = {"en": "/about/", "de": "/de/ueber-uns/", "x-default": "/about/"} if path == "/about/" and self.german else None
+        return self.page(title, description, path, f'<div class="wrap"><div class="page"><h1>{e(title)}</h1>{body_html}</div></div>',
+                         alternates=alts)
 
     def not_found(self) -> str:
         return self.page("Page not found", "This page doesn't exist.", "/404.html",
                          '<div class="wrap"><div class="page"><h1>We couldn\'t find that page</h1><p>It may have moved, or the '
                          'link may be mistyped.</p><p><a class="btn solid" href="/">Go to the homepage</a></p>'
                          '<p><a href="/search/">Search the articles</a></p></div></div>', noindex=True)
+
+    # ------------------------------------------------------------------ German (AI-tools articles only)
+    DE_NOTE = ("Automatisch aus dem Englischen übersetzt. Eine Software hat geprüft, dass alle Zahlen und Namen mit dem "
+               "Original übereinstimmen. Die Quellen sind überwiegend englischsprachig. Allgemeine Information, keine Beratung.")
+
+    def german_nav(self) -> list:
+        return [("/de/", "Alle Artikel"), ("/de/ueber-uns/", "Über uns"), ("/", "English", "en")]
+
+    def german_footer(self) -> str:
+        return (f'<footer class="foot" lang="de"><div class="wrap"><p><a href="/de/">{SITE_HTML} auf Deutsch</a> · '
+                f'<a href="/de/ueber-uns/">Über uns</a> · <a href="/" lang="en" hreflang="en">English</a> · '
+                f'<a href="/privacy/" lang="en">Privacy policy (English)</a></p>'
+                f'<p class="small">&copy; {self.year} {SITE_HTML}. Allgemeine Information, keine persönliche Beratung.</p></div></footer>')
+
+    def german_card(self, a) -> str:
+        return (f'<article class="card"><a class="cover" href="/de/artikel/{e(a.slug)}/" tabindex="-1" aria-hidden="true">{self.picture(a)}</a>'
+                f'<div class="body"><span class="tag ai">KI-Tools</span><h3><a href="/de/artikel/{e(a.slug)}/">{e(a.de_title)}</a></h3>'
+                f'<p class="meta">{a.published:%d.%m.%Y}</p></div></article>')
+
+    def german_home(self) -> str:
+        cards = "".join(self.german_card(a) for a in self.german)
+        body = (f'<div class="wrap"><section class="section"><h1 class="title big">KI-Tools verständlich erklärt</h1>'
+                f'<p class="lead">Praktische Artikel über KI-Werkzeuge, übersetzt aus unserer englischen Ausgabe. Jede Angabe '
+                f'ist mit einer Quelle belegt.</p><p class="note">{e(self.DE_NOTE)}</p><div class="grid">{cards}</div></section></div>')
+        return self.page(f"{SITE_NAME} auf Deutsch", "Praktische Artikel über KI-Tools, jede Angabe mit Quelle.", "/de/", body,
+                         lang="de", nav_links=self.german_nav(), footer=self.german_footer(),
+                         alternates={"de": "/de/", "en": "/", "x-default": "/"})
+
+    def german_about(self) -> str:
+        body = (f'<div class="wrap"><div class="page"><h1>Über uns</h1><p>{SITE_HTML} veröffentlicht praktische Anleitungen zu '
+                'KI-Tools und Geldthemen, vor allem für Leserinnen und Leser in den USA, Großbritannien, Kanada, Australien und '
+                'Deutschland.</p><h2>So arbeiten wir</h2><ul><li>Jeder Artikel entsteht aus einem unserer Videos und wird mit '
+                'Hilfe von KI-Werkzeugen recherchiert.</li><li>Jede Tatsachenbehauptung wird mit einer genannten Quelle samt '
+                'Datum abgeglichen.</li><li>Wir behaupten nie, etwas selbst getestet zu haben, wenn wir es nicht getan haben.'
+                '</li><li>Die deutschen Artikel sind automatische Übersetzungen; Geldthemen erscheinen nur auf Englisch.</li></ul>'
+                '<p><a href="/about/" lang="en" hreflang="en">About us (English)</a></p></div></div>')
+        return self.page("Über uns", f"Wer {SITE_NAME} ist und wie jede Angabe geprüft wird.", "/de/ueber-uns/", body,
+                         lang="de", nav_links=self.german_nav(), footer=self.german_footer(),
+                         alternates={"de": "/de/ueber-uns/", "en": "/about/", "x-default": "/about/"})
+
+    def german_article(self, a) -> str:
+        path = f"/de/artikel/{a.slug}/"
+        heads = [(i, t) for i, (k, t) in enumerate(a.de_blocks) if k == "h2"]
+        prose, first = [], True
+        for i, (kind, text) in enumerate(a.de_blocks):
+            if kind == "h2":
+                prose.append(f'<h2 id="s{i}">{e(text)}</h2>')
+            else:
+                cls = ' class="intro"' if first else ""
+                prose.append(f"<p{cls}>{e(text)}</p>")
+                first = False
+        toc = ("".join(f'<li><a href="#s{i}">{e(t)}</a></li>' for i, t in heads))
+        sources = "".join(f'<li><a href="{e(s["url"])}" rel="noopener" target="_blank" lang="en">{e(s.get("title") or s["url"])}</a>'
+                          f'{(" · " + e(s["publisher"])) if s.get("publisher") else ""}'
+                          f'{(" · " + format(s["published_at"], "%d.%m.%Y")) if isinstance(s.get("published_at"), datetime) else ""}</li>'
+                          for s in a.sources)
+        body = (f'<div class="wrap"><nav class="crumbs" aria-label="Brotkrumen"><ol><li><a href="/de/">Startseite</a></li>'
+                f'<li aria-current="page">{e(a.de_title[:60])}</li></ol></nav><article class="article"><span class="tag ai">KI-Tools</span>'
+                f'<h1>{e(a.de_title)}</h1><p class="byline"><span>Vom {SITE_HTML}-Team</span><span>Veröffentlicht am '
+                f'<time datetime="{a.published.date().isoformat()}">{a.published:%d.%m.%Y}</time> · Stand der Angaben: dieses Datum</span>'
+                f'<span><a href="/articles/{e(a.slug)}/" lang="en" hreflang="en">Original (English)</a></span></p>'
+                + (self.video_box(a) if a.video_id else (f'<figure class="figure">{self.picture(a, eager=True, sizes="(max-width:760px) 100vw, 720px")}</figure>' if a.image else ""))
+                + (f'<details class="toc" open><summary>In diesem Artikel</summary><ol>{toc}</ol></details>' if len(heads) >= 3 else "")
+                + f'<div class="prose">{"".join(prose)}</div><p class="note">{e(self.DE_NOTE)}</p>'
+                + (f'<h2 class="h2s">Quellen</h2><ol class="sources">{sources}</ol>' if sources else "")
+                + "</article></div>")
+        ld = [{"@context": "https://schema.org", "@type": "Article", "headline": a.de_title[:110], "inLanguage": "de",
+               "datePublished": a.published.isoformat(), "mainEntityOfPage": self.url + path,
+               "author": {"@type": "Organization", "name": SITE_NAME}, "publisher": {"@type": "Organization", "name": SITE_NAME},
+               **({"image": [self.url + f"/images/{a.image}"]} if a.image else {})}]
+        return self.page(a.de_title, (a.de_blocks[0][1] if a.de_blocks else a.description)[:200], path, body, image=a.image,
+                         og_type="article", ld=ld, lang="de", nav_links=self.german_nav(), footer=self.german_footer(),
+                         alternates={"de": path, "en": f"/articles/{a.slug}/", "x-default": f"/articles/{a.slug}/"})

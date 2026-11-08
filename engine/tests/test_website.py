@@ -198,3 +198,93 @@ def test_near_duplicate_titles_keep_only_the_first(produced, tmp_path, monkeypat
     monkeypatch.setattr(website, "_title_words", lambda t: {"inflation", "changes", "paycheck"})   # every title alike
     articles, skipped = website.collect(conn, storage, tmp_path / "w", check_video=lambda u: True)
     assert len(articles) == 1 and any("too similar to an article already on the website" in s for s in skipped)
+
+
+# ------------------------------------------------------------------ AI rewrite and German version (8 Nov)
+
+from studio.website import enhance  # noqa: E402
+
+SRC = [("p", "Prices rose 0.6% in September 2026, according to the Bureau of Labor Statistics. Prices rose 0.6% that month."),
+       ("p", "Unemployment was 4.2% in September 2026. ChatGPT and Google Sheets can help you track your own budget."),
+       ("p", "Average hourly earnings went up by $0.05 that month, so real pay barely moved for many workers.")]
+
+
+def test_a_rewrite_with_a_new_number_or_name_is_not_used():
+    good = [("p", "In September 2026, prices rose 0.6%, according to the Bureau of Labor Statistics."),
+            ("h2", "Jobs and pay"), ("p", "Unemployment was 4.2% that month, and average hourly earnings went up by $0.05."),
+            ("p", "So real pay barely moved for many workers. ChatGPT and Google Sheets can help you track your own budget.")]
+    assert enhance.check_rewrite(SRC, good) is None
+    assert "new numbers" in enhance.check_rewrite(SRC, good + [("p", "Experts expect 3% next year.")])
+    assert "new names" in enhance.check_rewrite(SRC, [("p", t.replace("ChatGPT", "Microsoft Copilot")) if k == "p" else (k, t) for k, t in good])
+    assert "forbidden wording" in enhance.check_rewrite(SRC, good + [("p", "In this video we tested it ourselves.")])
+    assert "length" in enhance.check_rewrite(SRC, good[:1])
+
+
+def test_a_translation_must_keep_every_number_and_name():
+    de = [("p", "Im September 2026 stiegen die Preise um 0,6 %, so das Bureau of Labor Statistics. Die Preise stiegen in dem Monat um 0,6 %."),
+          ("p", "Die Arbeitslosenquote lag im September 2026 bei 4,2 %. ChatGPT und Google Sheets helfen Ihnen, Ihr eigenes Budget zu verfolgen."),
+          ("p", "Die durchschnittlichen Stundenlöhne stiegen in dem Monat um $0,05, daher bewegte sich der Reallohn für viele kaum.")]
+    assert enhance.check_translation(SRC, de) is None
+    wrong = [(k, t.replace("4,2", "4,3")) for k, t in de]
+    assert "numbers differ" in enhance.check_translation(SRC, wrong)
+    lost = [(k, t.replace("ChatGPT und Google Sheets helfen", "Werkzeuge helfen")) for k, t in de]
+    assert "names lost" in enhance.check_translation(SRC, lost)
+
+
+class _Router:
+    def __init__(self, answers):
+        self.answers, self.calls = answers, 0
+
+    def complete(self, role, prompt, schema=None, **kw):
+        from types import SimpleNamespace
+
+        self.calls += 1
+        return SimpleNamespace(data=schema.model_validate(self.answers.pop(0)))
+
+
+def test_the_ai_steps_run_once_per_version_and_money_stays_english(tmp_path):
+    from studio.storage import LocalStorage
+
+    storage = LocalStorage(tmp_path / "store")
+    draft = {"intro": SRC[0][1], "sections": [{"heading": "Jobs and pay", "paragraphs": [SRC[1][1], SRC[2][1]]}]}
+    german = {"title": "Preise und Löhne", "intro": "Im September 2026 stiegen die Preise um 0,6 %, so das Bureau of Labor Statistics. Die Preise stiegen um 0,6 %.",
+              "sections": [{"heading": "Arbeit und Lohn", "paragraphs": [
+                  "Die Arbeitslosenquote lag im September 2026 bei 4,2 %. ChatGPT und Google Sheets helfen Ihnen, Ihr Budget zu verfolgen.",
+                  "Die durchschnittlichen Stundenlöhne stiegen um $0,05, daher bewegte sich der Reallohn für viele Beschäftigte kaum."]}]}
+    r = _Router([draft, german])
+    got = enhance.enhance(r, storage, "sv-1", "Prices and pay", "ai", SRC, tmp_path / "w")
+    assert got["en"] and got["de"]["title"] == "Preise und Löhne" and r.calls == 2
+    again = enhance.enhance(_Router([]), storage, "sv-1", "Prices and pay", "ai", SRC, tmp_path / "w2")
+    assert again == json.loads(json.dumps(got))                              # cached: no new AI call
+    money = enhance.enhance(_Router([draft]), storage, "sv-2", "Prices and pay", "money", SRC, tmp_path / "w3")
+    assert money["de"] is None and "stay in English" in money["de_note"]
+
+
+def test_no_free_ai_service_means_no_cache_and_the_plain_version(tmp_path):
+    from studio.errors import TransientError
+    from studio.storage import LocalStorage
+
+    class Busy:
+        def complete(self, *a, **k):
+            raise TransientError("all busy")
+
+    storage = LocalStorage(tmp_path / "store")
+    got = enhance.enhance(Busy(), storage, "sv-9", "T", "ai", SRC, tmp_path / "w")
+    assert got["en"] is None and "no free AI service" in got["en_note"]
+    assert enhance.load(storage, "sv-9", tmp_path / "w") is None              # tried again next build
+
+
+def test_german_pages_pair_with_their_english_originals(tmp_path):
+    a = _art("a1", "ai", title="Prices and pay", de_title="Preise und Löhne",
+             de_blocks=[("p", "Ein Absatz auf Deutsch.")] * 3)
+    out = tmp_path / "site"
+    website.build([a, _art("m1", "money")], out, options={"google_site_verification": "abc123"})
+    en = (out / "articles" / "a1" / "index.html").read_text()
+    de = (out / "de" / "artikel" / "a1" / "index.html").read_text()
+    assert '<html lang="de">' in de and "Automatisch aus dem Englischen übersetzt" in de
+    for page in (en, de):
+        assert 'hreflang="de" href="https://pennyandpixel.pages.dev/de/artikel/a1/"' in page
+        assert 'hreflang="en" href="https://pennyandpixel.pages.dev/articles/a1/"' in page
+    assert "Auf Deutsch lesen" in en and not (out / "de" / "artikel" / "m1").exists()
+    assert '<meta name="google-site-verification" content="abc123">' in (out / "index.html").read_text()
+    assert "/de/artikel/a1/" in (out / "sitemap.xml").read_text()

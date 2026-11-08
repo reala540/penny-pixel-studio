@@ -77,6 +77,9 @@ class Article:
     blocks: list[tuple[str, str]] | None = None   # ("h2", heading) / ("p", paragraph); from paragraphs if not given
     webp: bool = False                # 640 and 1280 wide WebP copies of the image exist
     image_alt: str = ""
+    de_title: str | None = None       # German version (AI-tools articles whose translation passed the checks)
+    de_blocks: list[tuple[str, str]] | None = None
+    notes: list[str] = field(default_factory=list)   # what the AI steps did or why they weren't used
 
     def __post_init__(self):
         if self.blocks is None:
@@ -207,7 +210,7 @@ def _title_words(t: str) -> set[str]:
     return {w for w in re.findall(r"[a-z0-9]+", t.lower()) if len(w) > 2}
 
 
-def collect(conn, storage, work: Path, check_video=video_is_public) -> tuple[list[Article], list[str]]:
+def collect(conn, storage, work: Path, check_video=video_is_public, router=None) -> tuple[list[Article], list[str]]:
     """Every package that may be on the website, and a line for each one that is left out."""
     rows = db.all_(conn, """
         select p.*, sv.id sv_id, sv.body,
@@ -248,9 +251,24 @@ def collect(conn, storage, work: Path, check_video=video_is_public) -> tuple[lis
         hook = (body.get("hook") or "").strip()
         if hook and not (TEST_CLAIM.search(hook) or VIDEO_TALK.search(hook)):
             blocks = [("p", hook)] + blocks
+        notes, got = [], {}
+        if _options().get("ai_rewrite", True):   # a cached result is used even when no AI service is passed
+            from . import enhance
+
+            got = enhance.enhance(router, storage, p["sv_id"], title, p["channel_slug"], blocks, work,
+                                  german=_options().get("german", True))
+            if got.get("en"):
+                blocks = [tuple(b) for b in got["en"]]
+                notes.append("rewritten as an article (checked: same numbers and names)")
+            elif got.get("en_note"):
+                notes.append(got["en_note"])
+            if got.get("de_note"):
+                notes.append(got["de_note"])
         paragraphs = [t for k, t in blocks if k == "p"]
         art = Article(str(p["id"]), p["channel_slug"], slug, title, (body.get("promise") or paragraphs[0])[:300],
-                      paragraphs, p["first_posted"], sources=_sources(conn, body), blocks=blocks)
+                      paragraphs, p["first_posted"], sources=_sources(conn, body), blocks=blocks, notes=notes)
+        if got.get("de"):
+            art.de_title, art.de_blocks = got["de"]["title"], [tuple(b) for b in got["de"]["blocks"]]
         if p["youtube_url"] and check_video(p["youtube_url"]):
             art.video_url, art.video_id = p["youtube_url"], _video_id(p["youtube_url"])
         art.image = _image(conn, storage, p["id"], images / f"{slug}.jpg", work)
@@ -391,6 +409,11 @@ def build(articles: list[Article], out: Path, images_dir: Path | None = None, so
         files.update(site.listing(f"/{c}/", CHANNELS[c][0], CHANNELS[c][1], [a for a in articles if a.channel == c]))
     if site.videos:
         files["/videos/"] = site.videos_page()
+    for a in site.german:
+        files[f"/de/artikel/{a.slug}/"] = site.german_article(a)
+    if site.german:
+        files["/de/"] = site.german_home()
+        files["/de/ueber-uns/"] = site.german_about()
     for path, (title, desc, body) in pages.standing_pages(options.get("contact_email"), socials).items():
         files[path] = site.simple(path, title, desc, body)
     for path, page in files.items():
@@ -417,7 +440,8 @@ def build(articles: list[Article], out: Path, images_dir: Path | None = None, so
                                   f"  Content-Security-Policy: {_csp(options)}\n"
                                   "/assets/*\n  Cache-Control: public, max-age=86400\n/images/*\n  Cache-Control: public, max-age=604800\n")
     return {"articles": len(articles), "ai": sum(a.channel == "ai" for a in articles),
-            "money": sum(a.channel == "money" for a in articles), "videos": len(site.videos), "pages": len(files) + 1}
+            "money": sum(a.channel == "money" for a in articles), "videos": len(site.videos), "german": len(site.german),
+            "pages": len(files) + 1}
 
 
 def article_html(a: Article, related: list[Article] | None = None) -> str:
@@ -425,15 +449,17 @@ def article_html(a: Article, related: list[Article] | None = None) -> str:
     return render.Site(site_url(), [a], [], {}).article(a, related or [])
 
 
-def build_site(conn, storage, out: Path) -> dict:
+def build_site(conn, storage, out: Path, router=None) -> dict:
     """Collect and write the website; the summary says what was published and what was left out, and why."""
     work = config.runtime().work_dir / "site"
     if work.exists():
         shutil.rmtree(work)
-    articles, skipped = collect(conn, storage, work)
+    articles, skipped = collect(conn, storage, work, router=router)
     summary = build(articles, out, work / "images", socials=_socials(conn))
     summary["left_out"] = skipped
+    summary["notes"] = [f"{a.title[:60]}: {n}" for a in articles for n in a.notes]
     db.audit(conn, "website_built", "website", None,
              {"articles": summary["articles"], "left_out": skipped[:20], "url": site_url(),
+              "notes": summary["notes"][:40], "german": summary.get("german", 0),
               "published": [{"id": a.project_id, "title": a.title, "slug": a.slug} for a in articles[:200]]}, actor="engine")
     return summary
