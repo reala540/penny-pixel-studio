@@ -48,6 +48,7 @@ def process_owner_jobs(conn, router: Router, storage, limit: int = 10, rounds: i
     notify.retry_pending(conn)
     produce.apply_brand_overrides(conn)
     jobs.check_stop(conn)  # notes when this run started, so a later Stop & clear stops it
+    _review_waiting_repairs(conn,router)
     done: list[dict] = []
     for _ in range(max(rounds, 1)):
         batch = _process_round(conn, router, storage, limit)
@@ -66,9 +67,37 @@ def process_owner_jobs(conn, router: Router, storage, limit: int = 10, rounds: i
     return done
 
 
+def _review_completed_job(conn, router, job):
+    """Recheck each completed package before another long job can delay its approval."""
+    from .review import auto
+    if job["job_type"] == "auto_review" or not job.get("project_id") or not auto.mode_on(conn):
+        return
+    try:
+        parent = db.one(conn,"select coalesce(parent_project_id,id) id from content_projects where id=%s",(job["project_id"],))
+        if parent:
+            auto.run(conn,router,[parent["id"]])
+    except Exception as exc:
+        notify.send(conn,"job_failed","Auto Review couldn't run",str(exc)[:300],
+                    link=links.needs_you(),dedupe_key=f"autorun:{job['id']}")
+
+
+def _review_waiting_repairs(conn, router):
+    """Catch completed repairs left behind by an older queue process, once per unchecked version."""
+    from .review import auto
+    if not auto.mode_on(conn):
+        return
+    rows = db.all_(conn,"""select p.id,
+        (select j.id from generation_jobs j where j.project_id=p.id and j.status='completed' and j.input->>'auto_fix'='true' order by j.finished_at desc limit 1) job_id
+        from content_projects p where p.parent_project_id is null and p.status in ('ready_for_review','needs_attention')
+        and exists(select 1 from generation_jobs j where j.project_id=p.id and j.status='completed' and j.input->>'auto_fix'='true')
+        and not exists(select 1 from generation_jobs j where j.project_id=p.id and j.requested_by='owner' and j.status in ('queued','running'))
+        and (select a.verdict from auto_reviews a where a.project_id=p.id order by a.created_at desc,a.attempt desc limit 1)='fixing'""")
+    for row in rows:
+        _review_completed_job(conn,router,{"job_type":"repair_catchup","project_id":row["id"],"id":row["job_id"]})
+
+
 def _process_round(conn, router: Router, storage, limit: int) -> list[dict]:
     done = []
-    rows = []
     for _ in range(limit):
         job = db.one(conn, """update generation_jobs set status='running', started_at=now(), updated_at=now(), attempts=attempts+1
                             where id = (select id from generation_jobs where status='queued' and requested_by='owner' and coalesce(next_attempt_at,now())<=now()
@@ -76,7 +105,6 @@ def _process_round(conn, router: Router, storage, limit: int) -> list[dict]:
                             returning *""")
         if job is None:
             break
-        rows.append(job)
         try:
             with jobs.job_context(job["id"]):
                 jobs.progress(conn, START_LABEL.get(job["job_type"], "Working on it"))
@@ -84,6 +112,7 @@ def _process_round(conn, router: Router, storage, limit: int) -> list[dict]:
                 jobs.check_stop(conn)
             _finish(conn, job, "completed", out)
             done.append({"id": str(job["id"]), "type": job["job_type"], "status": "completed"})
+            _review_completed_job(conn,router,job)
         except jobs.JobCancelled:
             _finish(conn, job, "cancelled")
             db.run(conn, """update content_projects set status='failed' where
@@ -111,18 +140,6 @@ def _process_round(conn, router: Router, storage, limit: int) -> list[dict]:
             notify.send(conn, "job_failed", f"Request failed: {job['job_type']}", str(exc)[:300],
                         link=links.job(job), dedupe_key=f"jobfail:{job['id']}")
             done.append({"id": str(job["id"]), "type": job["job_type"], "status": "failed", "error": str(exc)[:200]})
-    if rows and not any(j["job_type"] == "auto_review" for j in rows):
-        # a rewrite or re-render may have made a package ready again: review it if Auto Review & Post is ON
-        from .review import auto
-
-        try:
-            completed_ids = [x["id"] for x in done if x["status"] == "completed"]
-            targets = db.all_(conn, "select distinct project_id from generation_jobs where id=any(%s::uuid[]) and project_id is not null", (completed_ids,))
-            if targets:
-                auto.run(conn, router, [x["project_id"] for x in targets])
-        except Exception as exc:
-            notify.send(conn, "job_failed", "Auto Review couldn't run", str(exc)[:300],
-                        link=links.needs_you(), dedupe_key=f"autorun:{rows[0]['id']}")
     return done
 
 

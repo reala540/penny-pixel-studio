@@ -548,3 +548,107 @@ def test_activation_consumed_by_old_engine_is_replayed_once(synced, monkeypatch)
         == "recovery_v2"
     )
     assert maintenance.process_owner_jobs(synced, None, None) == []
+
+
+def test_review_and_repair_in_same_batch_reach_automatic_approval(synced, monkeypatch):
+    router, p, sv, _ = seed(synced, monkeypatch)
+    db.run(
+        synced,
+        "update research_claims set status='partially_supported' where script_version_id=%s",
+        (sv["id"],),
+    )
+    db.run(
+        synced,
+        "insert into generation_jobs(job_type,status,requested_by,idempotency_key,input) values('auto_review','queued','owner','mixed-batch-review','{}')",
+    )
+    original = maintenance._run_owner_job
+
+    def run(conn, router, storage, job):
+        if job["job_type"] == "regenerate_script":
+            db.run(
+                conn,
+                "update research_claims set status='supported' where script_version_id=%s",
+                (sv["id"],),
+            )
+            return {"repaired": True}
+        return original(conn, router, storage, job)
+
+    monkeypatch.setattr(maintenance, "_run_owner_job", run)
+    done = maintenance.process_owner_jobs(synced, router, None, rounds=1)
+    assert [j["type"] for j in done] == ["auto_review", "regenerate_script"]
+    assert all(j["status"] == "completed" for j in done)
+    assert (
+        db.one(synced, "select status from content_projects where id=%s", (p["id"],))[
+            "status"
+        ]
+        == "approved"
+    )
+    assert (
+        db.one(synced, "select count(*) n from auto_reviews where verdict='approved'")[
+            "n"
+        ]
+        == 1
+    )
+
+
+def test_completed_child_is_reviewed_before_next_job_and_targets_parent(
+    synced, monkeypatch
+):
+    router, p, _, _ = seed(synced, monkeypatch)
+    child = produce.ensure_project(
+        synced,
+        "ai",
+        "short",
+        "Child",
+        datetime.now().date(),
+        parent_id=p["id"],
+        key="hook-child",
+    )
+    db.run(
+        synced,
+        "insert into generation_jobs(job_type,project_id,status,requested_by,idempotency_key,input,created_at) values('preview_scene',%s,'queued','owner','hook-first','{}',now()-interval '2 minutes'),('preview_scene',%s,'queued','owner','hook-second','{}',now()-interval '1 minute')",
+        (child["id"], p["id"]),
+    )
+    events = []
+
+    def review(conn, r, ids):
+        events.append(("review", ids))
+        return []
+
+    def run(conn, r, s, job):
+        if job["idempotency_key"] == "hook-second":
+            assert events == [("job", "hook-first"), ("review", [p["id"]])]
+        events.append(("job", job["idempotency_key"]))
+        return {}
+
+    monkeypatch.setattr(auto, "run", review)
+    monkeypatch.setattr(maintenance, "_run_owner_job", run)
+    done = maintenance.process_owner_jobs(synced, router, None, rounds=1)
+    assert all(j["status"] == "completed" for j in done)
+    assert events[-1] == ("review", [p["id"]])
+
+
+def test_completed_repair_from_old_process_is_rechecked_without_another_job(
+    synced, monkeypatch
+):
+    router, p, sv, _ = seed(synced, monkeypatch)
+    db.run(
+        synced,
+        "insert into generation_jobs(job_type,project_id,status,requested_by,idempotency_key,input,finished_at) values('regenerate_script',%s,'completed','owner','older-completed-repair',%s,now())",
+        (p["id"], db.j({"auto_fix": True})),
+    )
+    db.run(
+        synced,
+        "insert into auto_reviews(project_id,script_version_id,verdict,checks,reasons,attempt) values(%s,%s,'fixing','[]','[]',1)",
+        (p["id"], sv["id"]),
+    )
+    assert maintenance.process_owner_jobs(synced, router, None) == []
+    assert (
+        db.one(synced, "select status from content_projects where id=%s", (p["id"],))[
+            "status"
+        ]
+        == "approved"
+    )
+    approvals = db.one(synced, "select count(*) n from approvals")["n"]
+    assert maintenance.process_owner_jobs(synced, router, None) == []
+    assert db.one(synced, "select count(*) n from approvals")["n"] == approvals

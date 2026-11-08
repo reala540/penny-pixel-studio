@@ -31,3 +31,9 @@ Tests exercise the full database journey from a partial claim to a repaired vers
 ## Live deployment observations
 
 The migration was applied in production, the owner-only funnel function exists, and Supabase health advisors returned no findings. Vercel reported successful dashboard and engine deployments for the main release. The activation review is queued. An older owner-request workflow was still running at deployment, so this is not yet evidence of a new live automatic approval or public post. Updated queue startup detects an activation review completed by older code without the new policy marker and replays it once; the handover regression and all recovery cases passed (26 tests).
+
+## Follow-up verification, 9 November (Nairobi)
+
+Both release CI runs, Vercel deployments and Cloudflare Pages deployment succeeded. The new activation policy executed and queued actual repairs. At 00:24 Nairobi, there were still no automatic approvals: free checker quota failures and unsupported statements remained. Two repairs had completed since activation; one package was ready for another review.
+
+A live queue handoff issue was found: an `auto_review` job in a mixed batch suppressed the follow-up review for completed repairs. Completion now triggers review per package immediately (child jobs resolve to their parent), before the next long job. Queue startup also catches completed repairs left on a `fixing` verdict by an older process, without repeatedly reviewing terminal decisions. The mixed-batch, immediate-review and catch-up regression cases pass, along with all 29 focused recovery tests. The real FFmpeg repair-and-reapproval test also passes. This correction does not waive evidence checks, alter posting schedules or purchase model capacity.
