@@ -21,7 +21,7 @@ import type { Post, Project } from "../lib/types";
 import { SITE_URL, useWebsiteStatus, type WebsiteHidden } from "../lib/website";
 
 export const POST_SELECT =
-  "id, scheduled_at, status, last_error, social_account_id, variant_id, content_variants(title, kind, body, project_id, content_projects(channel_slug, title)), social_accounts(label, platform), published_posts(url, method)";
+  "id, scheduled_at, status, last_error, social_account_id, variant_id, content_variants(title, kind, body, project_id, content_projects(channel_slug, title)), social_accounts(label, platform), published_posts(url, method, visibility, verified_at)";
 
 export default function Home() {
   const tz = useTimezone();
@@ -42,7 +42,8 @@ export default function Home() {
   const counts = {
     total: week.length,
     waiting: week.filter((p) => p.status === "pending_approval").length,
-    done: week.filter((p) => p.status === "published").length,
+    done: week.filter((p) => p.status === "published" && p.published_posts?.visibility === "public").length,
+    uploaded: week.filter((p) => p.status === "published" && p.published_posts?.visibility !== "public").length,
     problems: week.filter((p) => ["failed", "blocked", "needs_review", "needs_manual"].includes(p.status)).length,
   };
   return (
@@ -254,9 +255,10 @@ export function WeekPicker({ offset, setOffset }: { offset: number; setOffset: (
   );
 }
 
-function summaryLine(c: { total: number; waiting: number; done: number; problems: number }): string {
+function summaryLine(c: { total: number; waiting: number; done: number; uploaded: number; problems: number }): string {
   if (!c.total) return "No posts planned this week yet. Saturday's research and Sunday's production will fill it.";
-  const parts = [`${c.total} posts planned`, `${c.done} published`];
+  const parts = [`${c.total} posts planned`, `${c.done} public`];
+  if (c.uploaded) parts.push(`${c.uploaded} uploaded; not confirmed public`);
   if (c.waiting) parts.push(`${c.waiting} waiting for approval`);
   if (c.problems) parts.push(`${c.problems} need attention`);
   return parts.join(", ") + ".";
@@ -301,8 +303,9 @@ function ManualTasks() {
     queryKey: ["manual_tasks"],
     queryFn: async () => (await must(supabase.from("manual_tasks").select("*").eq("status", "open").order("created_at", { ascending: false }).limit(10))) as any[],
   });
+  const [postUrls, setPostUrls] = useState<Record<string, string>>({});
   const done = useMutation({
-    mutationFn: async (id: string) => must(supabase.rpc("complete_manual_task", { p_task_id: id, p_url: null })),
+    mutationFn: async (id: string) => must(supabase.rpc("complete_manual_task", { p_task_id: id, p_url: postUrls[id]?.trim() || null })),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["manual_tasks"] }); qc.invalidateQueries({ queryKey: ["posts"] }); toast("Marked as done"); },
     onError: (e) => toast((e as Error).message, "bad"),
   });
@@ -318,7 +321,8 @@ function ManualTasks() {
             <div className="mt-3 flex gap-2">
               {t.asset_key && <DownloadButton storageKey={t.asset_key} />}
               {t.deep_link && <a className="btn-quiet" href={t.deep_link} target="_blank" rel="noreferrer">Open</a>}
-              <button className="btn-primary" onClick={() => done.mutate(t.id)} disabled={done.isPending}>Done</button>
+              <label className="text-sm">Public post URL<input type="url" className="field" placeholder="https://…" value={postUrls[t.id] ?? ""} onChange={(e) => setPostUrls((v) => ({ ...v, [t.id]: e.target.value }))} /></label>
+              <button className="btn-primary" onClick={() => done.mutate(t.id)} disabled={done.isPending || !/^https:\/\/[^/\s]+\/\S+/.test(postUrls[t.id] ?? "")}>Save public link</button>
             </div>
           </li>
         ))}

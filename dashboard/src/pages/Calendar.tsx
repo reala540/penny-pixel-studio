@@ -172,6 +172,7 @@ function PostPanel({ post, tz, onMove }: { post: Post; tz: string; onMove: (when
         <div className="mt-2"><StatusBadge status={post.status} /></div>
       </div>
       <p className="text-sm">{fmtDateTime(post.scheduled_at, tz)} <Countdown at={post.scheduled_at} status={post.status} className="ml-1 text-xs font-medium text-pixel" /></p>
+      {post.published_posts && <p className="text-sm">{post.published_posts.visibility === "public" ? "Public on the platform" : `Uploaded — ${post.published_posts.visibility ?? "visibility unconfirmed"}`}</p>}
       {post.last_error && <p className="rounded-lg bg-alert-soft px-3 py-2 text-sm text-alert">{post.last_error}</p>}
       {post.published_posts?.url && <a className="btn-quiet w-full" href={post.published_posts.url} target="_blank" rel="noreferrer">Open the post</a>}
       {movable && (

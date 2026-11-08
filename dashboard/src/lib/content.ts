@@ -90,7 +90,7 @@ export function useProjectHistory(projectId: string) {
         must(supabase.from("generation_jobs").select("job_type, status, error_message, project_id, updated_at").in("project_id", ids).order("updated_at", { ascending: false }).limit(80)),
         must(supabase.from("auto_reviews").select("verdict, attempt, fix, reasons, created_at").eq("project_id", projectId).order("created_at", { ascending: false })),
         must(supabase.from("approvals").select("decision, source, notes, decided_at, target_type, target_id").in("target_id", ids)),
-        must(supabase.from("content_variants").select("id, kind, social_accounts(label), scheduled_posts(status, scheduled_at, updated_at, published_posts(url, published_at))").in("project_id", ids)),
+        must(supabase.from("content_variants").select("id, kind, social_accounts(label), scheduled_posts(status, scheduled_at, updated_at, published_posts(url, published_at, visibility))").in("project_id", ids)),
         must(supabase.from("notifications").select("title, body, created_at, link").like("link", `%${projectId}%`).order("created_at", { ascending: false }).limit(20)),
       ]);
       const items: HistoryItem[] = [];
@@ -110,7 +110,7 @@ export function useProjectHistory(projectId: string) {
       for (const v of variants as any[]) {
         for (const p of v.scheduled_posts ?? []) {
           const pub = Array.isArray(p.published_posts) ? p.published_posts[0] : p.published_posts;
-          if (pub) items.push({ at: pub.published_at, tone: "good", title: `Published on ${v.social_accounts?.label ?? "an account"}`, url: pub.url ?? undefined });
+          if (pub) items.push({ at: pub.published_at, tone: "good", title: `${pub.visibility === "public" ? "Public on" : "Uploaded; " + (pub.visibility ?? "visibility unconfirmed") + " on"} ${v.social_accounts?.label ?? "an account"}`, url: pub.url ?? undefined });
           else if (["failed", "blocked", "needs_review", "needs_manual", "cancelled"].includes(p.status)) items.push({ at: p.updated_at, tone: p.status === "cancelled" ? "info" : "bad", title: `${v.social_accounts?.label ?? "Post"}: ${POST_TEXT[p.status]}` });
         }
       }

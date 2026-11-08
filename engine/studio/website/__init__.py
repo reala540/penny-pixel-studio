@@ -1,32 +1,20 @@
-"""The public Penny & Pixel website: one article for every approved, published video.
+"""Build the public website as static files without exposing studio credentials.
 
-The website is separate from the studio. It is built here as plain files (HTML, pictures, a sitemap) and uploaded to
-Cloudflare Pages by the `site` workflow. It has no login, no database and no keys, and never links to the dashboard:
-visitors only ever read pages.
-
-An article says exactly what its approved video says (the narration, checked fact by fact against dated sources),
-so no new, unchecked claims are written for the website. A package is left out when:
-  - it isn't approved, or its long video hasn't been posted yet
-  - any claim is unsupported, contradicted or stale, or a blocking problem is still listed
-  - it is a sensitive money topic (investing, tax, loans...): those wait for the owner in the studio, and the
-    website never asks the owner anything
-A package that is rejected later simply disappears at the next build, and the owner can take any article off the
-website from the dashboard (settings.website_hidden); it is gone at the next build. Near-duplicate titles keep only the
-first article.
-
-Modules: this one collects what may be published; render.py draws the pages; pages.py holds the standing pages;
-assets.py is the design system (CSS, the logo, one small script).
+Articles have their own automatic evidence and meaning checks, independent of video rendering or upload.
+Rejected, hidden, unsupported or sensitive content is excluded. Saved article snapshots preserve URLs and real
+publication/review dates. Modules below collect eligible content, render pages and supply the static assets.
 """
 
 from __future__ import annotations
 
 import html
+import hashlib
 import json
 import os
 import re
 import shutil
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import httpx
@@ -79,6 +67,8 @@ class Article:
     image_alt: str = ""
     de_title: str | None = None       # German version (AI-tools articles whose translation passed the checks)
     de_blocks: list[tuple[str, str]] | None = None
+    modified: datetime | None = None
+    checked: datetime | None = None
     notes: list[str] = field(default_factory=list)   # what the AI steps did or why they weren't used
 
     def __post_init__(self):
@@ -119,11 +109,13 @@ def why_left_out(conn, p: dict, body: dict) -> str | None:
     """The reason a package isn't published on the website, or None."""
     from ..review.auto import MONEY_SENSITIVE
 
+    if p.get("fresh_until") and p["fresh_until"] < datetime.now(timezone.utc):
+        return "source freshness expired; refresh the evidence before publishing"
     bad = db.one(conn, """select count(*) n from research_claims where script_version_id=%s and status = any(%s)""",
                  (p["sv_id"], list(BAD_CLAIMS)))["n"]
     if bad:
         return f"{bad} claim(s) not backed by a source"
-    blockers = [f for f in ((p["quality_report"] or {}).get("findings") or []) if f.get("kind") == "blocker"]
+    blockers = [f for f in ((p["quality_report"] or {}).get("findings") or []) if f.get("kind") == "blocker" and f.get("code") != "package_part"]
     if blockers:
         return f"blocking problem: {blockers[0].get('text', '')[:80]}"
     if p["channel_slug"] == "money":
@@ -221,10 +213,10 @@ def collect(conn, storage, work: Path, check_video=video_is_public, router=None)
                (select min(pp.published_at) from published_posts pp join scheduled_posts sp on sp.id = pp.scheduled_post_id
                   join content_variants v on v.id = sp.variant_id where v.project_id = p.id and v.kind = 'long_video') first_posted
           from content_projects p
-          join script_versions sv on sv.id = coalesce(p.approved_script_version_id, p.current_script_version_id)
-         where p.parent_project_id is null and p.format = 'long' and p.status in ('approved', 'scheduled', 'published')
-           and exists (select 1 from approvals a where a.target_type = 'project' and a.target_id = p.id and a.decision = 'approved')
-         order by p.created_at""")
+          join script_versions sv on sv.id = p.current_script_version_id
+         where p.parent_project_id is null and p.format = 'long' and p.status not in ('draft', 'failed', 'rejected', 'archived')
+           and (%s or exists (select 1 from approvals a where a.target_type = 'project' and a.target_id = p.id and a.decision = 'approved'))
+         order by p.created_at""", (router is not None,))
     articles, skipped = [], []
     images = work / "images"
     images.mkdir(parents=True, exist_ok=True)
@@ -232,10 +224,19 @@ def collect(conn, storage, work: Path, check_video=video_is_public, router=None)
     titles: list[set[str]] = []
     for p in rows:
         body = p["body"] or {}
-        if not p["first_posted"]:
+        if not p["first_posted"] and router is None:
             continue  # not posted yet: it appears once its video is out
         if hidden.get(str(p["id"])):
             skipped.append(f"{p['title'][:70]}: taken off the website by you")
+            continue
+        from . import editorial
+        if str(p["id"]) == editorial.LAUNCH_ARTICLE:
+            slug = slugify("Minimum Wage Search Spike: What It Means for Your Paycheck", p["id"])
+            articles.append(Article(str(p["id"]), "money", slug, editorial.TITLE,
+                "A worked example and worksheet for comparing a raise with inflation over the same period.",
+                [t for k,t in editorial.BLOCKS if k == "p"], p["first_posted"] or editorial.REVISED,
+                blocks=editorial.BLOCKS, sources=editorial.SOURCES, modified=editorial.REVISED,
+                checked=editorial.REVISED, notes=["Corrected financial method; hypothetical example recalculated by code"]))
             continue
         reason = why_left_out(conn, p, body)
         title = body.get("title") or p["title"]
@@ -248,6 +249,15 @@ def collect(conn, storage, work: Path, check_video=video_is_public, router=None)
         titles.append(tw)
         slug = slugify(title, p["id"])
         blocks = article_blocks(body)
+        saved_article = db.one(conn, "select * from website_articles where project_id=%s", (p["id"],))
+        if saved_article:
+            slug = saved_article["slug"]
+        else:
+            # Preserve any address that was already published before the registry existed.
+            prior = db.one(conn, """select x->>'slug' slug from audit_logs a,
+                jsonb_array_elements(coalesce(a.details->'published','[]'::jsonb)) x
+                where a.action='website_built' and x->>'id'=%s order by a.created_at limit 1""", (str(p["id"]),))
+            slug = prior["slug"] if prior else slug
         hook = (body.get("hook") or "").strip()
         if hook and not (TEST_CLAIM.search(hook) or VIDEO_TALK.search(hook)):
             blocks = [("p", hook)] + blocks
@@ -259,14 +269,42 @@ def collect(conn, storage, work: Path, check_video=video_is_public, router=None)
                                   german=_options().get("german", True))
             if got.get("en"):
                 blocks = [tuple(b) for b in got["en"]]
-                notes.append("rewritten as an article (checked: same numbers and names)")
+                notes.append("rewritten as an article (independently checked for meaning)")
             elif got.get("en_note"):
                 notes.append(got["en_note"])
             if got.get("de_note"):
                 notes.append(got["de_note"])
+        if router is not None:
+            try:
+                from .. import preflight
+                from .enhance import check_meaning
+                unchanged = (saved_article and str(saved_article["script_version_id"]) == str(p["sv_id"])
+                    and saved_article["title"] == title and saved_article["blocks"] == [list(b) for b in blocks]
+                    and saved_article["checked_at"] > datetime.now(timezone.utc) - timedelta(hours=48))
+                if not unchanged:
+                    preflight.check(conn, router, p["id"], article=True)
+                    review = check_meaning(router, title, article_blocks(body), blocks,
+                                           set((p["quality_report"] or {}).get("writers") or []))
+                else:
+                    from .enhance import MeaningReview
+                    review = MeaningReview.model_validate(saved_article["review"])
+                if not review.faithful or review.issues:
+                    skipped.append(f"{title}: article did not pass independent review")
+                    continue
+                saved_article = db.one(conn, """insert into website_articles(project_id,script_version_id,slug,title,blocks,review)
+                    values (%s,%s,%s,%s,%s,%s) on conflict(project_id) do update set
+                    script_version_id=excluded.script_version_id,title=excluded.title,blocks=excluded.blocks,
+                    review=excluded.review,checked_at=case when %s then website_articles.checked_at else now() end,modified_at=case when website_articles.blocks<>excluded.blocks
+                    or website_articles.title<>excluded.title then now() else website_articles.modified_at end returning *""",
+                    (p["id"],p["sv_id"],slug,title,db.j(blocks),db.j(review.model_dump()),bool(unchanged)))
+            except Exception as exc:
+                skipped.append(f"{title}: final article check unavailable ({type(exc).__name__})")
+                continue
         paragraphs = [t for k, t in blocks if k == "p"]
         art = Article(str(p["id"]), p["channel_slug"], slug, title, (body.get("promise") or paragraphs[0])[:300],
-                      paragraphs, p["first_posted"], sources=_sources(conn, body), blocks=blocks, notes=notes)
+                      paragraphs, saved_article["published_at"] if saved_article else p["first_posted"], sources=_sources(conn, body), blocks=blocks, notes=notes)
+        if saved_article:
+            art.modified, art.checked = saved_article["modified_at"], saved_article["checked_at"]
         if got.get("de"):
             art.de_title, art.de_blocks = got["de"]["title"], [tuple(b) for b in got["de"]["blocks"]]
         if p["youtube_url"] and check_video(p["youtube_url"]):
@@ -348,16 +386,22 @@ def _related(a: Article, articles: list[Article], n: int = 3) -> list[Article]:
 
 
 def _search_index(articles: list[Article]) -> list[dict]:
+    from . import resources
     return [{"t": a.title, "d": a.description, "c": CHANNELS.get(a.channel, (a.channel,))[0], "u": f"/articles/{a.slug}/",
              "p": date(a.published), "k": " ".join(" ".join(t for k, t in a.blocks if k == "p").split()[:80])}
-            for a in articles]
+            for a in articles] + [{"t": title, "d": description, "c": "Guides and tools", "u": path,
+                                   "p": "", "k": description}
+                                  for path, (title, description, _) in resources.pages().items()]
 
 
 def _csp(options: dict) -> str:
     form = (options.get("newsletter") or {}).get("form_action") or ""
     form_host = re.match(r"https://[^/]+", form).group(0) if form.startswith("https://") else ""
+    events = (options.get("analytics") or {}).get("events_url") or ""
+    events_host = re.match(r"https://[A-Za-z0-9.-]+(?::[0-9]+)?(?=/|$)", events)
+    connect_extra = " " + events_host.group(0) if events_host else ""
     return ("default-src 'self'; img-src 'self' data: https://i.ytimg.com; style-src 'self'; "
-            "script-src 'self' https://static.cloudflareinsights.com; connect-src 'self' https://cloudflareinsights.com; "
+            f"script-src 'self' https://static.cloudflareinsights.com; connect-src 'self' https://cloudflareinsights.com{connect_extra}; "
             "frame-src https://www.youtube-nocookie.com; "
             f"form-action 'self'{(' ' + form_host) if form_host else ''}; base-uri 'self'; object-src 'none'; frame-ancestors 'none'")
 
@@ -400,6 +444,13 @@ def build(articles: list[Article], out: Path, images_dir: Path | None = None, so
     (out / "assets" / "site.js").write_text(assets.JS.strip() + "\n")
     (out / "favicon.svg").write_text(assets.FAVICON)
     _icons(out)
+    options = dict(options)
+    for kind in ("css", "js"):
+        original = out / "assets" / f"site.{kind}"
+        digest = hashlib.sha256(original.read_bytes()).hexdigest()[:12]
+        hashed = original.with_name(f"site-{digest}.{kind}")
+        shutil.copyfile(original, hashed)
+        options[f"_{kind}_url"] = f"/assets/{hashed.name}"
     site = render.Site(site_url(), articles, socials, options)
     files: dict[str, str] = {"/": site.home(), "/search/": site.search_page()}
     for a in articles:
@@ -414,7 +465,9 @@ def build(articles: list[Article], out: Path, images_dir: Path | None = None, so
     if site.german:
         files["/de/"] = site.german_home()
         files["/de/ueber-uns/"] = site.german_about()
-    for path, (title, desc, body) in pages.standing_pages(options.get("contact_email"), socials).items():
+    from . import resources
+    resources.write_downloads(out)
+    for path, (title, desc, body) in {**pages.standing_pages(options.get("contact_email"), socials), **resources.pages()}.items():
         files[path] = site.simple(path, title, desc, body)
     for path, page in files.items():
         d = out / path.strip("/")
@@ -424,10 +477,12 @@ def build(articles: list[Article], out: Path, images_dir: Path | None = None, so
     (out / "search-index.json").write_text(json.dumps(_search_index(articles), ensure_ascii=False))
     url = site_url()
     now = datetime.now(timezone.utc).date().isoformat()
-    lastmod = {f"/articles/{a.slug}/": a.published.date().isoformat() for a in articles}
+    lastmod = {f"/articles/{a.slug}/": (a.modified or a.published).date().isoformat() for a in articles}
     listed = [p for p in files if "/page/" not in p and p != "/search/"]
     (out / "sitemap.xml").write_text('<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
-                                     + "".join(f"<url><loc>{e(url + p)}</loc><lastmod>{lastmod.get(p, now)}</lastmod></url>\n" for p in listed)
+                                     + "".join(f"<url><loc>{e(url + p)}</loc>" +
+                                               (f"<lastmod>{lastmod[p]}</lastmod>" if p in lastmod else "") +
+                                               "</url>\n" for p in listed)
                                      + "</urlset>\n")
     (out / "robots.txt").write_text(f"User-agent: *\nAllow: /\nDisallow: /search/\nSitemap: {url}/sitemap.xml\n")
     items = "".join(f"<item><title>{e(a.title)}</title><link>{e(url)}/articles/{e(a.slug)}/</link>"
@@ -456,6 +511,14 @@ def build_site(conn, storage, out: Path, router=None) -> dict:
         shutil.rmtree(work)
     articles, skipped = collect(conn, storage, work, router=router)
     summary = build(articles, out, work / "images", socials=_socials(conn))
+    redirects = []
+    current = {a.project_id: a.slug for a in articles}
+    prior = db.all_(conn, """select distinct x->>'id' id,x->>'slug' slug from audit_logs a,
+        jsonb_array_elements(coalesce(a.details->'published','[]'::jsonb)) x where a.action='website_built'""")
+    for old in prior:
+        if old["id"] in current and old["slug"] != current[old["id"]] and re.fullmatch(r"[a-z0-9-]+", old["slug"] or ""):
+            redirects.append(f"/articles/{old['slug']}/ /articles/{current[old['id']]}/ 301")
+    (out / "_redirects").write_text("\n".join(sorted(set(redirects))) + "\n")
     summary["left_out"] = skipped
     summary["notes"] = [f"{a.title[:60]}: {n}" for a in articles for n in a.notes]
     db.audit(conn, "website_built", "website", None,

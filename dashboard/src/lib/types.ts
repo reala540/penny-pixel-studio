@@ -89,7 +89,7 @@ export interface Post {
   variant_id: string;
   content_variants?: { title: string | null; kind: string; body: string | null; project_id: string; content_projects?: { channel_slug: Channel; title: string } };
   social_accounts?: { label: string; platform: Platform };
-  published_posts?: { url: string | null; method: string } | null;
+  published_posts?: { url: string | null; method: string; visibility?: string; verified_at?: string | null } | null;
 }
 
 export interface Idea {

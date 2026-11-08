@@ -210,12 +210,15 @@ class DbUsageStore:
                                      select success from provider_usage where service='llm' and provider=%s
                                        and model=%s and coalesce(error,'') not like '%% auth'
                                      order by id desc limit 20) t""", (provider, model))
-        return float(row["r"] or 0.0)
+        quality = db.one(self.conn, """select avg(case when valid_output then 0 else 1 end)::float r
+                       from (select valid_output from model_output_checks where provider=%s and model=%s
+                             and role <> 'test' order by id desc limit 20) q""", (provider, model))
+        return max(float(row["r"] or 0.0), float(quality["r"] or 0.0))
 
     @_locked
     def overrides(self):
         rows = db.all_(self.conn, "select name, enabled from ai_providers")
-        models = db.all_(self.conn, """select provider, model, enabled, daily_request_limit, priority, pause_reason
+        models = db.all_(self.conn, """select provider, model, enabled, daily_request_limit, daily_token_limit, context_tokens, supports_json, priority, pause_reason
                                           from ai_model_configs""")
         out: dict[str, dict] = {r["name"]: {"enabled": r["enabled"], "models": {}} for r in rows}
         for m in models:
@@ -226,6 +229,26 @@ class DbUsageStore:
         for m in db.all_(self.conn, "select provider, model, roles from ai_model_configs where roles_custom"):
             out.setdefault(m["provider"], {"models": {}}).setdefault("roles", {})[m["model"]] = list(m["roles"] or [])
         return out
+
+    @_locked
+    def record_output(self, provider, model, role, ok):
+        db.run(self.conn, "insert into model_output_checks(provider,model,role,valid_output) values (%s,%s,%s,%s)",
+               (provider, model, role, ok))
+
+    @_locked
+    def model_resting(self, provider, model):
+        row = db.one(self.conn, """select count(*) n, bool_and(not valid_output) failing
+            from (select valid_output from model_output_checks where provider=%s and model=%s
+                  and role <> 'test' and created_at > now()-interval '10 minutes' order by id desc limit 3) q""",
+                     (provider, model))
+        return row["n"] == 3 and bool(row["failing"])
+
+    @_locked
+    def latency_penalty(self, provider, model):
+        row = db.one(self.conn, """select avg(latency_ms) ms from
+            (select latency_ms from provider_usage where provider=%s and model=%s and success
+             and service='llm' and role <> 'test' order by id desc limit 20) q""", (provider, model))
+        return min(float(row["ms"] or 0) / 10000, 15)
 
     # credentials ---------------------------------------------------------------
     @_locked
@@ -345,12 +368,13 @@ class DbUsageStore:
         rows = db.all_(self.conn, "select name, enabled, base_url, commercial_use_ok from ai_providers where key_env is null")
         out = {}
         for r in rows:
-            models = db.all_(self.conn, """select model, roles, daily_request_limit, priority from ai_model_configs
+            models = db.all_(self.conn, """select model, roles, daily_request_limit, daily_token_limit, context_tokens, supports_json, priority from ai_model_configs
                                            where provider=%s and enabled""", (r["name"],))
             out[r["name"]] = {"enabled": r["enabled"], "base_url": r["base_url"], "key_env": None, "custom": True,
                               "commercial_use": "assumed" if r["commercial_use_ok"] else "no",
                               "models": [{"id": m["model"], "roles": list(m["roles"] or []),
-                                          "daily_requests": m["daily_request_limit"], "priority": m["priority"] or 100}
+                                          "daily_requests": m["daily_request_limit"], "daily_tokens": m["daily_token_limit"],
+                                          "context": m["context_tokens"], "supports_json": m["supports_json"], "priority": m["priority"] or 100}
                                          for m in models]}
         return out
 

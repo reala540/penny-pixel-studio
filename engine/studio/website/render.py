@@ -14,7 +14,7 @@ SITE_NAME = "Penny & Pixel"
 SITE_HTML = html.escape(SITE_NAME)
 TAGLINE = "AI tools and money skills, explained simply"
 HERO_TITLE = 'Make technology work for you. <em>Make money make sense.</em>'
-HERO_TEXT = ("Practical AI guides, technology insights, money explainers and short videos to help you make smarter "
+HERO_TEXT = ("Practical AI guides for freelancers and small businesses, money explainers and short videos to help you make smarter "
              "decisions. Every fact is checked against a named source.")
 CHANNELS = {"ai": ("AI tools", "Pixel explains what AI tools can really do, without the hype."),
             "money": ("Money", "Penny explains budgeting, saving, paychecks and credit with real numbers.")}
@@ -53,7 +53,7 @@ class Site:
             links.append(("/latest/", "Latest"))
         if self.videos:
             links.append(("/videos/", "Videos"))
-        links += [("/search/", "Search"), ("/about/", "About")]
+        links += [("/guides/ai-for-small-business/", "Start here"), ("/search/", "Search"), ("/about/", "About")]
         return links
 
     def page(self, title: str, description: str, path: str, body: str, *, image: str | None = None,
@@ -75,6 +75,9 @@ class Site:
         if token:   # Cloudflare Web Analytics: free, cookie-free; only when the owner has added a token
             analytics = ('<script defer src="https://static.cloudflareinsights.com/beacon.min.js" '
                          f"data-cf-beacon='{e(json.dumps({'token': token}))}'></script>")
+        events_url = (self.opt.get("analytics") or {}).get("events_url")
+        if events_url and __import__("re").match(r"^https://[A-Za-z0-9.-]+(?::[0-9]+)?(?:/|$)", events_url):
+            analytics += f'<meta name="site-events-url" content="{e(events_url)}">'
         lds = "".join(_json_ld(x) for x in (ld or []))
         return f"""<!doctype html>
 <html lang="{lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -87,7 +90,7 @@ class Site:
 <meta name="twitter:description" content="{e(description)}"><meta name="twitter:image" content="{e(img)}">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/icon-180.png">
 <link rel="alternate" type="application/rss+xml" title="{SITE_HTML}" href="/feed.xml">
-<link rel="stylesheet" href="/assets/site.css"><script defer src="/assets/site.js"></script>{analytics}{lds}
+<link rel="stylesheet" href="{e(self.opt.get("_css_url", "/assets/site.css"))}"><script defer src="{e(self.opt.get("_js_url", "/assets/site.js"))}"></script>{analytics}{lds}
 </head><body>
 <a class="skip" href="#main">{"Zum Inhalt" if lang == "de" else "Skip to content"}</a>
 <header class="top"><div class="wrap">
@@ -161,7 +164,7 @@ class Site:
         if not n.get("form_action"):
             return ""
         return f"""<section class="section"><div class="wrap"><div class="newsletter">
-<h2 class="title">Get new guides by email</h2><p>One short email when we publish something new. Unsubscribe any time.</p>
+<h2 class="title">Get new guides by email</h2><p>Practical guides for freelancers and small businesses. Unsubscribe any time. <a href="/downloads/ai-workflow-checklist.txt" download>Get the free workflow checklist</a>.</p>
 <form action="{e(n['form_action'])}" method="post" target="_blank" rel="noopener">
 <label class="sr" for="nl-email">Email address</label><div class="field"><input id="nl-email" name="email" type="email" autocomplete="email" required placeholder="you@example.com">
 <button type="submit">Subscribe</button></div>
@@ -172,7 +175,7 @@ class Site:
     def home(self) -> str:
         arts = self.articles
         label = {"ai": "Explore AI tools", "money": "Explore money guides"}
-        cta = "".join(f'<a class="btn {"primary" if i == 0 else "ghost"}" href="/{c}/">{label[c]}</a>'
+        cta = '<a class="btn primary" href="/guides/ai-for-small-business/">Start with a practical AI workflow</a>' + "".join(f'<a class="btn ghost" href="/{c}/">{label[c]}</a>'
                       for i, c in enumerate(self.channels))
         body = [f'<section class="hero"><div class="wrap"><h1>{HERO_TITLE}</h1><p>{e(HERO_TEXT)}</p><div class="cta">{cta}</div></div></section>']
         if arts:
@@ -248,10 +251,14 @@ class Site:
         parts = [f'<nav class="crumbs" aria-label="Breadcrumb"><ol><li><a href="/">Home</a></li><li><a href="/{e(a.channel)}/">{e(cat)}</a></li>'
                  f'<li aria-current="page">{e(a.title[:60])}{"…" if len(a.title) > 60 else ""}</li></ol></nav>',
                  f'<article class="article">{self.tag(a.channel)}<h1>{e(a.title)}</h1>',
-                 f'<p class="byline"><span>By the {SITE_HTML} team</span><span>Published <time datetime="{a.published.date().isoformat()}">{date(a.published)}</time>'
-                 f' · facts as of this date</span><span>{a.minutes} min read</span>'
+                 f'<p class="byline"><span>By the {SITE_HTML} editorial team</span><span>Published <time datetime="{a.published.date().isoformat()}">{date(a.published)}</time>'
+                 f' · source dates are listed below</span><span>{a.minutes} min read</span>'
                  + (f'<span><a href="/de/artikel/{e(a.slug)}/" lang="de" hreflang="de">Auf Deutsch lesen</a></span>' if a.de_blocks else "")
                  + '</p>']
+        if a.modified and a.modified != a.published:
+            parts.append(f'<p class="meta">Updated {date(a.modified)}. Editorial responsibility: Penny &amp; Pixel. Checks are automated unless a named human reviewer is stated.</p>')
+        if a.channel == "money":
+            parts.append('<p><a href="/tools/raise-inflation/">Use the raise-and-inflation calculator and worksheet</a></p>')
         if a.video_id:
             parts.append(self.video_box(a))
         elif a.image:
@@ -273,7 +280,7 @@ class Site:
         if a.offer:
             o = a.offer
             parts.append(f'<aside class="note" aria-label="Affiliate offer"><p><strong>Affiliate link.</strong> {e(o["disclosure"])}</p>'
-                         f'<p><a href="{e(o["url"])}" rel="sponsored nofollow noopener" target="_blank">{e(o["name"])}</a>'
+                         f'<p><a href="{e(o["url"])}" data-event="affiliate_click" rel="sponsored nofollow noopener" target="_blank">{e(o["name"])}</a>'
                          f'{(" – " + e(o["blurb"])) if o.get("blurb") else ""}</p></aside>')
         if a.sources:
             items = "".join(f'<li><a href="{e(s["url"])}" rel="noopener" target="_blank">{e(s.get("title") or s["url"])}</a>'
@@ -294,7 +301,7 @@ class Site:
                          f'<div class="grid">{"".join(self.card(r) for r in related)}</div></section>')
         parts.append("</article>")
         ld = [{"@context": "https://schema.org", "@type": "Article", "headline": a.title[:110], "description": a.description,
-               "datePublished": a.published.isoformat(), "dateModified": a.published.isoformat(), "mainEntityOfPage": link,
+               "datePublished": a.published.isoformat(), "dateModified": (a.modified or a.published).isoformat(), "mainEntityOfPage": link,
                "author": {"@type": "Organization", "name": SITE_NAME, "url": self.url + "/about/"},
                "publisher": {"@type": "Organization", "name": SITE_NAME, "logo": {"@type": "ImageObject", "url": self.url + "/icon-512.png"}},
                **({"image": [self.url + f"/images/{a.image}"]} if a.image else {}),

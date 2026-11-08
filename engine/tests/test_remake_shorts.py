@@ -6,7 +6,7 @@ import uuid
 import pytest
 
 from studio import db, produce
-from studio.script import quality
+from studio.script import pipeline, quality
 
 from .test_database import as_user, reset_role
 from .test_end_to_end import silent_tts  # noqa: F401  (fixture)
@@ -40,6 +40,7 @@ def _children(c, pid):
 def test_both_shorts_dropped_retries_once_and_keeps_the_reasons(synced, monkeypatch, silent_tts):
     c = synced
     _failing_shorts(monkeypatch, fail_first=2)        # the package's two Shorts fail, the retry's pass
+    monkeypatch.setattr(pipeline, "repair_short", lambda *args: None)  # exercise the retry, not individual repairs
     _, _, head = _package(c, monkeypatch)
     assert len(_children(c, head["id"])) == 2
     problems = head["quality_report"]["package_problems"]
@@ -109,8 +110,8 @@ def test_the_real_video_length_replaces_the_estimate(synced, monkeypatch, silent
     produce.use_real_length(c, head["id"], 582.6)
     assert db.one(c, "select quality_report from content_projects where id=%s", (head["id"],))["quality_report"]["issues"] == ["Critic score below 7"]
     monkeypatch.setattr(quality, "MIN_LONG_SECONDS", 480)   # tests run with a lower minimum; use the real one here
-    produce.use_real_length(c, head["id"], 300)
-    assert db.one(c, "select quality_report from content_projects where id=%s", (head["id"],))["quality_report"]["issues"][-1].startswith("Too short: 5.0 min")
+    produce.use_real_length(c, head["id"], 150)
+    assert db.one(c, "select quality_report from content_projects where id=%s", (head["id"],))["quality_report"]["issues"][-1].startswith("Too short: 2.5 min")
 
 
 def test_owner_can_request_new_shorts_and_a_hand_posted_text_shows_as_published(synced, monkeypatch, silent_tts):
@@ -125,7 +126,7 @@ def test_owner_can_request_new_shorts_and_a_hand_posted_text_shows_as_published(
     as_user(c, owner)
     db.one(c, "select public.claim_ownership() ok")
     job = db.one(c, "select public.enqueue_owner_job('remake_shorts', %s, '{}'::jsonb) id", (head["id"],))["id"]
-    db.one(c, "select public.complete_manual_task(%s, null) ok", (task["id"],))
+    db.one(c, "select public.complete_manual_task(%s, 'https://x.com/pennyandpixel/status/123') ok", (task["id"],))
     reset_role(c)
     assert db.one(c, "select job_type, status from generation_jobs where id=%s", (job,)) == {"job_type": "remake_shorts", "status": "queued"}
     assert db.one(c, "select status from content_variants where id=%s", (post["variant_id"],))["status"] == "published"

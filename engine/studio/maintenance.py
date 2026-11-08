@@ -217,19 +217,15 @@ def _run_owner_job(conn, router: Router, storage, job: dict) -> dict:
         _reset_variants(conn, pid)
         return {"issues": result.issues}
     if t == "recheck_project":
-        # Re-verify claims against sources collected since; extend freshness only if still supported.
-        sv = db.one(conn, "select body from script_versions where id=%s", (p["current_script_version_id"],))
-        claims = db.all_(conn, "select status from research_claims where script_version_id=%s",
-                         (p["current_script_version_id"],))
-        if any(c["status"] in ("unsupported", "contradicted") for c in claims):
-            raise ValueError("Claims are unsupported; regenerate the script instead")
+        from . import preflight
+        records = preflight.check(conn, router, pid)
         new_fresh = datetime.now(timezone.utc) + timedelta(days=config.research()["freshness_days"].get(p["channel_slug"], 14) // 2)
         db.run(conn, "update content_projects set fresh_until=%s where id=%s", (new_fresh, pid))
         db.run(conn, """update scheduled_posts set status='scheduled', last_error=null
                         where status='blocked' and last_error like 'content expired%%'
                           and variant_id in (select id from content_variants where project_id=%s and status='approved')""",
                (pid,))
-        db.audit(conn, "recheck_project", "project", pid, {"fresh_until": new_fresh.isoformat(), "scenes": len(sv["body"]["scenes"])})
+        db.audit(conn, "recheck_project", "project", pid, {"fresh_until": new_fresh.isoformat(), "claims_checked": len(records)})
         return {"fresh_until": new_fresh.isoformat()}
     raise ValueError(f"Unknown job type {t}")
 
@@ -255,6 +251,7 @@ def cleanup(conn, storage) -> dict:
     storage.delete([r["storage_path"] for r in rows])
     if rows:
         db.run(conn, "update media_assets set deleted_at=now() where id = any(%s)", ([r["id"] for r in rows],))
+    db.run(conn, "delete from model_output_checks where created_at < now() - interval '90 days'")
     old_jobs = db.run(conn, "delete from job_attempts where started_at < now() - interval '60 days'")
     usage = db.run(conn, "delete from provider_usage where created_at < now() - interval '400 days'")
     return {"previews_deleted": len(rows), "old_attempts": old_jobs, "old_usage_rows": usage}

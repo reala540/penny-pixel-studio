@@ -71,3 +71,7 @@ runs:
     - name: Install engine
       shell: bash
       run: pip install -q -e engine
+    - name: Apply pending database migrations before running updated code
+      if: env.SUPABASE_DB_URL != ''
+      shell: bash
+      run: studio migrate

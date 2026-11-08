@@ -18,7 +18,7 @@ studio database (Supabase) ──► `studio site` (GitHub Actions, "Website" wo
 
 ## What becomes an article
 
-One article per **approved** long video that has **been posted**. The article says what the approved video says (its
+Articles have their own automatic final review and snapshot registry. They do not need to wait for a rendered or posted video. The article says what the approved video says (its
 narration was checked fact by fact against dated sources), cleaned for reading:
 removed are video-only lines ("in this video", "subscribe"), leftovers of the writer's instructions, sums read out loud,
 near-repeated sentences, sentences left hanging by a removal, and claims of hands-on tests that didn't happen. The video's
@@ -124,13 +124,16 @@ Limits change; check the providers' pricing pages before relying on them.
 
 ## Not done, and why
 
-- **Google AdSense:** it won't accept a free `pages.dev` address; a custom domain (about $10 a year) would be needed. No
+- **Google AdSense:** approval is not configured. Google permits eligible public-suffix platform subdomains; a custom domain is a branding choice, not an established requirement for this site. No
   advertising code is included.
 - Newsletter: connected to Buttondown (`pennyandpixel`). Sign-ups go straight to Buttondown, which sends the confirmation
   email and handles unsubscribing. Analytics is switched on in Cloudflare (Web Analytics).
 - **"Popular" articles:** no analytics data yet, so the home page shows newest first instead of inventing popularity.
-- **Videos on the site:** YouTube uploads stay private until Google's API audit passes, so no video is embedded yet;
+- **Videos on the site:** YouTube visibility is checked through its API, and only publicly accessible videos are embedded;
   articles show the thumbnail. Embeds appear by themselves once videos are public.
 - **German money articles:** not published; they need checking by someone who reads German.
-- **Rewrite checks are by code**, not a second fact-check by a model: they guarantee no new numbers or names, not that
-  every sentence keeps exactly its original meaning.
+- **Rewrite and translation checks include independent meaning review** as well as number/name checks. Failed checks keep the original text or omit the translation.
+
+## Reliability release
+
+See [the ordered requested changes](REQUESTED_CHANGES.md) for independent article approval, stable URLs, corrected dates, English-first settings, free resources, verification evidence and external account dependencies.

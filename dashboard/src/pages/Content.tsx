@@ -58,7 +58,7 @@ export default function Content() {
   const published = useQuery({
     queryKey: ["library-published"],
     enabled: tab === "published" || tab === "all",
-    queryFn: async () => (await must(supabase.from("published_posts").select("url, platform, method, published_at, scheduled_posts(content_variants(project_id))").order("published_at", { ascending: false }).limit(500))) as any[],
+    queryFn: async () => (await must(supabase.from("published_posts").select("url, platform, method, visibility, published_at, scheduled_posts(content_variants(project_id))").order("published_at", { ascending: false }).limit(500))) as any[],
   });
   const links = new Map<string, any[]>();
   for (const p of published.data ?? []) {
@@ -138,7 +138,7 @@ export default function Content() {
                   <span className="flex flex-wrap items-center gap-2"><HostTag channel={p.channel_slug} /><span className="text-xs text-muted">{p.format === "long" ? "Video" : "Short"}{p.recipe?.preview_seconds ? ` · ${fmtDuration(p.recipe.preview_seconds)}` : ""} · made {new Date(p.created_at).toLocaleDateString("en-GB")}</span></span>
                   <span className="mt-0.5 block font-medium leading-snug">{p.title}</span>
                   {p.status === "needs_attention" && (p.quality_report?.issues ?? []).length > 0 && <span className="block text-xs text-alert">{(p.quality_report.issues as string[]).length} thing(s) to look at: {(p.quality_report.issues as string[])[0]}</span>}
-                  {(links.get(p.id) ?? []).length > 0 && <span className="block text-xs text-muted">Posted on {(links.get(p.id) ?? []).map((l) => l.platform).join(", ")}</span>}
+                  {(links.get(p.id) ?? []).length > 0 && <span className="block text-xs text-muted">{(links.get(p.id) ?? []).map((l) => `${l.platform}: ${l.visibility === "public" ? "public" : "uploaded (" + (l.visibility ?? "unconfirmed") + ")"}`).join(", ")}</span>}
                 </span>
                 <StatusBadge status={p.status} />
                 <ChevronRight size={16} className="text-muted" aria-hidden />

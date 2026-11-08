@@ -346,7 +346,8 @@ def publish_post(conn, storage, post: dict, adapters: dict | None = None, now: d
     return "published" if not result.manual_followup else "published_needs_followup"
 
 
-def run_due(conn, storage, adapters=None, now: datetime | None = None) -> dict:
+def run_due(conn, storage, adapters=None, now: datetime | None = None, router=None) -> dict:
+    now = now or datetime.now(timezone.utc)
     out: dict[str, int] = {}
     # release locks from crashed runs, but never auto-retry 'publishing' rows that may have gone out
     db.run(conn, """update scheduled_posts set status='needs_review',
@@ -357,6 +358,16 @@ def run_due(conn, storage, adapters=None, now: datetime | None = None) -> dict:
         if not batch:
             break
         for post in batch:
+            ctx = _context(conn, post) if router is not None else None
+            if router is not None and ctx and not safety_problems(conn, post, ctx, now):
+                from .. import preflight
+                try:
+                    preflight.check(conn, router, ctx["project_id"])
+                except Exception as exc:
+                    db.run(conn, "update scheduled_posts set status='blocked', last_error=%s, locked_until=null where id=%s",
+                           (f"Final check: {str(exc)[:450]}", post["id"]))
+                    out["blocked"] = out.get("blocked", 0) + 1
+                    continue
             res = publish_post(conn, storage, post, adapters, now)
             out[res] = out.get(res, 0) + 1
     return out

@@ -239,7 +239,8 @@ class _Router:
         from types import SimpleNamespace
 
         self.calls += 1
-        return SimpleNamespace(data=schema.model_validate(self.answers.pop(0)))
+        answer = {"faithful":True,"issues":[]} if schema is enhance.MeaningReview else self.answers.pop(0)
+        return SimpleNamespace(data=schema.model_validate(answer))
 
 
 def test_the_ai_steps_run_once_per_version_and_money_stays_english(tmp_path):
@@ -253,7 +254,7 @@ def test_the_ai_steps_run_once_per_version_and_money_stays_english(tmp_path):
                   "Die durchschnittlichen Stundenlöhne stiegen um $0,05, daher bewegte sich der Reallohn für viele Beschäftigte kaum."]}]}
     r = _Router([draft, german])
     got = enhance.enhance(r, storage, "sv-1", "Prices and pay", "ai", SRC, tmp_path / "w")
-    assert got["en"] and got["de"]["title"] == "Preise und Löhne" and r.calls == 2
+    assert got["en"] and got["de"]["title"] == "Preise und Löhne" and r.calls == 4
     again = enhance.enhance(_Router([]), storage, "sv-1", "Prices and pay", "ai", SRC, tmp_path / "w2")
     assert again == json.loads(json.dumps(got))                              # cached: no new AI call
     money = enhance.enhance(_Router([draft]), storage, "sv-2", "Prices and pay", "money", SRC, tmp_path / "w3")

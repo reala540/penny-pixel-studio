@@ -12,7 +12,7 @@ budgets:
 quotas:
   youtube_data_api:
     daily_units: 10000
-    upload_units: 1600
+    upload_units: 100
     thumbnail_units: 50
     search_units: 100
   github_actions:
@@ -49,7 +49,7 @@ render:
     long: { width: 854, height: 480, crf: 30 }
     short: { width: 480, height: 854, crf: 30 }
   min_long_minutes: 8                # long videos: 8-14 minutes, aiming for about 11
-  min_long_minutes_floor: 5          # when a topic's evidence supports less, a shorter honest video (never padding)
+  min_long_minutes_floor: 3          # when a topic's evidence supports less, a shorter honest video (never padding)
   target_long_minutes: 11
   max_long_minutes: 14
   max_short_seconds: 58
@@ -69,7 +69,8 @@ publishing:
     description_line: "Narrated with an AI voice. Researched with AI tools; every fact is checked against the sources listed above."
     label_synthetic_media: false   # set true if a video shows realistic AI-generated people, places or events
   youtube:
-    api_audited: false      # until Google's audit passes, API uploads are locked to private
+    api_audited: false      # app audit status; separate from requested visibility
+    privacy_status: public # request public; always record the platform response
     category_id: "27"       # Education (fallback)
     category_ids: { ai: "28", money: "27" }   # Pixel: Science & Technology; Penny: Education
     default_language: "en"
@@ -91,6 +92,7 @@ website:
     provider: "Buttondown"
   google_site_verification: "GQRIrOqueWfPASl3qUfIEJ5BWopqUKThygzs3VrBDL4"   # Search Console's HTML-tag check
   ai_rewrite: true          # rewrite each article from its checked narration (code checks numbers and names; cached)
-  german: true              # German versions of AI-tools articles (same checks; money stays English)
+  german: false              # German versions of AI-tools articles (same checks; money stays English)
   analytics:                # optional: Cloudflare Web Analytics token (free, no cookies). Or switch it on in the Pages
+    events_url: null       # optional HTTPS collector; no conversion data is sent until connected
     cloudflare_token: null  # project (Metrics -> Web Analytics): the site's security policy already allows it

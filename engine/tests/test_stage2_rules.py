@@ -28,7 +28,12 @@ def test_money_math_is_recalculated_by_code_not_judged_by_a_model():
     invented = Claim(key="C3", kind="calculation", text="That's about $31,000", expression="200*12*13")
     missing = Claim(key="C4", kind="calculation", text="That's $24,000", expression="")
     script = _script("Numbers.", [good, wrong, invented, missing])
-    out = {r["key"]: r for r in verify.check_claims(None, script, facts, [])}  # no model call: code decides
+    # Arithmetic remains deterministic; formula suitability has a separate model check.
+    from types import SimpleNamespace
+    class Checker:
+        def complete(self, *args, **kwargs):
+            return SimpleNamespace(data=SimpleNamespace(verdicts=[SimpleNamespace(key=c.key, status="supported") for c in script.claims]))
+    out = {r["key"]: r for r in verify.check_claims(Checker(), script, facts, [])}
     assert out["C1"]["status"] == "supported" and "Recalculated by code" in out["C1"]["note"]
     assert out["C2"]["status"] == "contradicted" and "16,288.95" in out["C2"]["note"]
     assert out["C3"]["status"] == "unsupported" and "200" in out["C3"]["note"]  # $200 and 13 years came from nowhere

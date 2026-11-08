@@ -30,6 +30,8 @@ class FakeAnalytics:
 
     def __call__(self, req):
         q = dict(req.url.params)
+        if req.url.path.endswith("/videos"):
+            return httpx.Response(200,json={"items":[{"id":vid,"status":{"privacyStatus":"public"}} for vid in q.get("id", "").split(",") if vid]})
         self.calls.append(q)
         assert req.method == "GET"                       # read-only
         metrics = q["metrics"].split(",")

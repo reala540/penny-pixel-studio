@@ -49,6 +49,18 @@ def collect_youtube(conn, account: dict, client: httpx.Client, today: date) -> d
                             where sp.social_account_id=%s and pp.platform='youtube' and pp.platform_post_id is not null
                               and pp.published_at > now() - interval '180 days'""", (account["id"],))
     token, _ = oauth.access_token(conn, account)
+    # Visibility can change after upload. Reconcile it without ever uploading again.
+    for offset in range(0, len(posts), 50):
+        batch = posts[offset:offset + 50]
+        response = client.get("https://www.googleapis.com/youtube/v3/videos",
+            headers={"Authorization": f"Bearer {token}"},
+            params={"part":"status", "id":",".join(p["platform_post_id"] for p in batch)})
+        if response.is_success:
+            for item in response.json().get("items", []):
+                visibility = item.get("status", {}).get("privacyStatus")
+                if visibility in ("private", "public", "unlisted"):
+                    db.run(conn, "update published_posts set visibility=%s,verified_at=now() where platform='youtube' and platform_post_id=%s",
+                           (visibility, item["id"]))
     written = 0
     if posts:
         start = min(p["published_at"] for p in posts).date()

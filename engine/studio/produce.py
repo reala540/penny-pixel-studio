@@ -506,8 +506,9 @@ def use_real_length(conn, project_id, seconds: float) -> None:
     issues = qr.get("issues") or []
     kept = [i for i in issues if not i.startswith(("Too short: about", "Too long: about"))]
     max_min = config.services()["render"]["max_long_minutes"]
-    if seconds < quality.MIN_LONG_SECONDS:
-        kept.append(f"Too short: {seconds / 60:.1f} min (aim for {quality.MIN_LONG_SECONDS // 60}+ min)")
+    minimum = quality.shortest_long_seconds()
+    if seconds < minimum:
+        kept.append(f"Too short: {seconds / 60:.1f} min (aim for {minimum // 60:g}+ min)")
     elif seconds > max_min * 60:
         kept.append(f"Too long: {seconds / 60:.1f} min (max {max_min})")
     if kept != issues:
@@ -1047,7 +1048,12 @@ def repair_package(conn, router: Router, storage, project_id, job_id=None) -> di
         raise ValueError("Part of this package is already posted, so it isn't changed")
     sv = db.one(conn, "select * from script_versions where id=%s", (head["current_script_version_id"],))
     if not sv:
-        raise ValueError("This package has no script to repair: make it again from its idea")
+        idea = db.one(conn, "select * from content_ideas where id=%s", (head["idea_id"],)) if head["idea_id"] else None
+        if not idea:
+            raise NeedsReview("This package has no script or research idea. Choose a researched idea in Create.")
+        db.run(conn, "delete from generation_jobs where idempotency_key=%s and status in ('failed','needs_review')",
+               (f"script:{project_id}",))
+        return produce_project(conn, router, storage, idea, head["batch_week"], project=head)
     idea = db.one(conn, "select * from content_ideas where id=%s", (head["idea_id"],)) if head["idea_id"] else None
     sources = _sources_for(conn, list(idea["source_ids"])) if idea else []
     script = Script.model_validate(sv["body"])

@@ -26,13 +26,13 @@ def _check(conn, post, platform=None):
     return heads_up.check_post(conn, post, _adapters(platform or Platform()), post["scheduled_at"] - timedelta(hours=2))
 
 
-def test_ready_posts_and_youtube_needs_one_tap(produced):
+def test_ready_posts_and_public_youtube_uploads(produced):
     conn, _ = produced
     _ready(conn)
     assert _check(conn, _first(conn, "x"))[0] == heads_up.READY
     assert _check(conn, _first(conn, "facebook")) == (heads_up.READY, "will post by itself")
     state, what = _check(conn, _first(conn, "youtube"))
-    assert state == heads_up.ONE_TAP and "Public in YouTube Studio" in what
+    assert state == heads_up.READY and what == "will post by itself"
 
 
 def test_problems_are_found_the_day_before(produced):

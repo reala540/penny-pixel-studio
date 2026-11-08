@@ -89,7 +89,11 @@ class ScriptedRouter(Router):
             raise QuotaError(f"{cand.provider}: free quota reached")
         self.usage.record(cand.provider, cand.model, role, success=True, input_tokens=10, output_tokens=10,
                           latency_ms=1, error=None)
-        return AIResult(json.dumps(respond(role, messages[1]["content"])), cand.provider, cand.model)
+        prompt = messages[1]["content"]
+        data = respond(role, prompt)
+        if role == "repurposer" and json.loads(prompt.split("JSON schema (no prose):\n", 1)[1]).get("title") == "ShortScript":
+            data = data["shorts"][0]
+        return AIResult(json.dumps(data), cand.provider, cand.model)
 
 
 def _sources_in(prompt: str) -> list[tuple[str, str]]:

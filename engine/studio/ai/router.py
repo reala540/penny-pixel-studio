@@ -53,6 +53,8 @@ class Candidate:
     kind: str = "chat"
     commercial_use: str = "assumed"
     credential: Credential | None = None   # pin one key (connection tests); otherwise the pool chooses
+    context_tokens: int | None = None
+    supports_json: bool = True
 
 
 @dataclass
@@ -156,6 +158,8 @@ class Router:
                     providers[name] = {**providers[name], "models": list(providers[name].get("models", [])) + added}
         self.cfg = {**cfg, "providers": providers}
         self.job_id = job_id
+        self._model_failures: dict[tuple[str, str], int] = {}
+        self._model_rest: dict[tuple[str, str], float] = {}
         self.pool = CredentialPool(self.usage)
         self.sleep = sleep
         self._last_retry_after: dict[str, int] = {}
@@ -203,6 +207,10 @@ class Router:
                 model_id = m["id"]
                 if (name, model_id) in self._retired:
                     continue
+                if self._model_rest.get((name, model_id), 0) > time.monotonic():
+                    continue
+                if getattr(self.usage, "model_resting", lambda *_: False)(name, model_id):
+                    continue
                 missing = ov.get("missing") or {}
                 if model_id in missing:  # retired by the provider: use the substitute found by the catalog
                     if not missing[model_id]:
@@ -211,16 +219,19 @@ class Router:
                 limit = mov.get("daily_request_limit") or m.get("daily_requests")
                 if limit is not None and self.usage.requests_today(name, model_id) >= limit:
                     continue
-                tok_limit = m.get("daily_tokens")
+                tok_limit = mov.get("daily_token_limit") if mov.get("daily_token_limit") is not None else m.get("daily_tokens")
                 if tok_limit is not None and self.usage.tokens_today(name, model_id) >= tok_limit:
                     continue
                 if any(c.provider == name and c.model == model_id for c in out):
                     continue
                 out.append(Candidate(name, model_id, p["base_url"].rstrip("/"), key,
                                      int(mov.get("priority") or m.get("priority", 100)), limit, tok_limit,
-                                     m.get("kind", "chat"), p.get("commercial_use", "assumed")))
+                                     m.get("kind", "chat"), p.get("commercial_use", "assumed"),
+                                     context_tokens=mov.get("context_tokens") or m.get("context"),
+                                     supports_json=mov.get("supports_json", m.get("supports_json", True))))
         # Equal rank: the model used least today goes first, so the work rotates instead of one model doing it all.
-        out.sort(key=lambda c: (c.priority + 50 * self.usage.error_rate(c.provider, c.model),
+        out.sort(key=lambda c: (c.priority + 100 * self.usage.error_rate(c.provider, c.model)
+                                + getattr(self.usage, "latency_penalty", lambda *_: 0)(c.provider, c.model),
                                 self.usage.requests_today(c.provider, c.model), c.provider))
         return out
 
@@ -340,7 +351,13 @@ class Router:
         if code >= 400:
             self._record(cand, role, False, 0, 0, started, f"{code}: {resp.text[:200]}", cred)
             return ("permanent", f"{cand.provider}/{cand.model}: {code} {resp.text[:200]}")
-        data = resp.json()
+        try:
+            data = resp.json()
+            if not isinstance(data, dict):
+                raise ValueError("not an object")
+        except ValueError:
+            self._record(cand, role, False, 0, 0, started, "invalid JSON response", cred)
+            return ("transient", None)
         usage = data.get("usage") or {}
         self._record(cand, role, True, int(usage.get("prompt_tokens") or 0),
                      int(usage.get("completion_tokens") or 0), started, None, cred)
@@ -365,7 +382,12 @@ class Router:
                    temperature: float, max_tokens: int) -> AIResult:
         payload: dict[str, Any] = {"model": cand.model, "messages": messages, "temperature": temperature,
                                    "max_tokens": max_tokens}
-        if json_mode:
+        estimated_input = sum((len(m["content"].encode()) + 2) // 3 + 32 for m in messages)
+        if cand.context_tokens and estimated_input + max_tokens > cand.context_tokens:
+            raise PermanentError(f"{cand.provider}/{cand.model}: request exceeds configured context budget")
+        if family(cand.provider) == "mistral" and temperature == 0:
+            payload["top_p"] = 1
+        if json_mode and cand.supports_json:
             payload["response_format"] = {"type": "json_object"}
         try:
             data = self._post(cand, "/chat/completions", payload, role)
@@ -423,15 +445,19 @@ class Router:
                     res = self._chat_once(cand, role, messages, json_mode=schema is not None,
                                           temperature=temperature, max_tokens=max_tokens)
                 except (QuotaError, AuthError, TransientError, PermanentError) as exc:
+                    self._output_result(cand, role, False)
                     tried.append({"provider": cand.provider, "model": cand.model, "error": str(exc)})
                     last_error = exc
                     break
                 if schema is None:
+                    self._output_result(cand, role, True)
                     return done(res, cand)
                 try:
                     res.data = schema.model_validate(extract_json(res.text))
+                    self._output_result(cand, role, True)
                     return done(res, cand)
                 except (ValidationError, PydanticValidationError) as exc:
+                    self._output_result(cand, role, False)
                     tried.append({"provider": cand.provider, "model": cand.model, "error": f"invalid output: {exc}"[:300]})
                     last_error = exc
                     messages = messages + [
@@ -443,6 +469,15 @@ class Router:
         if isinstance(last_error, (QuotaError, AuthError)) or all("quota" in t["error"] or "rate" in t["error"] for t in tried):
             raise QuotaError(f"All free providers for '{role}' are exhausted or failing: {tried}")
         raise TransientError(f"All providers failed for '{role}': {tried}") from last_error
+
+    def _output_result(self, cand: Candidate, role: str, ok: bool) -> None:
+        key = (cand.provider, cand.model)
+        self._model_failures[key] = 0 if ok else self._model_failures.get(key, 0) + 1
+        if self._model_failures[key] >= 3:
+            self._model_rest[key] = time.monotonic() + 600
+        record = getattr(self.usage, "record_output", None)
+        if record:
+            record(cand.provider, cand.model, role, ok)
 
     def complete_diverse(self, role: str, prompt: str, n: int, **kw) -> list[AIResult]:
         """Ask up to `n` different providers (for variety), in parallel. Partial results are fine.

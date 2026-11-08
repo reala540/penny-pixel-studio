@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from .. import config, db
 from ..ai.router import Router
 from .engine import store_source
-from .sources import Fetcher, SourceItem, clean_text
+from .sources import Fetcher, SourceItem, clean_text, official_feeds
 
 ARTICLE_CHARS = 12000
 ENOUGH_TEXT = 9000      # an idea whose sources already hold this much text isn't researched again
@@ -115,6 +115,29 @@ def linked_articles(f: Fetcher, queries: list[str], limit: int = 4) -> list[tupl
     return out
 
 
+def primary_articles(f: Fetcher, idea: dict, channel: str, limit: int = 4):
+    """Prefer relevant official releases before general web discovery."""
+    words = set(re.findall(r"[a-z]{4,}", (idea["title"] + " " + (idea.get("angle") or "")).lower()))
+    out = []
+    feeds = (config.research().get("adapters", {}).get("official_feeds") or {}).get("feeds", [])
+    for feed in feeds:
+        if feed.get("topic") != channel:
+            continue
+        try:
+            items = official_feeds(f, {"feeds": [feed]})
+        except Exception:
+            continue
+        for item in items:
+            if not words.intersection(re.findall(r"[a-z]{4,}", (item.title + " " + item.summary).lower())):
+                continue
+            text = article_text(f, item.url)
+            if text:
+                out.append((item, text))
+            if len(out) >= limit:
+                return out
+    return out
+
+
 def search_plan(router: Router, idea: dict, channel: str) -> SearchPlan:
     words = " ".join(re.findall(r"[A-Za-z0-9$%()'-]+", idea["title"]))[:80]
     try:
@@ -154,7 +177,8 @@ def deepen(conn, router: Router, idea: dict, channel: str, force: bool = False) 
     if room > 0:
         plan = search_plan(router, idea, channel)
         fresh = config.research().get("freshness_days", {})
-        for item, text in (wikipedia_articles(f, plan.wikipedia) + linked_articles(f, plan.queries))[:room]:
+        for item, text in (primary_articles(f, idea, channel) + wikipedia_articles(f, plan.wikipedia)
+                           + linked_articles(f, plan.queries))[:room]:
             item.topic = channel
             store_source(conn, item, fresh)
             row = db.one(conn, "update research_sources set body_text=coalesce(body_text, %s) where content_hash=%s "

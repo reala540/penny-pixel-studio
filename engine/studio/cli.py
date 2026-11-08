@@ -58,18 +58,22 @@ def cmd_migrate(a):
     """Apply supabase/migrations/*.sql once each (tracked in studio_meta.migrations)."""
     mig_dir = config.REPO_ROOT / "supabase" / "migrations"
     with _conn() as conn:
-        db.run(conn, "create schema if not exists studio_meta")
-        db.run(conn, "create table if not exists studio_meta.migrations (name text primary key, applied_at timestamptz default now())")
-        done = {r["name"] for r in db.all_(conn, "select name from studio_meta.migrations")}
-        applied = []
-        for f in sorted(mig_dir.glob("*.sql")):
-            if f.name in done:
-                continue
-            with db.transaction(conn):
-                conn.execute(f.read_text())
-                db.run(conn, "insert into studio_meta.migrations (name) values (%s)", (f.name,))
-            applied.append(f.name)
-        _print({"applied": applied, "already": sorted(done)})
+        db.run(conn, "select pg_advisory_lock(hashtext('studio:migrations'))")
+        try:
+            db.run(conn, "create schema if not exists studio_meta")
+            db.run(conn, "create table if not exists studio_meta.migrations (name text primary key, applied_at timestamptz default now())")
+            done = {r["name"] for r in db.all_(conn, "select name from studio_meta.migrations")}
+            applied = []
+            for f in sorted(mig_dir.glob("*.sql")):
+                if f.name in done:
+                    continue
+                with db.transaction(conn):
+                    conn.execute(f.read_text())
+                    db.run(conn, "insert into studio_meta.migrations (name) values (%s)", (f.name,))
+                applied.append(f.name)
+            _print({"applied": applied, "already": sorted(done)})
+        finally:
+            db.run(conn, "select pg_advisory_unlock(hashtext('studio:migrations'))")
 
 
 def cmd_init(a):
@@ -114,7 +118,7 @@ def cmd_publish(a):
     from .storage import default_storage
 
     with _conn() as conn:
-        _print(runner.run_due(conn, default_storage()))
+        _print(runner.run_due(conn, default_storage(), router=_router(conn)))
 
 
 def cmd_queue(a):

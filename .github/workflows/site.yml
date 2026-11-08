@@ -5,6 +5,9 @@ name: Website
 # Pages. Runs after each publishing run and once a day. It reads the studio's database but the website itself has no
 # login, no database and no keys.
 on:
+  push:
+    branches: [main]
+    paths: ['engine/studio/website/**', 'config/**', 'supabase/migrations/**', '.github/workflows/site.yml']
   workflow_run:
     workflows: ["Publish due posts"]
     types: [completed]

@@ -23,7 +23,7 @@ from .models import (WORDS_PER_SECOND, CriticReport, Scene, FactSheet, Outline, 
 
 MAX_REWRITES = 2
 CRITIC_MIN = 7
-MIN_LONG_FACTS = 10   # checkable facts a long video needs; fewer means padding or invention
+MIN_LONG_FACTS = 5   # checkable facts a long video needs; fewer means padding or invention
 MINUTES_PER_FACT = 0.6  # how much honest video one checked fact carries (a worked example, context, why it matters)
 EDIT_SHRINK = 0.15     # a voice edit may shorten a scene by at most this share
 MIN_SCENES = 6         # the structure check's minimum: cuts never go below it

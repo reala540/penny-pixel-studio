@@ -74,13 +74,15 @@ without cookies. See the <a href="https://www.cloudflare.com/privacypolicy/">Clo
 <a href="https://policies.google.com/privacy">Google Privacy Policy</a> apply.</p>
 <h2>Newsletter</h2><p>If a newsletter sign-up is offered, your email address goes to the newsletter provider named on the form,
 only with your consent, and every email includes an unsubscribe link.</p>
+<h2>Optional conversion measurements</h2><p>If a measurement service is connected, link clicks, downloads and newsletter form submissions may be counted with the page path. Email addresses and form values are not included in those events. A form submission does not prove a confirmed subscription or purchase.</p>
 <h2>Links</h2><p>Articles link to sources and sometimes to affiliate offers. Other websites have their own privacy policies.</p>
 <h2>Contact</h2><p>For privacy questions, {contact}.</p>"""),
         "/terms/": ("Terms of use", "The terms for using the Penny & Pixel website.", """
 <p>By using this website you agree to these terms.</p><h2>Information only</h2><p>Our articles and videos are general education.
 They are not personal financial, legal, tax or professional advice. Check important decisions with a qualified professional.</p>
 <h2>Accuracy</h2><p>We check facts against their sources, but information can change after publication; each article shows the
-date its facts are from.</p><h2>Links</h2><p>We aren't responsible for the content of other websites we link to.</p>
+date its facts are from.</p><h2>Optional conversion measurements</h2><p>If a measurement service is connected, link clicks, downloads and newsletter form submissions may be counted with the page path. Email addresses and form values are not included in those events. A form submission does not prove a confirmed subscription or purchase.</p>
+<h2>Links</h2><p>We aren't responsible for the content of other websites we link to.</p>
 <h2>Copyright</h2><p>Articles, images and videos are ours unless stated otherwise. You may share links freely.</p>"""),
         "/affiliate-disclosure/": ("Affiliate disclosure", "How affiliate links work on Penny & Pixel.", """
 <p>Some articles contain affiliate links. If you buy or sign up through one, we may earn a commission at no extra cost to you.

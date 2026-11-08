@@ -181,3 +181,37 @@ def logo(size: int = 32) -> str:
 FAVICON = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="9" fill="#101B32"/>'
            '<circle cx="12.5" cy="16" r="6.2" fill="#F0BC55"/><rect x="17.5" y="9.8" width="9.5" height="12.4" rx="2.4" '
            'fill="#4776F5"/></svg>')
+
+JS += r"""
+const raiseForm = document.querySelector('#raise-calculator');
+if (raiseForm) raiseForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const fields = new FormData(raiseForm);
+  const oldPay = Number(fields.get('old')), newPay = Number(fields.get('new')), inflation = Number(fields.get('inflation'));
+  const result = document.querySelector('#raise-result');
+  if (![oldPay,newPay,inflation].every(Number.isFinite) || oldPay <= 0 || newPay < 0 || inflation <= -100) {
+    result.textContent = 'Enter positive old pay, non-negative new pay, and inflation above -100%.';
+    return;
+  }
+  const nominal = (newPay / oldPay - 1) * 100;
+  const real = ((newPay / oldPay) / (1 + inflation / 100) - 1) * 100;
+  result.textContent = `Nominal change: ${nominal.toFixed(2)}%. Inflation-adjusted change: ${real.toFixed(2)}%. Based only on your inputs.`;
+});
+"""
+
+JS += r"""
+// Events contain no email, form values, identifiers or query strings. A form
+// submission is an attempt, never a confirmed subscriber or sale.
+function siteEvent(event) {
+  const endpoint = document.querySelector('meta[name="site-events-url"]')?.content;
+  if (!endpoint) return;
+  fetch(endpoint, {method:'POST', credentials:'omit', keepalive:true,
+    headers:{'Content-Type':'application/json'}, body:JSON.stringify({event,path:location.pathname})}).catch(()=>{});
+}
+document.addEventListener('click', (event) => {
+  const a=event.target.closest('a');
+  if (a?.dataset.event === 'affiliate_click') siteEvent('affiliate_click');
+  else if (a?.hasAttribute('download')) siteEvent('download');
+});
+document.querySelector('.newsletter form')?.addEventListener('submit',()=>siteEvent('newsletter_submit'));
+"""

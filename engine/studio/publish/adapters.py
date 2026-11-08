@@ -85,14 +85,15 @@ class YouTube:
     def capability(self, conn, account: dict, kind: str) -> Capability:
         if not _connected(conn, account["id"]):
             return Capability(False, "manual", "YouTube channel not connected")
-        if not config.services()["publishing"]["youtube"]["api_audited"]:
-            return Capability(True, "api_draft", "API not yet audited by Google: uploads are private until you "
-                                                 "publish them in YouTube Studio")
+        if config.services()["publishing"]["youtube"].get("privacy_status", "private") != "public":
+            return Capability(True, "api_draft", "Configured to upload privately; public posting is not enabled")
         return Capability(True, "api")
 
     def publish(self, conn, account, variant, video: Path, thumb: Path | None, token: str) -> PublishResult:
-        audited = config.services()["publishing"]["youtube"]["api_audited"]
         pub = config.services()["publishing"]["youtube"]
+        requested_visibility = pub.get("privacy_status", "public" if pub.get("api_audited") else "private")
+        if requested_visibility not in ("public", "private", "unlisted"):
+            raise PermanentError("YouTube privacy_status must be public, private or unlisted")
         tags = [t for t in (variant.get("tags") or []) if t][:30]
         meta = {"snippet": {"title": (variant.get("title") or "")[:100], "description": (variant.get("body") or "")[:4900],
                             "tags": tags,
@@ -100,7 +101,7 @@ class YouTube:
                                               or pub.get("category_id", "27")),
                             "defaultLanguage": pub.get("default_language", "en"),
                             "defaultAudioLanguage": pub.get("default_language", "en")},  # better automatic captions
-                "status": {"privacyStatus": "public" if audited else "private", "selfDeclaredMadeForKids": False,
+                "status": {"privacyStatus": requested_visibility, "selfDeclaredMadeForKids": False,
                            "containsSyntheticMedia": bool(variant.get("synthetic_media", False))}}
         size = video.stat().st_size
         headers = {"Authorization": f"Bearer {token}"}
@@ -118,19 +119,39 @@ class YouTube:
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             raise AmbiguousPublish("youtube: upload connection dropped — the video may or may not exist") from exc
         _raise_for(up, "youtube", after_upload=True)
-        vid = up.json().get("id")
+        try:
+            uploaded = up.json()
+        except ValueError as exc:
+            raise AmbiguousPublish("YouTube accepted the upload but returned no readable receipt; do not upload again") from exc
+        if not isinstance(uploaded, dict):
+            raise AmbiguousPublish("YouTube upload receipt is malformed; check the channel before retrying")
+        vid = uploaded.get("id")
+        if not vid:
+            raise AmbiguousPublish("YouTube upload receipt has no video ID; check the channel before retrying")
+        status = uploaded.get("status")
+        visibility = status.get("privacyStatus", "unknown") if isinstance(status, dict) else "unknown"
+        if vid:
+            try:
+                check = self.client.get("https://www.googleapis.com/youtube/v3/videos",
+                                        params={"part": "status", "id": vid}, headers=headers)
+                if check.is_success:
+                    items = check.json().get("items") or []
+                    if items:
+                        visibility = items[0].get("status", {}).get("privacyStatus", visibility)
+            except (httpx.HTTPError, ValueError, AttributeError, TypeError):
+                pass  # never retry a successful upload because its visibility check failed
         db.run(conn, """insert into provider_usage (provider, service, units, success) values
-                        ('youtube','youtube_api',1600,true)""")
+                        ('youtube','youtube_api',100,true)""")
         if thumb and thumb.exists() and vid:
             t = self.client.post("https://www.googleapis.com/upload/youtube/v3/thumbnails/set", params={"videoId": vid},
                                  content=thumb.read_bytes(), headers={**headers, "Content-Type": "image/jpeg"})
             if t.status_code < 300:
                 db.run(conn, """insert into provider_usage (provider, service, units, success) values
                                 ('youtube','youtube_api',50,true)""")
-        followup = None if audited else ("Open YouTube Studio > Content, find this private video and set it to "
-                                         "Public (or schedule it).")
+        followup = None if visibility == "public" else (
+            f"Uploaded successfully; visibility is {visibility}. Check YouTube Studio before recording it as public.")
         return PublishResult(vid, f"https://www.youtube.com/watch?v={vid}" if vid else None,
-                             "public" if audited else "private", "api" if audited else "api_draft", followup)
+                             visibility, "api" if visibility == "public" else "api_draft", followup)
 
 
 # ------------------------------------------------------------------------------------------ Facebook

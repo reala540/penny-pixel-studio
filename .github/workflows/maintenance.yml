@@ -66,19 +66,12 @@ jobs:
             sudo apt-get install -y -qq postgresql-common > /dev/null
             sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y > /dev/null
             sudo apt-get install -y -qq postgresql-client-17 > /dev/null
-            mkdir -p backup
-            # Supabase's direct address is IPv6-only and GitHub runners have no IPv6: try the Session pooler
-            # addresses first, as the engine does (studio.db.candidate_urls), then the direct one
-            ok=""
-            while IFS= read -r url; do
-              if /usr/lib/postgresql/17/bin/pg_dump "$url" --schema=public --no-owner -Fc -f backup/studio.dump; then ok=1; break; fi
-            done < <(python -c "import os; from studio import db; print('\n'.join(db.candidate_urls(os.environ['SUPABASE_DB_URL'], db._region())))")
-            if [ -z "$ok" ]; then echo "::error::The weekly backup couldn't reach the database on any address"; exit 1; fi
-            echo "Backup saved ($(du -h backup/studio.dump | cut -f1))"
+            export PATH="/usr/lib/postgresql/17/bin:$PATH"
+            python -m studio.backup backup/studio-backup.enc
           fi
       - uses: actions/upload-artifact@v5
         with:
           name: db-backup-${{ github.run_id }}
-          path: backup/
+          path: backup/*.enc
           retention-days: 30
           if-no-files-found: ignore

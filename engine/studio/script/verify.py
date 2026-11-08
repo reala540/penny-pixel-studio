@@ -16,6 +16,7 @@ from .models import ClaimVerdicts, FactSheet, Script
 from .quality import numbers_in
 
 import ast
+import math
 import operator
 
 # Numbers a calculation may use without a source: units of time and simple counts.
@@ -51,7 +52,7 @@ def safe_eval(expression: str) -> float:
 
 def check_calculation(text: str, expression: str, fact_numbers: set[str]) -> tuple[str, float, str]:
     """Recalculate a number the script worked out. Code decides, not a model: the result must match a number the
-    claim states (within 1%, or rounding to the nearest whole unit) and every input must come from the fact sheet,
+    claim states (with matching units and displayed precision) and every input must come from the fact sheet,
     from the claim's own stated assumptions, or be a plain constant like 12 months."""
     if not expression.strip():
         return "unsupported", 0.0, "Calculation without its arithmetic"
@@ -78,10 +79,31 @@ def check_calculation(text: str, expression: str, fact_numbers: set[str]) -> tup
         if result == 1.0:
             return "supported", 0.95, f"Comparison checked by code: {expression} is true"
         return "contradicted", 0.9, f"Comparison is false: {expression}"
-    for n in stated:
-        v = float(n)
-        if abs(v - result) <= max(0.01 * abs(result), 0.51) or (result and abs(v - result * 100) <= max(abs(result), 0.51)):
-            return "supported", 0.95, f"Recalculated by code: {expression} = {result:,.2f}"
+    if not math.isfinite(result):
+        return "unsupported", 0.0, "Calculation has no finite result"
+    # An input, date or percentage elsewhere in the sentence is not the answer.
+    # Match the precision and unit of the stated result, preserving its sign.
+    from .quality import NUMBER_RE
+    for m in NUMBER_RE.finditer(text):
+        raw = m.group(1).replace(",", "")
+        norm = raw.rstrip("0").rstrip(".") if "." in raw else raw
+        if norm in inputs or re.fullmatch(r"(?:19|20)\d{2}", raw):
+            continue
+        prefix = text[max(0, m.start() - 2):m.start()]
+        sign = -1 if "-" in prefix or "−" in prefix else 1
+        unit = (m.group(2) or "").lower()
+        if unit and m.end() < len(text) and text[m.end()].isalpha():
+            unit = "million" if unit == "m" and text[m.end():].lower().startswith("illion") else ""
+        value = sign * float(raw)
+        expected = result * 100 if unit in ("%", "percent") else result
+        if unit in SCALE:
+            value *= SCALE[unit]
+        decimals = len(raw.partition(".")[2])
+        tolerance = 0.5 * 10 ** -decimals
+        if unit in SCALE:
+            tolerance *= SCALE[unit]
+        if abs(value - expected) <= tolerance + 1e-10 and (value == 0 or (value > 0) == (expected > 0)):
+            return "supported", 0.95, f"Recalculated by code: {expression} = {result:,.8g}"
     results = [n for n in stated if n not in inputs and as_percent(n) not in {as_percent(i) for i in inputs}
                and n not in {as_percent(i) for i in inputs}]
     if not results:
@@ -211,17 +233,19 @@ def check_claims(router: Router, script: Script, facts: FactSheet, sources: list
                                                 "published": f.published or evidence._date(by_label[f.source_ref])})
     ev = {c.key: "\n".join(evidence.evidence_for(index[k], by_id, c.text) for k in c.fact_refs if k in index)
           for c in script.claims}
-    factual = [c for c in script.claims if c.kind == "fact" and c.fact_refs]
+    factual = [c for c in script.claims if (c.kind == "fact" and c.fact_refs) or c.kind == "calculation"]
     verdicts = {}
     for i in range(0, len(factual), BATCH):
         part = factual[i:i + BATCH]
-        listing = "\n\n".join(f"{c.key}: {c.text}\n  cites: {', '.join(c.fact_refs)}\n"
+        listing = "\n\n".join(f"{c.key}: {c.text}\n  Expression: {c.expression}\n  cites: {', '.join(c.fact_refs)}\n"
                                f'  <evidence id="{c.key}">\n{ev[c.key][:4000]}\n  </evidence>' for c in part)
         prompt = ("Check each claim strictly against ONLY the evidence shown under it (the fact, its passage, the "
                   "source's publication date and more text from the same article). A year or date given as the "
                   "source's publication date or data period counts as stated. supported = the evidence says it; "
                   "partially_supported = the evidence says most of it but the claim is a little broader or less "
                   "exact; unsupported = the evidence doesn't say it; contradicted = the evidence says otherwise. "
+                  "For a calculation, judge whether its formula actually answers the stated question with matching units and periods, "
+                  "not merely whether arithmetic works. A wage change needs the old wage baseline, not just a raise amount. "
                   "Copy the exact supporting sentence from the evidence into supporting_quote. Do not use outside "
                   "knowledge.\n\n" + listing)
         res = router.complete("claim_checker", prompt, schema=ClaimVerdicts, temperature=0.0, exclude=exclude)
@@ -237,7 +261,11 @@ def check_claims(router: Router, script: Script, facts: FactSheet, sources: list
                             "fact_refs": c.fact_refs, "note": note, "checked_at": now, "kind": c.kind})
 
         if c.kind == "calculation":
-            rec(*check_calculation(c.text, c.expression, fact_numbers | evidence.date_numbers(cited)))
+            checked = check_calculation(c.text, c.expression, fact_numbers | evidence.date_numbers(cited))
+            semantic = verdicts.get(c.key)
+            if checked[0] == "supported" and (semantic is None or semantic.status != "supported"):
+                checked = ("unsupported", 0.0, "Formula did not pass the independent meaning check")
+            rec(*checked)
             continue
         if c.kind == "opinion":
             rec("opinion", 1.0, "Presented as opinion")

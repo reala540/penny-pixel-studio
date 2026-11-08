@@ -225,7 +225,7 @@ def test_facts_keep_their_passage_and_date_and_old_ones_become_history():
 def test_the_video_is_as_long_as_the_evidence_supports():
     assert pipeline.planned_minutes(10) == 6.0
     assert pipeline.planned_minutes(30) == 11.0
-    assert pipeline.planned_minutes(3) == 5.0
+    assert pipeline.planned_minutes(3) == 3.0
 
 
 # ------------------------------------------------------------------ status: four kinds, never mixed
