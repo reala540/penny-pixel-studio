@@ -421,6 +421,9 @@ def build(articles: list[Article], out: Path, images_dir: Path | None = None, so
         d.mkdir(parents=True, exist_ok=True)
         (d / "index.html").write_text(page)
     (out / "404.html").write_text(site.not_found())
+    for name in options.get("google_site_verification_files") or []:   # Search Console's HTML-file check
+        if re.fullmatch(r"google[0-9a-f]{8,32}\.html", name):
+            (out / name).write_text(f"google-site-verification: {name}")
     (out / "search-index.json").write_text(json.dumps(_search_index(articles), ensure_ascii=False))
     url = site_url()
     now = datetime.now(timezone.utc).date().isoformat()

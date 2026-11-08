@@ -288,3 +288,10 @@ def test_german_pages_pair_with_their_english_originals(tmp_path):
     assert "Auf Deutsch lesen" in en and not (out / "de" / "artikel" / "m1").exists()
     assert '<meta name="google-site-verification" content="abc123">' in (out / "index.html").read_text()
     assert "/de/artikel/a1/" in (out / "sitemap.xml").read_text()
+
+
+def test_search_console_file_is_served_at_the_root(tmp_path):
+    out = tmp_path / "site"
+    website.build([_art("a1")], out, options={"google_site_verification_files": ["google58a9e9d5c0a47bf4.html", "../evil.html"]})
+    assert (out / "google58a9e9d5c0a47bf4.html").read_text() == "google-site-verification: google58a9e9d5c0a47bf4.html"
+    assert not (tmp_path / "evil.html").exists()
