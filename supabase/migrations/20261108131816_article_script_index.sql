@@ -1,0 +1,1 @@
+create index website_articles_script_version_idx on public.website_articles(script_version_id);

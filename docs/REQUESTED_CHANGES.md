@@ -61,3 +61,8 @@ Restore first into a disposable database with the expected Supabase roles/extens
 ## Verification before push
 
 The full engine run exercised 344 tests: 337 passed initially, with seven failures investigated. All failing cases passed after the fixes and updated fixtures; the focused publishing/Shorts/analytics regression group passed 34 tests plus the corrected retry case. Website/regression checks passed 33 tests, and the final requested-change/receipt group passed 19. Dashboard type checking, 103 unit tests and production build passed; Worker type checking and 66 tests passed. Browser dashboard sweep/quality checks and the throttled local website calculator/layout check passed. A disposable PostgreSQL restore preserved data, permissions and RLS after authenticated encryption/decryption. External platform calls in tests are mocked; live newsletter delivery and actual social publishing are not claimed verified.
+
+
+## Deployment database review
+
+The production migration and RLS grants were verified after push. Health advisors report no findings. Security advisors still flag the existing intentional deny-all secret tables and authenticated SECURITY DEFINER owner RPCs; their owner checks must remain intact. Leaked-password protection remains disabled on Free. See [Supabase password protection](https://supabase.com/docs/guides/auth/password-security#password-strength-and-leaked-password-protection) and [owner RPC advisory](https://supabase.com/docs/guides/database/database-linter?lint=0029_authenticated_security_definer_function_executable). Existing informational index notices are unchanged; a covering index is supplied for the new article snapshot foreign key.
