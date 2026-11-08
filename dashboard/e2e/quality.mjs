@@ -90,6 +90,23 @@ try {
       await context.close();
     });
 
+    await check("A package with no script offers 'Make this package again' instead of 'Recheck and repair'", async () => {
+      const db = seed();
+      db.content_projects[0].status = "needs_attention";
+      db.content_projects[0].current_script_version_id = null;
+      const { page, context, calls, errors } = await openStudio(browser, "/content/proj-1", { db });
+      await page.getByRole("button", { name: "Make this package again" }).click();
+      await page.getByRole("dialog").getByText("This package has no script yet").waitFor();
+      if (await page.getByRole("button", { name: "Recheck and repair" }).count()) throw new Error("old label still shown");
+      const before = calls.length;
+      await page.getByRole("dialog").getByRole("button", { name: "Make it again" }).click();
+      await page.waitForTimeout(500);
+      const queued = calls.slice(before).filter((c) => c.path === "/rest/v1/rpc/enqueue_owner_job");
+      if (queued.length !== 1 || !queued[0].body.includes('"repair_package"')) throw new Error("not queued");
+      if (errors.length) throw new Error(errors.join("; "));
+      await context.close();
+    });
+
     await check("Settings → Accounts shows what each connection can really do, and the next step", async () => {
       const db = seed();
       db.settings.account_capabilities = { checked_at: iso(-30), accounts: {
