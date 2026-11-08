@@ -29,6 +29,7 @@ import httpx
 from . import config, db, offers
 
 SITE_NAME = "Penny & Pixel"
+SITE_HTML = html.escape(SITE_NAME)   # "Penny &amp; Pixel": a bare "&" breaks XML (the RSS feed) and is sloppy HTML
 TAGLINE = "AI tools and money skills, explained simply"
 CHANNELS = {"ai": ("AI tools", "Pixel explains what AI tools can really do, without the hype."),
             "money": ("Money", "Penny explains budgeting, saving, paychecks and credit with real numbers.")}
@@ -269,17 +270,17 @@ def _page(title: str, description: str, path: str, body: str, *, head_extra: str
     return f"""<!doctype html>
 <html lang="en-US"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{_e(full)}</title><meta name="description" content="{_e(description)}"><link rel="canonical" href="{_e(url)}">
-<meta property="og:site_name" content="{SITE_NAME}"><meta property="og:title" content="{_e(title)}">
+<meta property="og:site_name" content="{SITE_HTML}"><meta property="og:title" content="{_e(title)}">
 <meta property="og:description" content="{_e(description)}"><meta property="og:url" content="{_e(url)}"><meta property="og:type" content="{og_type}">{img}
 <meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<link rel="alternate" type="application/rss+xml" title="{SITE_NAME}" href="/feed.xml"><link rel="stylesheet" href="/style.css">{head_extra}
+<link rel="alternate" type="application/rss+xml" title="{SITE_HTML}" href="/feed.xml"><link rel="stylesheet" href="/style.css">{head_extra}
 </head><body>
-<header><div class="wrap"><a class="brand" href="/">{LOGO}<span>{SITE_NAME}</span></a>
+<header><div class="wrap"><a class="brand" href="/">{LOGO}<span>{SITE_HTML}</span></a>
 <nav><a href="/ai/">AI tools</a><a href="/money/">Money</a><a href="/about/">About</a></nav></div></header>
 <main class="wrap">{body}</main>
 <footer><div class="wrap"><p>{_e(TAGLINE)}.</p>
 <p><a href="/about/">About</a><a href="/privacy/">Privacy</a><a href="/affiliate-disclosure/">Affiliate disclosure</a><a href="/feed.xml">RSS</a></p>
-<p>&copy; {datetime.now(timezone.utc).year} {SITE_NAME}</p></div></footer>
+<p>&copy; {datetime.now(timezone.utc).year} {SITE_HTML}</p></div></footer>
 </body></html>
 """
 
@@ -337,8 +338,8 @@ def article_html(a: Article) -> str:
 
 
 STATIC = {
-    "about": ("About", "Who we are and how we check every fact.", f"""<h1>About {SITE_NAME}</h1>
-<p>{SITE_NAME} makes simple, practical guides about two things that change everyday life: AI tools and money.</p>
+    "about": ("About", "Who we are and how we check every fact.", f"""<h1>About {SITE_HTML}</h1>
+<p>{SITE_HTML} makes simple, practical guides about two things that change everyday life: AI tools and money.</p>
 <p><b>Pixel</b> explains what AI tools like ChatGPT can really do at work and at home, without the hype. <b>Penny</b> explains
 budgeting, saving, paychecks, credit and other money basics, with real numbers and their sources.</p>
 <h2>How we work</h2>
@@ -347,7 +348,7 @@ against a named source with its date, and list those sources under the article. 
 We never claim to have tested something ourselves unless we did.</p>
 <p>Money articles are general education, not personal financial advice.</p>"""),
     "privacy": ("Privacy policy", "What this website collects (almost nothing) and why.", f"""<h1>Privacy policy</h1>
-<p>{SITE_NAME} is a reading website. It has no accounts, no sign-up forms and no comments, and it doesn't use cookies of its own.</p>
+<p>{SITE_HTML} is a reading website. It has no accounts, no sign-up forms and no comments, and it doesn't use cookies of its own.</p>
 <h2>What is collected</h2>
 <p>Our hosting provider, Cloudflare, processes standard technical information (such as your IP address and browser type) to
 deliver and protect the pages. See the <a href="https://www.cloudflare.com/privacypolicy/">Cloudflare privacy policy</a>.</p>
@@ -358,7 +359,7 @@ deliver and protect the pages. See the <a href="https://www.cloudflare.com/priva
 <p>Articles link to their sources and, sometimes, to affiliate offers (see our <a href="/affiliate-disclosure/">affiliate
 disclosure</a>). Other websites have their own privacy policies.</p>"""),
     "affiliate-disclosure": ("Affiliate disclosure", "How affiliate links work on this website.", f"""<h1>Affiliate disclosure</h1>
-<p>Some articles contain affiliate links. If you buy or sign up through one, {SITE_NAME} may earn a commission at no extra
+<p>Some articles contain affiliate links. If you buy or sign up through one, {SITE_HTML} may earn a commission at no extra
 cost to you. Affiliate links are always labeled where they appear.</p>
 <p>Affiliate offers never change what our articles say: articles are written from our checked research first, and an offer
 is added only if it matches the topic. Money articles are general education, not personal financial advice: compare options
@@ -414,7 +415,7 @@ def build(articles: list[Article], out: Path, images_dir: Path | None = None) ->
     items = "".join(f"<item><title>{_e(a.title)}</title><link>{_e(site_url())}/articles/{_e(a.slug)}/</link>"
                     f"<guid>{_e(site_url())}/articles/{_e(a.slug)}/</guid><pubDate>{a.published:%a, %d %b %Y %H:%M:%S +0000}</pubDate>"
                     f"<description>{_e(a.description)}</description></item>" for a in articles[:30])
-    (out / "feed.xml").write_text(f'<?xml version="1.0" encoding="UTF-8"?>\n<rss version="2.0"><channel><title>{SITE_NAME}</title>'
+    (out / "feed.xml").write_text(f'<?xml version="1.0" encoding="UTF-8"?>\n<rss version="2.0"><channel><title>{SITE_HTML}</title>'
                                   f"<link>{_e(site_url())}/</link><description>{_e(TAGLINE)}</description>{items}</channel></rss>\n")
     (out / "_headers").write_text("/*\n  X-Content-Type-Options: nosniff\n  Referrer-Policy: strict-origin-when-cross-origin\n"
                                   "  X-Frame-Options: DENY\n")
