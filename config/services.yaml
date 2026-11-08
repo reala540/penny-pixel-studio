@@ -85,3 +85,9 @@ website:
   # files, no login, no database, no keys. Built by .github/workflows/site.yml after posts go out and daily.
   url: "https://pennyandpixel.pages.dev"   # the SITE_URL repository variable wins, if Cloudflare gives another address
   project: "pennyandpixel"                  # the Cloudflare Pages project name
+  contact_email: null       # shown on Contact/Corrections/Advertise when set; otherwise readers are sent to the social accounts
+  newsletter:               # a free provider's sign-up address (e.g. Buttondown's embed form); no form is shown until set
+    form_action: null
+    provider: null
+  analytics:                # optional: Cloudflare Web Analytics token (free, no cookies). Or switch it on in the Pages
+    cloudflare_token: null  # project (Metrics -> Web Analytics): the site's security policy already allows it
