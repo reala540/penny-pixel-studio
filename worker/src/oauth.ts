@@ -16,7 +16,8 @@ interface State {
 
 const SCOPES: Record<Platform, string> = {
   // yt-analytics(-monetary).readonly: views, watch time, retention, click-through and revenue per video (read-only)
-  youtube: "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly https://www.googleapis.com/auth/yt-analytics-monetary.readonly",
+  // youtube.force-ssl: add each upload to the right playlist (playlistItems.insert needs it)
+  youtube: "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.force-ssl https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly https://www.googleapis.com/auth/yt-analytics-monetary.readonly",
   facebook: "pages_show_list,pages_read_engagement,pages_manage_posts,business_management",
   tiktok: "user.info.basic,video.upload,video.publish",
   x: "tweet.read tweet.write users.read media.write offline.access",

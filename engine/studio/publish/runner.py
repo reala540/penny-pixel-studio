@@ -353,6 +353,9 @@ def publish_post(conn, storage, post: dict, adapters: dict | None = None, now: d
         db.run(conn, "update scheduled_posts set status='published', last_error=null, locked_until=null where id=%s",
                (post["id"],))
         db.run(conn, "update content_variants set status='published' where id=%s", (ctx["id"],))
+    if ctx["platform"] == "youtube" and getattr(adapter, "client", None) is not None:
+        from . import playlists
+        playlists.place(conn, adapter.client, token, acc, ctx, result.platform_post_id, post["id"])
     if result.manual_followup:
         db.run(conn, """insert into manual_tasks (scheduled_post_id, platform, title, instructions, deep_link)
                         values (%s,%s,%s,%s,%s)""",
