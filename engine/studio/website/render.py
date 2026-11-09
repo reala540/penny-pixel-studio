@@ -127,8 +127,10 @@ class Site:
 
     # ------------------------------------------------------------------ pieces
     def picture(self, a, eager: bool = False, sizes: str = "(max-width:760px) 100vw, 380px") -> str:
-        if not a.image:
-            return ""
+        if not a.image:   # never an empty grey box: the brand mark and the topic instead
+            label = CHANNELS.get(a.channel, (a.channel,))[0]
+            return (f'<span class="noimg {e(a.channel)}" role="img" aria-label="{e(label)}">{assets.logo(56)}'
+                    f'<span>{e(label)}</span></span>')
         stem = a.image.rsplit(".", 1)[0]
         webp = (f'<source type="image/webp" srcset="/images/{e(stem)}-640.webp 640w, /images/{e(stem)}-1280.webp 1280w" '
                 f'sizes="{sizes}">' if a.webp else "")

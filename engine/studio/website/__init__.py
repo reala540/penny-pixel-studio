@@ -237,6 +237,8 @@ def collect(conn, storage, work: Path, check_video=video_is_public, router=None)
                 [t for k,t in editorial.BLOCKS if k == "p"], p["first_posted"] or editorial.REVISED,
                 blocks=editorial.BLOCKS, sources=editorial.SOURCES, modified=editorial.REVISED,
                 checked=editorial.REVISED, notes=["Corrected financial method; hypothetical example recalculated by code"]))
+            articles[-1].image = _image(conn, storage, p["id"], images / f"{slug}.jpg", work)   # its video's picture
+            articles[-1].webp = bool(articles[-1].image) and _webp(images / articles[-1].image)
             continue
         reason = why_left_out(conn, p, body)
         title = body.get("title") or p["title"]

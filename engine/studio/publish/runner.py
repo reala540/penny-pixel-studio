@@ -54,6 +54,24 @@ def _context(conn, post: dict) -> dict:
           join content_projects p on p.id=v.project_id where v.id=%s""", (post["variant_id"],))
 
 
+def checks_off(conn, now: datetime | None = None) -> bool:
+    """The owner's switch (settings.publish_without_checks): approved posts go out without the final fact check and the
+    freshness stop. {"on": true, "until": "<ISO time>"} switches itself off at that time; true stays on until removed.
+    Approvals, accounts, licences, pausing and duplicate protection still apply."""
+    v = db.get_setting(conn, "publish_without_checks", None)
+    if v is True:
+        return True
+    if isinstance(v, dict) and v.get("on"):
+        until = v.get("until")
+        if not until:
+            return True
+        try:
+            return datetime.fromisoformat(str(until).replace("Z", "+00:00")) > (now or datetime.now(timezone.utc))
+        except ValueError:
+            return False
+    return False
+
+
 def safety_problems(conn, post: dict, ctx: dict, now: datetime) -> list[str]:
     problems = []
     if db.get_setting(conn, "paused", False):
@@ -81,7 +99,7 @@ def safety_problems(conn, post: dict, ctx: dict, now: datetime) -> list[str]:
         problems.append(f"package is {ctx['project_status']}, not approved")
     elif ctx["approved_script_version_id"] != ctx["current_script_version_id"]:
         problems.append("the script changed after approval: approve the current version again")
-    if ctx["fresh_until"] and ctx["fresh_until"] < now:
+    if ctx["fresh_until"] and ctx["fresh_until"] < now and not checks_off(conn, now):
         problems.append("content expired: time-sensitive facts must be rechecked")
     for sc in ((ctx["recipe"] or {}).get("render") or {}).get("scenes", []):
         if ((sc.get("photo_key") or sc.get("video_key")) and not sc.get("license_record_id")) or (
@@ -359,7 +377,7 @@ def run_due(conn, storage, adapters=None, now: datetime | None = None, router=No
             break
         for post in batch:
             ctx = _context(conn, post) if router is not None else None
-            if router is not None and ctx and not safety_problems(conn, post, ctx, now):
+            if router is not None and ctx and not safety_problems(conn, post, ctx, now) and not checks_off(conn, now):
                 from .. import preflight
                 try:
                     preflight.check(conn, router, ctx["project_id"], expected_version=ctx["current_script_version_id"])
