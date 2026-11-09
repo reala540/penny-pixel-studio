@@ -19,7 +19,8 @@ const SCOPES: Record<Platform, string> = {
   // youtube.force-ssl: add each upload to the right playlist (playlistItems.insert needs it)
   youtube: "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.force-ssl https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly https://www.googleapis.com/auth/yt-analytics-monetary.readonly",
   facebook: "pages_show_list,pages_read_engagement,pages_manage_posts,business_management",
-  tiktok: "user.info.basic,video.upload,video.publish",
+  // video.upload only: posts go to the TikTok inbox as drafts (the engine's default until Direct Post is approved)
+  tiktok: "user.info.basic,video.upload",
   x: "tweet.read tweet.write users.read media.write offline.access",
 };
 
@@ -171,6 +172,10 @@ export async function handleCallback(env: Env, req: Request, platform: Platform)
       });
       externalId = t.open_id;
       scopes = String(t.scope ?? "").split(",");
+      try {   // user.info.basic: show which account is connected (name only; never fails the connection)
+        const me = await getJson("https://open.tiktokapis.com/v2/user/info/?fields=open_id,display_name,avatar_url", t.access_token);
+        handle = me?.data?.user?.display_name ?? "";
+      } catch { /* the name is only for display */ }
       tokens = { access_token: t.access_token, refresh_token: t.refresh_token, expires_at: now + Number(t.expires_in ?? 86400), open_id: t.open_id };
     } else {
       const basic: Record<string, string> = env.X_CLIENT_SECRET ? { Authorization: `Basic ${btoa(`${env.X_CLIENT_ID}:${env.X_CLIENT_SECRET}`)}` } : {};
