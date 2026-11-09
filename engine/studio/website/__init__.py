@@ -70,6 +70,7 @@ class Article:
     modified: datetime | None = None
     checked: datetime | None = None
     notes: list[str] = field(default_factory=list)   # what the AI steps did or why they weren't used
+    unchecked: bool = False           # published while the owner's "post without checks" switch was on
 
     def __post_init__(self):
         if self.blocks is None:
@@ -105,9 +106,13 @@ def video_is_public(url: str, client: httpx.Client | None = None) -> bool:
         return False
 
 
-def why_left_out(conn, p: dict, body: dict) -> str | None:
-    """The reason a package isn't published on the website, or None."""
+def why_left_out(conn, p: dict, body: dict, owner_override: bool = False) -> str | None:
+    """The reason a package isn't published on the website, or None. With the owner's "post without checks" switch on,
+    only an article with nothing to read is left out."""
     from ..review.auto import MONEY_SENSITIVE
+
+    if owner_override:
+        return None if article_paragraphs(body) else "nothing to read once video-only lines are removed"
 
     if p.get("fresh_until") and p["fresh_until"] < datetime.now(timezone.utc):
         return "source freshness expired; refresh the evidence before publishing"
@@ -222,6 +227,8 @@ def collect(conn, storage, work: Path, check_video=video_is_public, router=None)
     images.mkdir(parents=True, exist_ok=True)
     hidden = (db.get_setting(conn, "website_hidden", {}) or {}).get("hidden") or {}
     titles: list[set[str]] = []
+    from ..publish.runner import checks_off
+    override = checks_off(conn)
     for p in rows:
         body = p["body"] or {}
         if not p["first_posted"] and router is None:
@@ -240,7 +247,7 @@ def collect(conn, storage, work: Path, check_video=video_is_public, router=None)
             articles[-1].image = _image(conn, storage, p["id"], images / f"{slug}.jpg", work)   # its video's picture
             articles[-1].webp = bool(articles[-1].image) and _webp(images / articles[-1].image)
             continue
-        reason = why_left_out(conn, p, body)
+        reason = why_left_out(conn, p, body, owner_override=True) if override else why_left_out(conn, p, body)
         title = body.get("title") or p["title"]
         tw = _title_words(title)
         if not reason and tw and any(len(tw & t) / len(tw | t) >= DUPLICATE_TITLE for t in titles):
@@ -276,7 +283,17 @@ def collect(conn, storage, work: Path, check_video=video_is_public, router=None)
                 notes.append(got["en_note"])
             if got.get("de_note"):
                 notes.append(got["de_note"])
-        if router is not None:
+        if router is not None and override:
+            # the owner chose to publish without the final checks: save the snapshot, mark the article for readers
+            saved_article = db.one(conn, """insert into website_articles(project_id,script_version_id,slug,title,blocks,review)
+                values (%s,%s,%s,%s,%s,%s) on conflict(project_id) do update set
+                script_version_id=excluded.script_version_id,title=excluded.title,blocks=excluded.blocks,review=excluded.review,
+                modified_at=case when website_articles.blocks<>excluded.blocks or website_articles.title<>excluded.title
+                then now() else website_articles.modified_at end returning *""",
+                (p["id"], p["sv_id"], slug, title, db.j(blocks),
+                 db.j({"faithful": True, "issues": [], "owner_override": True})))
+            notes.append("published by the owner without the final checks")
+        elif router is not None:
             try:
                 from .. import preflight
                 from .enhance import check_meaning
@@ -307,6 +324,7 @@ def collect(conn, storage, work: Path, check_video=video_is_public, router=None)
                       paragraphs, saved_article["published_at"] if saved_article else p["first_posted"], sources=_sources(conn, body), blocks=blocks, notes=notes)
         if saved_article:
             art.modified, art.checked = saved_article["modified_at"], saved_article["checked_at"]
+        art.unchecked = override
         if got.get("de"):
             art.de_title, art.de_blocks = got["de"]["title"], [tuple(b) for b in got["de"]["blocks"]]
         if p["youtube_url"] and check_video(p["youtube_url"]):
