@@ -42,3 +42,25 @@ def test_an_article_without_a_picture_shows_the_brand_mark_not_a_blank_box(tmp_p
     website.build([a], out, options={})
     home = (out / "index.html").read_text()
     assert 'class="noimg money"' in home and 'aria-label="Money"' in home
+
+
+def test_website_owner_override_lets_flagged_articles_through(monkeypatch):
+    from studio.website import why_left_out
+    calls = []
+    monkeypatch.setattr(db, "one", lambda *a, **k: calls.append(a) or {"n": 3})
+    from datetime import datetime, timezone, timedelta
+    p = {"fresh_until": datetime.now(timezone.utc) - timedelta(days=1), "sv_id": "v", "quality_report": {},
+         "channel_slug": "money", "title": "Tax and investing tips"}
+    body = {"title": "Tax and investing tips", "scenes": [{"narration": "Investing and tax basics explained."}]}
+    assert why_left_out(None, p, body) is not None
+    assert why_left_out(None, p, body, owner_override=True) is None
+    assert why_left_out(None, p, {"scenes": []}, owner_override=True)
+
+
+def test_unchecked_article_shows_reader_note():
+    from studio.website.render import UNCHECKED_NOTE
+    a = website.Article("p2", "ai", "a-2", "Title", "d", ["Text."] * 3, datetime(2026, 11, 9, tzinfo=timezone.utc))
+    a.unchecked = True
+    assert "usual final source check" in website.article_html(a)
+    a.unchecked = False
+    assert "usual final source check" not in website.article_html(a)

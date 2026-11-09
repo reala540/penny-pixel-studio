@@ -18,6 +18,8 @@ HERO_TEXT = ("Practical AI guides for freelancers and small businesses, money ex
              "decisions. Every fact is checked against a named source.")
 CHANNELS = {"ai": ("AI tools", "Pixel explains what AI tools can really do, without the hype."),
             "money": ("Money", "Penny explains budgeting, saving, paychecks and credit with real numbers.")}
+UNCHECKED_NOTE = ("This article was published before our usual final source check. Please check the listed sources "
+                  "before relying on it.")
 MONEY_NOTE = ("This is general education, not personal financial advice. Rules, prices and taxes differ by country and "
               "change over time; consider your own situation or speak to a licensed professional.")
 AI_NOTE = ("How this article was made: it is written from our video script, researched with AI tools. Every fact is "
@@ -276,6 +278,8 @@ class Site:
             else:
                 prose.append(f'<p{" class=\"intro\"" if first else ""}>{e(text)}</p>')
                 first = False
+        if getattr(a, "unchecked", False):
+            parts.append(f'<p class="note">{e(UNCHECKED_NOTE)}</p>')
         parts.append(f'<div class="prose">{"".join(prose)}</div>')
         if a.channel == "money":
             parts.append(f'<p class="note money">{e(MONEY_NOTE)}</p>')

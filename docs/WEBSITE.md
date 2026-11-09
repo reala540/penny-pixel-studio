@@ -35,6 +35,10 @@ Left off, with the reason shown on the dashboard's Home ("Your website") and in 
 | Title too similar to an earlier article | No near-duplicates |
 | Taken off by the owner (`settings.website_hidden`) | Corrections and unpublishing |
 
+**Owner switch:** while `settings.publish_without_checks` is on (see the publishing runner), every rule above except
+"taken off by the owner" and an empty article is skipped, the final article check and meaning review don't run, and each
+such article shows readers a note that it was published before the usual final source check.
+
 ## AI rewrite and German version (`enhance.py`)
 
 1. **Rewrite:** the cleaned narration is rewritten as a proper article by a free model (role `repurposer`). It is used
