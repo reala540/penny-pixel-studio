@@ -497,6 +497,9 @@ def build(articles: list[Article], out: Path, images_dir: Path | None = None, so
     for name in options.get("google_site_verification_files") or []:   # Search Console's HTML-file check
         if re.fullmatch(r"google[0-9a-f]{8,32}\.html", name):
             (out / name).write_text(f"google-site-verification: {name}")
+    for name, code in (options.get("tiktok_site_verification") or {}).items():   # TikTok's URL-prefix signature file
+        if re.fullmatch(r"tiktok[A-Za-z0-9]{8,64}\.txt", name) and re.fullmatch(r"[A-Za-z0-9]{8,64}", str(code)):
+            (out / name).write_text(f"tiktok-developers-site-verification={code}")
     (out / "search-index.json").write_text(json.dumps(_search_index(articles), ensure_ascii=False))
     url = site_url()
     now = datetime.now(timezone.utc).date().isoformat()
