@@ -72,6 +72,7 @@ a:hover{text-decoration-thickness:2px}
 .lead-story h3{font-size:clamp(22px,2.8vw,32px);line-height:1.2;margin:8px 0 10px}
 .lead-story h3 a{color:var(--ink);text-decoration:none}
 @media (max-width:860px){.lead-story{grid-template-columns:1fr}}
+.noimg{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;width:100%;height:100%;min-height:180px;background:linear-gradient(135deg,#101B32,#1d2d55);color:#fff;font:800 15px var(--sans);letter-spacing:.08em;text-transform:uppercase}.noimg.money{background:linear-gradient(135deg,#101B32,#5c3d00)}
 .tag{display:inline-block;font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;padding:3px 9px;border-radius:999px;text-decoration:none;width:max-content}
 .tag.ai{background:#E5ECFF;color:#1E3FA8}.tag.money{background:#FCEBC6;color:#5C3D00}
 .pager{display:flex;justify-content:space-between;gap:12px;margin-top:28px}

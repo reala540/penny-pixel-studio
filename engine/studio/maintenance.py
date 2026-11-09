@@ -193,7 +193,11 @@ def _run_owner_job(conn, router: Router, storage, job: dict) -> dict:
     if t == "auto_review":
         from .review import auto, recovery
         recovered = 0
-        if auto.mode_on(conn) and inp.get("recover_final_checks"):
+        from .publish.runner import checks_off
+
+        # while the owner has switched the posting checks off, approved packages aren't repaired (a repair would
+        # withdraw their approval and stop the posts the owner asked for)
+        if auto.mode_on(conn) and inp.get("recover_final_checks") and not checks_off(conn):
             for row in db.all_(conn,"""select distinct v.project_id from scheduled_posts sp join content_variants v on v.id=sp.variant_id
                     where sp.status='blocked' and sp.last_error like 'Final check:%'"""):
                 recovered += bool(recovery.queue_final(conn,row["project_id"],[],"Previously blocked final check; repair the saved script against its evidence"))
