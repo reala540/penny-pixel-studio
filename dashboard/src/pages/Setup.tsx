@@ -290,7 +290,7 @@ function AiStep({ done }: { done: boolean }) {
 const PLATFORM_STEPS: Record<Platform, { n: number; names: [string, string]; labels: [string, string]; where: ReactNode }> = {
   youtube: { n: 3, names: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"], labels: ["Client ID", "Client secret"], where: <>
     Go to <b>console.cloud.google.com</b> → create a project → <b>APIs &amp; Services → Library</b> → enable <b>YouTube Data API v3</b> and
-    <b>YouTube Analytics API</b>. Then <b>Google Auth Platform</b>: Branding (External), Data Access (scopes <b>youtube.upload</b>, <b>youtube.readonly</b>,
+    <b>YouTube Analytics API</b>. Then <b>Google Auth Platform</b>: Branding (External), Data Access (scopes <b>youtube.upload</b>, <b>youtube.force-ssl</b> (playlists), <b>youtube.readonly</b>,
     <b>yt-analytics.readonly</b>, <b>yt-analytics-monetary.readonly</b>), Audience → <b>Publish app</b> (In production, so logins don't expire weekly),
     then <b>Clients → Create client → Web application</b>. Under <b>Authorised redirect URIs</b> paste the address below, create it, and copy the
     Client ID and Client secret here.</> },
