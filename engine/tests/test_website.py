@@ -296,3 +296,11 @@ def test_search_console_file_is_served_at_the_root(tmp_path):
     website.build([_art("a1")], out, options={"google_site_verification_files": ["google58a9e9d5c0a47bf4.html", "../evil.html"]})
     assert (out / "google58a9e9d5c0a47bf4.html").read_text() == "google-site-verification: google58a9e9d5c0a47bf4.html"
     assert not (tmp_path / "evil.html").exists()
+
+
+def test_tiktok_signature_file_is_served_at_the_root(tmp_path):
+    out = tmp_path / "site"
+    website.build([_art("a1")], out, options={"tiktok_site_verification": {"tiktokAbC12345.txt": "AbC12345",
+                                                                            "../evil.txt": "AbC12345"}})
+    assert (out / "tiktokAbC12345.txt").read_text() == "tiktok-developers-site-verification=AbC12345"
+    assert not (tmp_path / "evil.txt").exists()

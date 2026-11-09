@@ -92,6 +92,8 @@ website:
     provider: "Buttondown"
   google_site_verification: "GQRIrOqueWfPASl3qUfIEJ5BWopqUKThygzs3VrBDL4"   # Search Console's HTML-tag check
   google_site_verification_files: ["google58a9e9d5c0a47bf4.html"]   # Search Console's HTML-file check (also works)
+  tiktok_site_verification:   # TikTok for Developers' URL-prefix check: {file name at the site root: code}
+    tiktokYiw8joYarIprrm6UkMiRPy2xWetYENCS.txt: "Yiw8joYarIprrm6UkMiRPy2xWetYENCS"
   ai_rewrite: true          # rewrite each article from its checked narration (code checks numbers and names; cached)
   german: false              # German versions of AI-tools articles (same checks; money stays English)
   analytics:                # optional: Cloudflare Web Analytics token (free, no cookies). Or switch it on in the Pages
