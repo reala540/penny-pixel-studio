@@ -21,7 +21,6 @@ class PublishResult:
     visibility: str
     method: str                     # api | api_draft
     manual_followup: str | None = None
-    pending: bool = False           # accepted by TikTok, not yet confirmed published
 
 
 @dataclass
@@ -320,8 +319,6 @@ class TikTok:
     def _can_direct(conn, account, variant) -> bool:
         row = db.one(conn, "select scopes from oauth_connections where social_account_id=%s", (account["id"],))
         settings = variant.get("tiktok_post") or {}
-        if settings and "video.publish" not in (row or {}).get("scopes", []):
-            raise PermanentError("tiktok: Direct Post permission is missing; reconnect after TikTok grants video.publish, or choose inbox upload")
         return bool(settings.get("confirmed_at") and settings.get("privacy_level")) and "video.publish" in (row or {}).get("scopes", [])
 
     def _json(self, r: httpx.Response) -> dict:
@@ -359,14 +356,6 @@ class TikTok:
         else:
             data = self._json(self.client.post(f"{self.base}/post/publish/inbox/video/init/", headers=h,
                                                json={"source_info": source}))
-        pid = data.get("publish_id")
-        if not pid or not data.get("upload_url"):
-            raise AmbiguousPublish("tiktok: upload initialization did not return an ID and URL; check TikTok before retrying")
-        tracking = {"publish_id": pid, "direct": direct, "creator_username": creator.get("creator_username"),
-                    "privacy_level": (variant.get("tiktok_post") or {}).get("privacy_level")}
-        # Persist the platform ID BEFORE sending bytes, so a crash cannot cause an accidental second upload.
-        if started := variant.get("_tiktok_started"):
-            started(tracking)
         try:
             up = self.client.put(data["upload_url"], content=video.read_bytes(),
                                  headers={"Content-Type": "video/mp4", "Content-Length": str(size),
@@ -374,40 +363,33 @@ class TikTok:
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             raise AmbiguousPublish("tiktok: upload dropped; check TikTok before retrying") from exc
         _raise_for(up, "tiktok", after_upload=True)
+        pid = data.get("publish_id")
         if not direct:
             return PublishResult(pid, None, "draft", "api_draft",
                                  "Open the TikTok app: a notification says your video is ready. Add a sound if you like, "
                                  "paste the caption from the dashboard and post it. (For direct posting, confirm the "
                                  "post's TikTok settings on the dashboard before its time.)")
         # TikTok processes the upload; ask until it says posted or failed (never upload again: the file is already there)
+        status, post_ids = "PROCESSING_UPLOAD", []
         for _ in range(self.polls):
-            result = self.check_upload(tracking, token)
-            if not result.pending:
-                return result
+            try:
+                st = self._json(self.client.post(f"{self.base}/post/publish/status/fetch/", headers=h, json={"publish_id": pid}))
+            except (TransientError, QuotaError, httpx.HTTPError):
+                st = {}
+            status = st.get("status", status)
+            post_ids = st.get("publicaly_available_post_id") or st.get("publicly_available_post_id") or []
+            if status in ("PUBLISH_COMPLETE", "FAILED"):
+                break
             time.sleep(self.poll_seconds)
-        return result
-
-    def check_upload(self, tracking: dict, token: str) -> PublishResult:
-        """Check a saved upload ID. Never initialize another upload or resend bytes."""
-        pid = tracking["publish_id"]
-        try:
-            st = self._json(self.client.post(f"{self.base}/post/publish/status/fetch/",
-                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json; charset=UTF-8"},
-                json={"publish_id": pid}))
-        except (TransientError, QuotaError, AuthError, PermanentError, httpx.HTTPError):
-            return PublishResult(pid, None, "unknown", "api_draft", pending=True)
-        status = st.get("status")
-        if not tracking.get("direct", True) and status == "SEND_TO_USER_INBOX":
-            return PublishResult(pid, None, "draft", "api_draft", "Open TikTok's inbox to finish this upload and add the caption from the dashboard.")
         if status == "FAILED":
             raise PermanentError(f"tiktok: TikTok could not publish the video ({st.get('fail_reason', 'no reason given')})")
-        if status != "PUBLISH_COMPLETE":
-            return PublishResult(pid, None, "unknown", "api_draft", pending=True)
-        privacy = tracking.get("privacy_level")
+        privacy = variant["tiktok_post"]["privacy_level"]
         visibility = PRIVACY_NAME.get(privacy, "unknown")
-        post_ids = st.get("publicaly_available_post_id") or st.get("publicly_available_post_id") or []
-        username = tracking.get("creator_username")
+        username = creator.get("creator_username")
         url = f"https://www.tiktok.com/@{username}/video/{post_ids[0]}" if post_ids and username else None
+        if status != "PUBLISH_COMPLETE":
+            return PublishResult(pid, url, visibility, "api_draft",
+                                 "TikTok accepted the video and is still processing it. Check your TikTok profile in a few minutes.")
         if privacy == "SELF_ONLY":
             return PublishResult(pid, url, "private", "api_draft",
                                  "Posted as 'Only me' (TikTok allows only this until the app is approved). Open it in TikTok "

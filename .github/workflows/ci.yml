@@ -92,7 +92,6 @@ jobs:
       - run: node e2e/reliability.mjs
       - run: node e2e/clock.mjs
       - run: node e2e/quality.mjs
-      - run: node e2e/tiktok.mjs
       - if: failure()
         uses: actions/upload-artifact@v4
         with:

@@ -274,10 +274,6 @@ def publish_post(conn, storage, post: dict, adapters: dict | None = None, now: d
     attempt = None
     try:
         token, tokens = oauth.access_token(conn, acc)
-        if ctx["platform"] == "tiktok" and post.get("tiktok_post"):
-            current = db.one(conn, "select public.tiktok_content_snapshot(%s) snapshot", (post["id"],))["snapshot"]
-            if post["tiktok_post"].get("content_snapshot") != current:
-                raise PermanentError("TikTok's confirmed video, caption or account changed. Open TikTok settings and confirm again.")
         video, thumb = final_media(conn, storage, ctx)
         digest = fingerprint(ctx, video)
         twin = db.one(conn, """select pp.url, pp.published_at from published_posts pp
@@ -303,11 +299,6 @@ def publish_post(conn, storage, post: dict, adapters: dict | None = None, now: d
                  {"attempt": attempt, "account": ctx["account_label"], "sha256": digest})
         variant = dict(ctx)
         variant["tiktok_post"] = post.get("tiktok_post")   # the owner's TikTok posting-screen choices (Direct Post)
-        def tiktok_started(tracking):
-            tracking.update({"attempt_id": attempt, "content_sha256": digest, "started_at": now.isoformat(),
-                             "account_external_id": ctx["external_id"]})
-            db.run(conn, "update scheduled_posts set tiktok_upload=%s where id=%s", (db.j(tracking), post["id"]))
-        variant["_tiktok_started"] = tiktok_started
         # YouTube's "altered or synthetic content" label: on for every video if configured, and for any video that
         # contains a realistic AI-generated scene (marked ai_generated in its render recipe)
         scenes = ((ctx.get("recipe") or {}).get("render") or {}).get("scenes", [])
@@ -320,9 +311,6 @@ def publish_post(conn, storage, post: dict, adapters: dict | None = None, now: d
         else:
             result = adapter.publish(conn, acc, variant, video, thumb, token)
     except AmbiguousPublish as exc:
-        if ctx["platform"] == "tiktok" and db.one(conn, "select tiktok_upload from scheduled_posts where id=%s", (post["id"],)).get("tiktok_upload"):
-            db.run(conn, "update scheduled_posts set status='processing', last_error=%s, locked_until=null where id=%s", (str(exc), post["id"]))
-            return "processing"
         if attempt:
             _finish_attempt(conn, attempt, "ambiguous", str(exc))
         db.run(conn, "update scheduled_posts set status='needs_review', last_error=%s, locked_until=null where id=%s",
@@ -333,8 +321,6 @@ def publish_post(conn, storage, post: dict, adapters: dict | None = None, now: d
     except AuthError as exc:
         if attempt:
             _finish_attempt(conn, attempt, "not_sent", str(exc))
-        if ctx["platform"] == "tiktok":
-            db.run(conn, "update scheduled_posts set tiktok_upload=null where id=%s", (post["id"],))
         oauth.mark_broken(conn, acc["id"], str(exc))
         _manual(conn, post, ctx, f"Connection problem: {exc}. Reconnect the account in Settings", status="needs_manual")
         return "auth_failed"
@@ -356,17 +342,8 @@ def publish_post(conn, storage, post: dict, adapters: dict | None = None, now: d
     except (PermanentError, StudioError) as exc:
         if attempt:
             _finish_attempt(conn, attempt, "not_sent", str(exc))
-        if ctx["platform"] == "tiktok":
-            db.run(conn, "update scheduled_posts set tiktok_upload=null where id=%s", (post["id"],))
         _manual(conn, post, ctx, f"Could not publish automatically: {exc}", status="failed")
         return "failed"
-    if result.pending:
-        db.run(conn, "update scheduled_posts set status='processing', last_error='TikTok is processing this video; the studio will check again without uploading it again.', locked_until=null where id=%s", (post["id"],))
-        return "processing"
-    return _record_published(conn, post, ctx, acc, result, attempt, digest, now, adapter, token)
-
-
-def _record_published(conn, post, ctx, acc, result, attempt, digest, now, adapter, token):
     with db.transaction(conn):
         db.run(conn, """insert into published_posts (scheduled_post_id, platform, platform_post_id, url, visibility, method,
                                                      verified_at, social_account_id, content_sha256)
@@ -391,58 +368,13 @@ def _record_published(conn, post, ctx, acc, result, attempt, digest, now, adapte
     return "published" if not result.manual_followup else "published_needs_followup"
 
 
-def check_tiktok_processing(conn, adapters, now):
-    """Reconcile accepted TikTok uploads without rendering or uploading again."""
-    out = {}
-    with db.run_lock(conn, "tiktok-processing") as locked:
-        if not locked:
-            return out
-        posts = db.all_(conn, """select * from scheduled_posts where tiktok_upload is not null
-            and status in ('processing','needs_review') order by scheduled_at limit 50""")
-        for post in posts:
-            tracking = post["tiktok_upload"]
-            ctx = _context(conn, post)
-            if tracking.get("account_external_id") != ctx["external_id"]:
-                db.run(conn, "update scheduled_posts set status='needs_review',last_error=%s where id=%s",
-                       ("The connected TikTok account changed during upload. Check the original account before retrying.", post["id"]))
-                out["needs_review"] = out.get("needs_review", 0) + 1
-                continue
-            acc = {"id": post["social_account_id"], "platform": "tiktok", "label": ctx["account_label"]}
-            adapter = adapters["tiktok"]
-            if not hasattr(adapter, "check_upload"):
-                continue
-            try:
-                token, _ = oauth.access_token(conn, acc)
-                result = adapter.check_upload(tracking, token)
-            except PermanentError as exc:
-                _finish_attempt(conn, tracking["attempt_id"], "not_sent", str(exc))
-                db.run(conn, "update scheduled_posts set tiktok_upload=null where id=%s", (post["id"],))
-                _manual(conn, post, ctx, str(exc), status="failed")
-                out["failed"] = out.get("failed", 0) + 1
-                continue
-            except (StudioError, OSError):
-                out["processing"] = out.get("processing", 0) + 1
-                continue
-            if result.pending:
-                if now - datetime.fromisoformat(tracking["started_at"]) > timedelta(hours=24):
-                    db.run(conn, "update scheduled_posts set status='needs_review',last_error=%s where id=%s",
-                           ("TikTok has not confirmed this upload after 24 hours. Check TikTok before retrying; it has not been uploaded again.", post["id"]))
-                out["processing"] = out.get("processing", 0) + 1
-                continue
-            key = _record_published(conn, post, ctx, acc, result, tracking["attempt_id"], tracking["content_sha256"], now, adapter, token)
-            out[key] = out.get(key, 0) + 1
-    return out
-
-
 def run_due(conn, storage, adapters=None, now: datetime | None = None, router=None) -> dict:
     now = now or datetime.now(timezone.utc)
-    adapters = adapters or {k: v() for k, v in ADAPTERS.items()}
     out: dict[str, int] = {}
     # release locks from crashed runs, but never auto-retry 'publishing' rows that may have gone out
     db.run(conn, """update scheduled_posts set status='needs_review',
                     last_error='Runner stopped mid-publish; check the platform before retrying'
                     where status='publishing' and locked_until < now()""")
-    out.update(check_tiktok_processing(conn, adapters, now))
     for _ in range(20):  # batches of 10, at most 200 posts per run
         batch = claim_due(conn, limit=1 if router is not None else 10, now=now)
         if not batch:

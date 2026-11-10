@@ -320,16 +320,10 @@ describe("cron", () => {
   });
 
   it("respects the pause switch", async () => {
-    routes.push((u) => (u.includes("rest/v1/scheduled_posts") ? ok(u.includes("tiktok_upload=not.is.null") ? [] : [{ id: "p1" }]) : undefined));
+    routes.push((u) => (u.includes("rest/v1/scheduled_posts") ? ok([{ id: "p1" }]) : undefined));
     routes.push((u) => (u.includes("key=eq.paused") ? ok([{ value: true }]) : undefined));
     const out = await handleCron(env());
     expect(out.publish).toBeUndefined();
-  });
-  it("checks accepted TikTok uploads while new publishing is paused", async () => {
-    routes.push((u) => u.includes("rest/v1/scheduled_posts") ? ok(u.includes("tiktok_upload=not.is.null") ? [{ id: "p1" }] : []) : undefined);
-    routes.push((u) => u.includes("key=eq.paused") ? ok([{ value: true }]) : undefined);
-    routes.push((u) => u.includes("api.github.com") ? new Response(null, { status: 204 }) : undefined);
-    expect((await handleCron(env())).publish).toBe(true);
   });
 });
 
