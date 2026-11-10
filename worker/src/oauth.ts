@@ -131,6 +131,10 @@ export async function handleCallback(env: Env, req: Request, platform: Platform)
       if (!item) return fail("No YouTube channel on that Google account");
       externalId = item.id;
       handle = item.snippet?.customUrl ?? item.snippet?.title ?? "";
+      // one channel per slot: never let "YouTube AI" and "YouTube Money" point at the same channel
+      const taken = await new Supabase(env).select<{ label: string }>("social_accounts",
+        `platform=eq.youtube&external_id=eq.${encodeURIComponent(externalId)}&id=neq.${encodeURIComponent(state.a)}&select=label`);
+      if (taken.length) return fail(`That is the channel already used by "${taken[0].label}" (${handle}). Connect again and choose the other channel on Google's account screen.`);
       scopes = String(t.scope ?? "").split(" ");
       tokens = { access_token: t.access_token, refresh_token: t.refresh_token, expires_at: now + Number(t.expires_in ?? 3600), channel_id: externalId };
     } else if (platform === "facebook") {
