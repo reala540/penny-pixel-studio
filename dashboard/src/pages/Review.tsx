@@ -12,6 +12,7 @@ import { ANIMATIONS, asStill, unsaidNumbers } from "../lib/animations";
 import { caption, limitProblems, parseHashtags, parseTags, rule } from "../lib/limits";
 import { BAD_CLAIMS, checkState, claimProblems, groupFindings, includedPosts, droppedShorts, ownerState, REASON_MIN, reasonNeeded, SHORTS_WAITING, visibleIssues } from "../lib/packageParts";
 import { TriangleAlert } from "lucide-react";
+import { TikTokPostPanel } from "../components/TikTokPost";
 import type { Claim, Project, ScriptBody, Variant } from "../lib/types";
 
 function AutoChecks({ projectId }: { projectId: string }) {
@@ -86,13 +87,13 @@ export function Detail({ id }: { id: string }) {
           ? must(supabase.from("script_versions").select("id, version, origin, body").eq("id", project.current_script_version_id).single())
           : Promise.resolve(null),
         must(supabase.from("content_projects").select("*").eq("parent_project_id", id)),
-        must(supabase.from("content_variants").select("*, social_accounts(label, platform), scheduled_posts(id, scheduled_at, status)").or(`project_id.eq.${id}`)),
+        must(supabase.from("content_variants").select("*, social_accounts(label, platform), scheduled_posts(id, scheduled_at, status, tiktok_post)").or(`project_id.eq.${id}`)),
         must(supabase.from("research_claims").select("*, research_sources(title, publisher, url)").eq("script_version_id", project.current_script_version_id ?? "00000000-0000-0000-0000-000000000000")),
         must(supabase.from("thumbnails").select("*").eq("project_id", id).order("variant_label")),
       ]);
       const childIds = (children as Project[]).map((c) => c.id);
       const childVariants = childIds.length
-        ? ((await must(supabase.from("content_variants").select("*, social_accounts(label, platform), scheduled_posts(id, scheduled_at, status)").in("project_id", childIds))) as Variant[])
+        ? ((await must(supabase.from("content_variants").select("*, social_accounts(label, platform), scheduled_posts(id, scheduled_at, status, tiktok_post)").in("project_id", childIds))) as Variant[])
         : [];
       return { project, script: script as any, children: children as Project[], variants: [...(variants as Variant[]), ...childVariants], claims: claims as Claim[], thumbs: thumbs as any[] };
     },
@@ -612,6 +613,9 @@ function PostEditor({ v, tz }: { v: Variant; tz: string }) {
           </ul>
         )}
       </>}
+      {platform === "tiktok" && post && v.kind !== "text_post" && (
+        <TikTokPostPanel post={post} projectId={v.project_id} caption={caption(body, hashtags)} locked={locked} tz={tz} />
+      )}
       {draft.message && <p role="status" className="mt-2 text-sm text-muted">{draft.message} <button className="underline" onClick={draft.reset}>Discard edits</button></p>}
       <div className="mt-2 flex gap-2">
         {v.kind !== "story" && !locked && <button className="btn-quiet" disabled={!dirty || problems.length > 0 || save.isPending || draft.conflict} onClick={() => save.mutate()}>Save post</button>}

@@ -19,8 +19,9 @@ const SCOPES: Record<Platform, string> = {
   // youtube.force-ssl: add each upload to the right playlist (playlistItems.insert needs it)
   youtube: "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.force-ssl https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly https://www.googleapis.com/auth/yt-analytics-monetary.readonly",
   facebook: "pages_show_list,pages_read_engagement,pages_manage_posts,business_management",
-  // video.upload only: posts go to the TikTok inbox as drafts (the engine's default until Direct Post is approved)
-  tiktok: "user.info.basic,video.upload",
+  // video.publish: Direct Post with the owner's choices from the dashboard's TikTok posting screen;
+  // video.upload: inbox draft when a post's TikTok settings weren't confirmed
+  tiktok: "user.info.basic,video.upload,video.publish",
   x: "tweet.read tweet.write users.read media.write offline.access",
 };
 

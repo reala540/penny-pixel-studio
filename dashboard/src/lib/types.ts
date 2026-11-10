@@ -65,7 +65,14 @@ export interface Variant {
   hashtags: string[];
   status: string;
   social_accounts?: { label: string; platform: Platform };
-  scheduled_posts?: { id: string; scheduled_at: string; status: string }[];
+  scheduled_posts?: { id: string; scheduled_at: string; status: string; tiktok_post?: TikTokPostSettings | null }[];
+}
+
+/** The owner's choices on the TikTok posting screen (saved by the Worker after checking TikTok's live settings). */
+export interface TikTokPostSettings {
+  privacy_level: string; allow_comment: boolean; allow_duet: boolean; allow_stitch: boolean;
+  disclose: boolean; your_brand: boolean; branded_content: boolean; confirmed_at: string;
+  creator_username?: string | null; creator_nickname?: string | null;
 }
 
 export interface Claim {
