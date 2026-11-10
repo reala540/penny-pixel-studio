@@ -298,7 +298,7 @@ const PLATFORM_STEPS: Record<Platform, { n: number; names: [string, string]; lab
     Go to <b>developers.facebook.com → My Apps → Create app</b> (type Business). Add <b>Facebook Login for Business</b>; in its settings paste the address below under
     <b> Valid OAuth Redirect URIs</b>. Then <b>App settings → Basic</b>: copy the App ID and App secret here.</> },
   tiktok: { n: 5, names: ["TIKTOK_CLIENT_KEY", "TIKTOK_CLIENT_SECRET"], labels: ["Client key", "Client secret"], where: <>
-    Go to <b>developers.tiktok.com → Manage apps → Connect an app</b>. Add <b>Login Kit</b> and <b>Content Posting API</b> (Direct Post off; scopes <b>user.info.basic</b> and <b>video.upload</b>),
+    Go to <b>developers.tiktok.com → Manage apps → Connect an app</b>. Add <b>Login Kit</b> and <b>Content Posting API</b> (Direct Post on; scopes <b>user.info.basic</b>, <b>video.upload</b> and <b>video.publish</b>),
     paste the address below as the <b> Redirect URI</b>, then copy the Client key and Client secret here (the <b>Sandbox</b> ones until TikTok approves the app). Until TikTok approves the app, posts are saved as drafts or come to you as quick jobs.</> },
   x: { n: 6, names: ["X_CLIENT_ID", "X_CLIENT_SECRET"], labels: ["OAuth 2.0 Client ID", "OAuth 2.0 Client secret"], where: <>
     Go to <b>developer.x.com → Projects &amp; Apps</b> → your app → <b>User authentication settings → Set up</b>: OAuth 2.0, type <b>Web App</b>, Read and write,

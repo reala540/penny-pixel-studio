@@ -12,6 +12,7 @@ import { choosePage, disconnect, handleCallback, pageChoices, startUrl } from ".
 import { ensureWebhookSecret, removeValue, saveValue, SetupError, setupStatus, testValue, withSavedSecrets, isManaged } from "./setup";
 import { Env, Supabase } from "./supabase";
 import { stopAndClear } from "./stop";
+import { confirmPost, creatorInfo, TikTokError } from "./tiktok";
 
 const WORKFLOWS: Record<string, string> = {
   queue: "queue.yml",
@@ -325,6 +326,20 @@ export async function handleFetch(req: Request, rawEnv: Env): Promise<Response> 
     } catch (e) {
       if (e instanceof SetupError) return json(env, { error: e.message }, 400);
       console.error("setup", url.pathname, (e as Error).message);
+      return json(env, { error: "Something went wrong on the server; nothing was saved." }, 500);
+    }
+  }
+
+  if ((url.pathname === "/api/tiktok/creator" || url.pathname === "/api/tiktok/confirm") && req.method === "POST") {
+    const owner = await ownerOrNull(env, req);
+    if (!owner) return json(env, { error: "not authorised" }, 401);
+    const body = (await req.json().catch(() => ({}))) as any;
+    try {
+      if (url.pathname === "/api/tiktok/creator") return json(env, await creatorInfo(env, body.account_id));
+      return json(env, await confirmPost(env, owner, body));
+    } catch (e) {
+      if (e instanceof TikTokError) return json(env, { error: e.message }, 400);
+      console.error("tiktok", url.pathname, (e as Error).message);
       return json(env, { error: "Something went wrong on the server; nothing was saved." }, 500);
     }
   }

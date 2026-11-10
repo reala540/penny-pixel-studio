@@ -263,9 +263,49 @@ class Facebook:
 
 # ------------------------------------------------------------------------------------------ TikTok
 
+PRIVACY_NAME = {"PUBLIC_TO_EVERYONE": "public", "MUTUAL_FOLLOW_FRIENDS": "friends", "FOLLOWER_OF_CREATOR": "followers",
+                "SELF_ONLY": "private"}
+
+
+def tiktok_post_info(settings: dict, creator: dict, caption: str, aigc: bool, seconds: float | None) -> dict:
+    """TikTok's Direct Post request, from the owner's confirmed choices, checked against the creator's settings right now.
+    Raises PermanentError (the owner must look again) when a choice is no longer allowed."""
+    privacy = settings.get("privacy_level")
+    if privacy not in (creator.get("privacy_level_options") or []):
+        raise PermanentError(f"tiktok: '{privacy}' is no longer an allowed audience for this account; choose again on the dashboard")
+    if settings.get("branded_content") and privacy == "SELF_ONLY":
+        raise PermanentError("tiktok: branded content can't be private; choose another audience on the dashboard")
+    if settings.get("disclose") and not (settings.get("your_brand") or settings.get("branded_content")):
+        raise PermanentError("tiktok: commercial content is switched on but neither 'Your brand' nor 'Branded content' is chosen")
+    limit = creator.get("max_video_post_duration_sec")
+    if seconds and limit and seconds > float(limit):
+        raise PermanentError(f"tiktok: the video is {seconds:.0f} s; this account can post at most {limit} s")
+    return {"title": caption[:2200], "privacy_level": privacy,
+            "disable_comment": bool(creator.get("comment_disabled")) or not settings.get("allow_comment"),
+            "disable_duet": bool(creator.get("duet_disabled")) or not settings.get("allow_duet"),
+            "disable_stitch": bool(creator.get("stitch_disabled")) or not settings.get("allow_stitch"),
+            "brand_organic_toggle": bool(settings.get("disclose") and settings.get("your_brand")),
+            "brand_content_toggle": bool(settings.get("disclose") and settings.get("branded_content")),
+            "is_aigc": aigc}
+
+
+def _seconds(video: Path) -> float | None:
+    import subprocess
+    try:
+        out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(video)],
+                             capture_output=True, text=True, timeout=30)
+        return float(out.stdout.strip())
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
 class TikTok:
+    """Direct Post when the owner confirmed this post's TikTok settings on the dashboard (TikTok's required posting screen)
+    and the connection has video.publish; otherwise the video goes to the owner's TikTok inbox as a draft."""
     platform = "tiktok"
     base = "https://open.tiktokapis.com/v2"
+    poll_seconds = 5
+    polls = 24
 
     def __init__(self, client: httpx.Client | None = None):
         self.client = client or httpx.Client(timeout=httpx.Timeout(600.0, connect=20.0))
@@ -273,35 +313,49 @@ class TikTok:
     def capability(self, conn, account, kind) -> Capability:
         if not _connected(conn, account["id"]):
             return Capability(False, "manual", "TikTok not connected")
-        if config.services()["publishing"]["tiktok"]["direct_post_approved"]:
-            return Capability(True, "api")
-        return Capability(True, "api_draft", "Direct posting needs TikTok's audit; sending to your TikTok inbox as a draft")
+        return Capability(True, "api")
+
+    @staticmethod
+    def _can_direct(conn, account, variant) -> bool:
+        row = db.one(conn, "select scopes from oauth_connections where social_account_id=%s", (account["id"],))
+        settings = variant.get("tiktok_post") or {}
+        return bool(settings.get("confirmed_at") and settings.get("privacy_level")) and "video.publish" in (row or {}).get("scopes", [])
+
+    def _json(self, r: httpx.Response) -> dict:
+        _raise_for(r, "tiktok")
+        try:
+            body = r.json()
+        except ValueError:
+            raise TransientError("tiktok: unreadable reply")
+        err = (body.get("error") or {}).get("code")
+        if err and err != "ok":
+            if err in ("rate_limit_exceeded", "spam_risk_too_many_posts", "spam_risk_user_banned_from_posting",
+                       "reached_active_user_cap"):
+                raise QuotaError(f"tiktok: {body['error']}")
+            raise PermanentError(f"tiktok: {body['error']}")
+        return body.get("data") or {}
 
     def publish(self, conn, account, variant, video: Path, thumb, token: str) -> PublishResult:
-        direct = config.services()["publishing"]["tiktok"]["direct_post_approved"]
+        import time
         h = {"Authorization": f"Bearer {token}", "Content-Type": "application/json; charset=UTF-8"}
         size = video.stat().st_size
         if size > 64 * 1024 * 1024:
             raise PermanentError("tiktok: video larger than one 64 MB chunk; lower the bitrate")
         source = {"source": "FILE_UPLOAD", "video_size": size, "chunk_size": size, "total_chunk_count": 1}
         caption = ((variant.get("body") or "") + " " + " ".join(f"#{x.lstrip('#')}" for x in variant.get("hashtags") or [])).strip()
+        direct = self._can_direct(conn, account, variant)
+        creator: dict = {}
         if direct:
-            info = self.client.post(f"{self.base}/post/publish/creator_info/query/", headers=h)
-            _raise_for(info, "tiktok")
-            options = info.json().get("data", {}).get("privacy_level_options") or []
-            privacy = "PUBLIC_TO_EVERYONE" if "PUBLIC_TO_EVERYONE" in options else (options[0] if options else "SELF_ONLY")
-            body = {"post_info": {"title": caption[:2200], "privacy_level": privacy, "disable_comment": False,
-                                  "disable_duet": False, "disable_stitch": False,
-                                  "is_aigc": bool(variant.get("synthetic_media", False))},
-                    "source_info": source}
-            init = self.client.post(f"{self.base}/post/publish/video/init/", headers=h, json=body)
+            creator = self._json(self.client.post(f"{self.base}/post/publish/creator_info/query/", headers=h))
+            if creator.get("can_post") is False:
+                raise QuotaError("tiktok: the account can't post right now (TikTok's posting limit); trying again later")
+            info = tiktok_post_info(variant["tiktok_post"], creator, caption,
+                                    bool(variant.get("synthetic_media", False)), _seconds(video))
+            data = self._json(self.client.post(f"{self.base}/post/publish/video/init/", headers=h,
+                                               json={"post_info": info, "source_info": source}))
         else:
-            init = self.client.post(f"{self.base}/post/publish/inbox/video/init/", headers=h, json={"source_info": source})
-        _raise_for(init, "tiktok")
-        data = init.json().get("data", {})
-        err = (init.json().get("error") or {}).get("code")
-        if err and err != "ok":
-            raise PermanentError(f"tiktok: {init.json().get('error')}")
+            data = self._json(self.client.post(f"{self.base}/post/publish/inbox/video/init/", headers=h,
+                                               json={"source_info": source}))
         try:
             up = self.client.put(data["upload_url"], content=video.read_bytes(),
                                  headers={"Content-Type": "video/mp4", "Content-Length": str(size),
@@ -310,11 +364,38 @@ class TikTok:
             raise AmbiguousPublish("tiktok: upload dropped; check TikTok before retrying") from exc
         _raise_for(up, "tiktok", after_upload=True)
         pid = data.get("publish_id")
-        if direct:
-            return PublishResult(pid, None, "public", "api")
-        return PublishResult(pid, None, "draft", "api_draft",
-                             "Open the TikTok app: a notification says your video is ready. Add a sound if you like, "
-                             "paste the caption from the dashboard and post it.")
+        if not direct:
+            return PublishResult(pid, None, "draft", "api_draft",
+                                 "Open the TikTok app: a notification says your video is ready. Add a sound if you like, "
+                                 "paste the caption from the dashboard and post it. (For direct posting, confirm the "
+                                 "post's TikTok settings on the dashboard before its time.)")
+        # TikTok processes the upload; ask until it says posted or failed (never upload again: the file is already there)
+        status, post_ids = "PROCESSING_UPLOAD", []
+        for _ in range(self.polls):
+            try:
+                st = self._json(self.client.post(f"{self.base}/post/publish/status/fetch/", headers=h, json={"publish_id": pid}))
+            except (TransientError, QuotaError, httpx.HTTPError):
+                st = {}
+            status = st.get("status", status)
+            post_ids = st.get("publicaly_available_post_id") or st.get("publicly_available_post_id") or []
+            if status in ("PUBLISH_COMPLETE", "FAILED"):
+                break
+            time.sleep(self.poll_seconds)
+        if status == "FAILED":
+            raise PermanentError(f"tiktok: TikTok could not publish the video ({st.get('fail_reason', 'no reason given')})")
+        privacy = variant["tiktok_post"]["privacy_level"]
+        visibility = PRIVACY_NAME.get(privacy, "unknown")
+        username = creator.get("creator_username")
+        url = f"https://www.tiktok.com/@{username}/video/{post_ids[0]}" if post_ids and username else None
+        if status != "PUBLISH_COMPLETE":
+            return PublishResult(pid, url, visibility, "api_draft",
+                                 "TikTok accepted the video and is still processing it. Check your TikTok profile in a few minutes.")
+        if privacy == "SELF_ONLY":
+            return PublishResult(pid, url, "private", "api_draft",
+                                 "Posted as 'Only me' (TikTok allows only this until the app is approved). Open it in TikTok "
+                                 "and change who can watch if you want it public.")
+        return PublishResult(str(post_ids[0]) if post_ids else pid, url, visibility, "api" if privacy == "PUBLIC_TO_EVERYONE" else "api_draft",
+                             None if privacy == "PUBLIC_TO_EVERYONE" else f"Posted for {visibility} only, as chosen.")
 
 
 # ------------------------------------------------------------------------------------------ X

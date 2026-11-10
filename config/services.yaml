@@ -75,7 +75,7 @@ publishing:
     category_ids: { ai: "28", money: "27" }   # Pixel: Science & Technology; Penny: Education
     default_language: "en"
   tiktok:
-    direct_post_approved: false   # until TikTok audit passes, use inbox drafts
+    direct_post_approved: false   # informational: TikTok audit passed. Direct Post itself needs video.publish and the post's confirmed TikTok settings (dashboard); otherwise inbox draft
   facebook:
     graph_version: "v23.0"
   x:
