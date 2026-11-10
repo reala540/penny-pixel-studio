@@ -70,6 +70,7 @@ export interface Variant {
 
 /** The owner's choices on the TikTok posting screen (saved by the Worker after checking TikTok's live settings). */
 export interface TikTokPostSettings {
+  content_snapshot?: { body: string; hashtags: string[]; title: string; preview_key: string | null; [key: string]: unknown };
   privacy_level: string; allow_comment: boolean; allow_duet: boolean; allow_stitch: boolean;
   disclose: boolean; your_brand: boolean; branded_content: boolean; confirmed_at: string;
   creator_username?: string | null; creator_nickname?: string | null;

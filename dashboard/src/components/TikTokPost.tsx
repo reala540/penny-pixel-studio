@@ -5,7 +5,8 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { callWorker, MissingFileError, signedUrl, supabase } from "../lib/supabase";
+import { callWorker, MissingFileError, signedUrl } from "../lib/supabase";
+import { caption as makeCaption } from "../lib/limits";
 import { fmtDateTime } from "../lib/format";
 import { useToast } from "./ui";
 import type { TikTokPostSettings } from "../lib/types";
@@ -14,6 +15,7 @@ type Creator = {
   account_id: string; direct_post: boolean; creator_avatar_url?: string; creator_username?: string; creator_nickname?: string;
   privacy_level_options: string[]; comment_disabled: boolean; duet_disabled: boolean; stitch_disabled: boolean;
   max_video_post_duration_sec?: number; can_post?: boolean;
+  content_snapshot?: NonNullable<TikTokPostSettings["content_snapshot"]>;
 };
 
 export const AUDIENCE: Record<string, string> = {
@@ -22,17 +24,20 @@ export const AUDIENCE: Record<string, string> = {
 const MUSIC = "https://www.tiktok.com/legal/page/global/music-usage-confirmation/en";
 const BRANDED = "https://www.tiktok.com/legal/page/global/bc-policy/en";
 
-export function TikTokPostPanel({ post, projectId, caption, locked, tz }: {
+export function TikTokPostPanel({ post, caption, dirty, locked, tz }: {
   post: { id: string; scheduled_at: string; status: string; tiktok_post?: TikTokPostSettings | null };
-  projectId: string; caption: string; locked: boolean; tz: string;
+  caption: string; dirty: boolean; locked: boolean; tz: string;
 }) {
   const saved = post.tiktok_post ?? null;
   const [editing, setEditing] = useState(false);
-  if (locked) return saved ? <p className="mt-3 text-sm text-muted">Posted to TikTok for: {AUDIENCE[saved.privacy_level] ?? saved.privacy_level}.</p> : null;
+  const content = useQuery({ queryKey: ["tiktok-content", post.id], enabled: !locked, staleTime: 0,
+    queryFn: () => callWorker<NonNullable<TikTokPostSettings["content_snapshot"]>>("/api/tiktok/content", { post_id: post.id }) });
+  if (locked) return <p className="mt-3 text-sm text-muted">{post.status === "processing" ? "TikTok is processing this video. The studio will check again without uploading it again." : post.status === "publishing" ? "Uploading to TikTok…" : saved ? `Posted to TikTok for: ${AUDIENCE[saved.privacy_level] ?? saved.privacy_level}.` : "Sent to TikTok."}</p>;
+  const changed = dirty || !content.data || JSON.stringify(saved?.content_snapshot) !== JSON.stringify(content.data);
   return (
     <section aria-label="TikTok posting settings" className="mt-4 rounded-lg border border-line bg-sunken/40 p-4">
       <h4 className="text-sm font-semibold">Post directly to TikTok</h4>
-      {saved && !editing ? (
+      {saved && content.isLoading && !editing ? <p className="mt-2 text-sm text-muted">Checking the confirmed TikTok content…</p> : saved && !editing && !changed ? (
         <div className="mt-2 text-sm">
           <p>✅ Confirmed: posts to <b>{saved.creator_nickname || "your TikTok"}</b>{saved.creator_username ? ` (@${saved.creator_username})` : ""} on{" "}
             <span className="tabular">{fmtDateTime(post.scheduled_at, tz)}</span>, visible to <b>{AUDIENCE[saved.privacy_level] ?? saved.privacy_level}</b>.</p>
@@ -41,27 +46,26 @@ export function TikTokPostPanel({ post, projectId, caption, locked, tz }: {
           <button className="btn-quiet mt-2" onClick={() => setEditing(true)}>Change TikTok settings</button>
         </div>
       ) : (
-        <Form post={post} projectId={projectId} caption={caption} saved={saved} onDone={() => setEditing(false)} />
+        <Form key={JSON.stringify(content.data ?? null)} post={post} caption={caption} dirty={dirty} saved={saved} onDone={() => setEditing(false)} />
       )}
     </section>
   );
 }
 
-function Form({ post, projectId, caption, saved, onDone }: {
-  post: { id: string }; projectId: string; caption: string; saved: TikTokPostSettings | null; onDone: () => void;
+function Form({ post, caption, dirty, saved, onDone }: {
+  post: { id: string }; caption: string; dirty: boolean; saved: TikTokPostSettings | null; onDone: () => void;
 }) {
   const qc = useQueryClient();
   const toast = useToast();
-  const creator = useQuery({ queryKey: ["tiktok-creator"], staleTime: 60_000, retry: false,
-    queryFn: () => callWorker<Creator>("/api/tiktok/creator", {}) });
-  const preview = useQuery({ queryKey: ["tiktok-preview", projectId], staleTime: 50 * 60_000,
+  const creator = useQuery({ queryKey: ["tiktok-creator", post.id], staleTime: 0, refetchOnMount: "always", retry: false, enabled: !dirty,
+    queryFn: () => callWorker<Creator>("/api/tiktok/creator", { post_id: post.id }) });
+  const previewKey = creator.data?.content_snapshot?.preview_key;
+  const previewVersion = JSON.stringify(creator.data?.content_snapshot ?? null);
+  const preview = useQuery({ queryKey: ["tiktok-preview", previewKey, previewVersion], staleTime: 50 * 60_000, enabled: Boolean(previewKey),
     retry: (n, e) => !(e instanceof MissingFileError) && n < 1,
-    queryFn: async () => {
-      const { data } = await supabase.from("content_projects").select("recipe").eq("id", projectId).single();
-      const key = (data?.recipe as { preview_key?: string } | null)?.preview_key;
-      return key ? signedUrl(key) : null;
-    } });
-  const [seconds, setSeconds] = useState<number | null>(null);
+    queryFn: () => signedUrl(previewKey!) });
+  const [duration, setDuration] = useState<{ key: string; seconds: number } | null>(null);
+  const seconds = duration && duration.key === previewVersion ? duration.seconds : null;
   // nothing is pre-selected: TikTok requires the owner to choose the audience and opt in to each interaction
   const [privacy, setPrivacy] = useState(saved?.privacy_level ?? "");
   const [comment, setComment] = useState(saved?.allow_comment ?? false);
@@ -73,9 +77,12 @@ function Form({ post, projectId, caption, saved, onDone }: {
   const [consent, setConsent] = useState(false);
 
   const confirm = useMutation({
-    mutationFn: () => callWorker("/api/tiktok/confirm", { post_id: post.id, seconds, choices: {
+    mutationFn: () => {
+      if (dirty) throw new Error("Save the edited post before confirming TikTok settings.");
+      return callWorker("/api/tiktok/confirm", { post_id: post.id, seconds, content_snapshot: creator.data?.content_snapshot, choices: {
       privacy_level: privacy, allow_comment: comment, allow_duet: duet, allow_stitch: stitch,
-      disclose, your_brand: yourBrand, branded_content: branded, consent } }),
+      disclose, your_brand: yourBrand, branded_content: branded, consent } });
+    },
     onSuccess: () => { qc.invalidateQueries(); toast("TikTok settings confirmed. It will post at its scheduled time."); onDone(); },
     onError: (e) => toast((e as Error).message, "bad"),
   });
@@ -85,6 +92,7 @@ function Form({ post, projectId, caption, saved, onDone }: {
     onError: (e) => toast((e as Error).message, "bad"),
   });
 
+  if (dirty && !creator.data) return <p role="status" className="mt-2 text-sm text-alert">Save the edited post below before confirming TikTok settings.</p>;
   if (creator.isLoading) return <p className="mt-2 text-sm text-muted">Checking your TikTok account…</p>;
   if (creator.error || !creator.data) return (
     <p className="mt-2 text-sm text-alert">{(creator.error as Error)?.message ?? "TikTok didn't answer."}{" "}
@@ -99,10 +107,13 @@ function Form({ post, projectId, caption, saved, onDone }: {
   const brandedPrivate = disclose && branded && privacy === "SELF_ONLY";
   const disclosureMissing = disclose && !yourBrand && !branded;
   const label = disclose ? (branded ? "Paid partnership" : yourBrand ? "Promotional content" : "") : "";
-  const blocked = c.can_post === false || !privacy || !consent || tooLong || brandedPrivate || disclosureMissing;
+  const snapshotCaption = c.content_snapshot ? makeCaption(c.content_snapshot.body, c.content_snapshot.hashtags) : null;
+  const blocked = dirty || snapshotCaption !== caption || !preview.data || !seconds || c.can_post === false || !privacy || !consent || tooLong || brandedPrivate || disclosureMissing;
 
   return (
     <div className="mt-2 space-y-3 text-sm">
+      {dirty && <p role="status" className="text-alert">Save the edited post below before confirming TikTok settings.</p>}
+      {saved && <p className="text-muted">Confirm again after changing the video or caption.</p>}
       <p className="flex items-center gap-2">
         {c.creator_avatar_url && <img src={c.creator_avatar_url} alt="" className="h-8 w-8 rounded-full" />}
         <span>Posting to <b>{c.creator_nickname || "your TikTok account"}</b>{c.creator_username ? ` (@${c.creator_username})` : ""}</span>
@@ -110,7 +121,7 @@ function Form({ post, projectId, caption, saved, onDone }: {
       {c.can_post === false && <p className="text-alert">TikTok says this account can't post more right now. Try again later.</p>}
 
       {preview.data
-        ? <video src={preview.data} controls preload="metadata" onLoadedMetadata={(e) => setSeconds(e.currentTarget.duration || null)}
+        ? <video key={previewVersion} src={preview.data} controls preload="metadata" onLoadedMetadata={(e) => setDuration({ key: previewVersion, seconds: e.currentTarget.duration || 0 })}
             className="aspect-[9/16] h-72 rounded-lg bg-ink" aria-label="Video that will be posted" />
         : <p className="text-muted">Preview not available.</p>}
       {tooLong && <p className="text-alert">This video is {Math.round(seconds!)} seconds; this account can post at most {c.max_video_post_duration_sec}.</p>}

@@ -570,7 +570,7 @@ function PostEditor({ v, tz }: { v: Variant; tz: string }) {
   });
   const dirty = title !== (v.title ?? "") || body !== (v.body ?? "") || tags.join("|") !== (v.tags ?? []).join("|")
     || hashtags.join("|") !== (v.hashtags ?? []).map((h) => h.replace(/^#/, "")).join("|");
-  const locked = v.status === "published";
+  const locked = v.status === "published" || (platform === "tiktok" && ["publishing", "processing"].includes(post?.status ?? ""));
   return (
     <li className="rounded-xl border border-line bg-surface p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -614,7 +614,7 @@ function PostEditor({ v, tz }: { v: Variant; tz: string }) {
         )}
       </>}
       {platform === "tiktok" && post && v.kind !== "text_post" && (
-        <TikTokPostPanel post={post} projectId={v.project_id} caption={caption(body, hashtags)} locked={locked} tz={tz} />
+        <TikTokPostPanel post={post} caption={caption(body, hashtags)} dirty={dirty || save.isPending || draft.conflict} locked={locked} tz={tz} />
       )}
       {draft.message && <p role="status" className="mt-2 text-sm text-muted">{draft.message} <button className="underline" onClick={draft.reset}>Discard edits</button></p>}
       <div className="mt-2 flex gap-2">

@@ -89,11 +89,12 @@ def test_without_confirmed_settings_it_is_an_inbox_draft(monkeypatch, video):
     assert [p for p, _ in c.calls] == ["post/publish/inbox/video/init/"] and r.method == "api_draft"
 
 
-def test_without_video_publish_permission_it_is_an_inbox_draft(monkeypatch, video):
+def test_confirmed_direct_post_without_permission_does_not_silently_change_to_inbox(monkeypatch, video):
     c = _Client()
     t = _tt(monkeypatch, c, ["user.info.basic", "video.upload"])
-    r = t.publish(None, {"id": "a"}, {"body": "Hello", "tiktok_post": CHOICES}, video, None, "tok")
-    assert r.method == "api_draft" and "creator_info" not in str(c.calls)
+    with pytest.raises(PermanentError, match="permission is missing"):
+        t.publish(None, {"id": "a"}, {"body": "Hello", "tiktok_post": CHOICES}, video, None, "tok")
+    assert not c.calls
 
 
 def test_private_post_says_so(monkeypatch, video):
@@ -107,3 +108,24 @@ def test_tiktok_failure_is_reported(monkeypatch, video):
     t = _tt(monkeypatch, _Client(status="FAILED"), ["video.publish"])
     with pytest.raises(PermanentError, match="could not publish"):
         t.publish(None, {"id": "a"}, {"body": "x", "tiktok_post": CHOICES}, video, None, "tok")
+
+
+def test_processing_is_pending_then_checked_without_second_upload(monkeypatch, video):
+    c = _Client(status="PROCESSING_UPLOAD")
+    t = _tt(monkeypatch, c, ["video.publish"]); t.polls = 1
+    tracked = []
+    r = t.publish(None, {"id": "a"}, {"body": "x", "tiktok_post": CHOICES, "_tiktok_started": tracked.append}, video, None, "tok")
+    assert r.pending and r.visibility == "unknown" and not r.url
+    c.status = "PUBLISH_COMPLETE"
+    r = t.check_upload(tracked[0], "tok")
+    assert not r.pending and r.visibility == "public"
+    assert sum(p == "post/publish/video/init/" for p, _ in c.calls) == 1
+
+
+def test_status_outage_after_upload_stays_pending(monkeypatch, video):
+    c = _Client(); original = c.post
+    def post(url, **kwargs):
+        return _R({}, 503) if "status/fetch" in url else original(url, **kwargs)
+    c.post = post
+    t = _tt(monkeypatch, c, ["video.publish"]); t.polls = 1
+    assert t.publish(None, {"id": "a"}, {"body": "x", "tiktok_post": CHOICES}, video, None, "tok").pending

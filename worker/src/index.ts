@@ -12,7 +12,7 @@ import { choosePage, disconnect, handleCallback, pageChoices, startUrl } from ".
 import { ensureWebhookSecret, removeValue, saveValue, SetupError, setupStatus, testValue, withSavedSecrets, isManaged } from "./setup";
 import { Env, Supabase } from "./supabase";
 import { stopAndClear } from "./stop";
-import { confirmPost, creatorInfo, TikTokError } from "./tiktok";
+import { confirmPost, contentSnapshot, creatorInfo, TikTokError } from "./tiktok";
 
 const WORKFLOWS: Record<string, string> = {
   queue: "queue.yml",
@@ -330,12 +330,13 @@ export async function handleFetch(req: Request, rawEnv: Env): Promise<Response> 
     }
   }
 
-  if ((url.pathname === "/api/tiktok/creator" || url.pathname === "/api/tiktok/confirm") && req.method === "POST") {
+  if (["/api/tiktok/creator", "/api/tiktok/confirm", "/api/tiktok/content"].includes(url.pathname) && req.method === "POST") {
     const owner = await ownerOrNull(env, req);
     if (!owner) return json(env, { error: "not authorised" }, 401);
     const body = (await req.json().catch(() => ({}))) as any;
     try {
-      if (url.pathname === "/api/tiktok/creator") return json(env, await creatorInfo(env, body.account_id));
+      if (url.pathname === "/api/tiktok/content") return json(env, await contentSnapshot(env, body.post_id));
+      if (url.pathname === "/api/tiktok/creator") return json(env, await creatorInfo(env, body.account_id, body.post_id));
       return json(env, await confirmPost(env, owner, body));
     } catch (e) {
       if (e instanceof TikTokError) return json(env, { error: e.message }, 400);
@@ -454,9 +455,10 @@ export async function handleCron(env: Env): Promise<Record<string, boolean>> {
   const out: Record<string, boolean> = {};
   const soon = new Date(Date.now() + 10 * 60_000).toISOString();
   const due = await db.select("scheduled_posts", `select=id&status=eq.scheduled&scheduled_at=lte.${soon}&limit=1`);
+  const processing = await db.select("scheduled_posts", "select=id&status=in.(processing,publishing)&tiktok_upload=not.is.null&limit=1");
   const paused = await db.setting<boolean>("paused");
   const last = (await db.setting<string>("last_publish_dispatch")) ?? "1970-01-01T00:00:00Z";
-  if (due.length && !paused && Date.now() - Date.parse(last) > 12 * 60_000) {
+  if (((due.length && !paused) || processing.length) && Date.now() - Date.parse(last) > 12 * 60_000) {
     out.publish = await dispatch(env, "publish");
     if (out.publish) await db.putSetting("last_publish_dispatch", new Date().toISOString());
   }

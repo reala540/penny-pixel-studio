@@ -20,6 +20,16 @@ export type Choices = {
   disclose?: boolean; your_brand?: boolean; branded_content?: boolean; consent?: boolean;
 };
 
+export type ContentSnapshot = { variant_id: string; account_id: string; account_external_id: string | null;
+  script_version_id: string | null; title: string; body: string; hashtags: string[]; render: unknown; preview_key: string | null };
+
+export async function contentSnapshot(env: Env, postId?: string): Promise<ContentSnapshot> {
+  if (!postId) throw new TikTokError("Which post? (post_id missing)");
+  const snapshot = await new Supabase(env).rpc<ContentSnapshot | null>("tiktok_content_snapshot", { p_post_id: postId });
+  if (!snapshot) throw new TikTokError("That isn't a TikTok post.");
+  return snapshot;
+}
+
 /** Why these choices can't be saved, or null. Mirrors TikTok's rules: no default audience, branded content can't be
  * private, a disclosure must say what it is, switches the creator turned off stay off, and the owner must agree. */
 export function choiceProblem(c: Choices, creator: Creator, seconds?: number | null): string | null {
@@ -67,11 +77,15 @@ export async function accessToken(env: Env, accountId: string): Promise<string> 
   return fresh.access_token;
 }
 
-export async function creatorInfo(env: Env, accountId?: string): Promise<Creator & { account_id: string; direct_post: boolean }> {
+export async function creatorInfo(env: Env, accountId?: string, postId?: string): Promise<Creator & { account_id: string; direct_post: boolean; content_snapshot?: ContentSnapshot }> {
   const db = new Supabase(env);
+  const snapshot = postId ? await contentSnapshot(env, postId) : null;
+  if (snapshot) accountId = snapshot.account_id;
   const acc = await tiktokAccount(db, accountId);
   const conn = await db.select<{ scopes: string[] | null }>("oauth_connections", `social_account_id=eq.${acc.id}&select=scopes`);
   const direct = (conn[0]?.scopes ?? []).includes("video.publish");
+  if (!direct) return { account_id: acc.id, direct_post: false, privacy_level_options: [],
+    comment_disabled: true, duet_disabled: true, stitch_disabled: true, content_snapshot: snapshot ?? undefined };
   const token = await accessToken(env, acc.id);
   const r = await fetch("https://open.tiktokapis.com/v2/post/publish/creator_info/query/", {
     method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json; charset=UTF-8" },
@@ -86,11 +100,11 @@ export async function creatorInfo(env: Env, accountId?: string): Promise<Creator
   return { account_id: acc.id, direct_post: direct, creator_avatar_url: d.creator_avatar_url, creator_username: d.creator_username,
     creator_nickname: d.creator_nickname, privacy_level_options: d.privacy_level_options ?? [], comment_disabled: Boolean(d.comment_disabled),
     duet_disabled: Boolean(d.duet_disabled), stitch_disabled: Boolean(d.stitch_disabled),
-    max_video_post_duration_sec: d.max_video_post_duration_sec, can_post: d.can_post !== false };
+    max_video_post_duration_sec: d.max_video_post_duration_sec, can_post: d.can_post !== false, content_snapshot: snapshot ?? undefined };
 }
 
 /** Save one TikTok post's choices (or clear them with clear: true, which sends that post as an inbox draft again). */
-export async function confirmPost(env: Env, owner: string, body: { post_id?: string; choices?: Choices; seconds?: number | null; clear?: boolean }):
+export async function confirmPost(env: Env, owner: string, body: { post_id?: string; choices?: Choices; seconds?: number | null; clear?: boolean; content_snapshot?: ContentSnapshot }):
     Promise<{ ok: true; tiktok_post: unknown }> {
   const db = new Supabase(env);
   if (!body.post_id) throw new TikTokError("Which post? (post_id missing)");
@@ -98,13 +112,15 @@ export async function confirmPost(env: Env, owner: string, body: { post_id?: str
     "scheduled_posts", `id=eq.${encodeURIComponent(body.post_id)}&select=id,status,social_account_id,social_accounts(platform)`);
   const post = rows[0];
   if (!post || post.social_accounts?.platform !== "tiktok") throw new TikTokError("That isn't a TikTok post.");
-  if (["published", "publishing", "cancelled"].includes(post.status)) throw new TikTokError("This post has already gone out or was cancelled; its settings can't change.");
+  if (["published", "publishing", "processing", "cancelled"].includes(post.status)) throw new TikTokError("This post is being published, has gone out or was cancelled; its settings can't change.");
   if (body.clear) {
-    await db.update("scheduled_posts", `id=eq.${post.id}`, { tiktok_post: null });
+    await db.rpc("confirm_tiktok_post", { p_post_id: post.id, p_settings: null, p_expected: null });
     await db.audit("tiktok_post_settings_cleared", { post: post.id }, "owner");
     return { ok: true, tiktok_post: null };
   }
   const c = body.choices ?? {};
+  if (!body.content_snapshot) throw new TikTokError("Reopen TikTok settings to load the saved video and caption before confirming.");
+  if (!Number.isFinite(body.seconds) || Number(body.seconds) <= 0) throw new TikTokError("Wait for the video preview to load before confirming.");
   const creator = await creatorInfo(env, post.social_account_id);
   if (!creator.direct_post) throw new TikTokError("TikTok Direct Post isn't allowed for this connection yet. Switch Direct Post on in your TikTok app (with video.publish), then connect TikTok again on the Setup page.");
   const problem = choiceProblem(c, creator, body.seconds);
@@ -115,7 +131,14 @@ export async function confirmPost(env: Env, owner: string, body: { post_id?: str
     consent: true, confirmed_at: new Date().toISOString(), confirmed_by: owner,
     creator_username: creator.creator_username ?? null, creator_nickname: creator.creator_nickname ?? null,
   };
-  await db.update("scheduled_posts", `id=eq.${post.id}`, { tiktok_post: saved });
+  let confirmed;
+  try {
+    confirmed = await db.rpc("confirm_tiktok_post", { p_post_id: post.id, p_settings: saved, p_expected: body.content_snapshot });
+  } catch (e) {
+    if ((e as Error).message.includes("video, caption or account changed"))
+      throw new TikTokError("The video, caption or account changed. Save the post and reopen TikTok settings before confirming.");
+    throw e;
+  }
   await db.audit("tiktok_post_settings_confirmed", { post: post.id, privacy_level: saved.privacy_level, disclose: saved.disclose }, "owner");
-  return { ok: true, tiktok_post: saved };
+  return { ok: true, tiktok_post: confirmed };
 }

@@ -27,6 +27,7 @@ const STATUS_TEXT: Record<string, string> = {
   pending_approval: "Waiting for approval",
   scheduled: "Scheduled",
   publishing: "Posting now",
+  processing: "Processing on TikTok",
   published: "Published",
   needs_manual: "Post it yourself",
   needs_review: "Check on the platform",
