@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { Link, NavLink, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import AutoPostToggle, { AutoFixAttempts, AutoReplaceSettings, AutoReviewLog } from "../components/AutoPostToggle";
+import PostWithoutChecks from "../components/PostWithoutChecks";
 import ClearButton from "../components/ClearButton";
 import PostingSchedule from "../components/PostingSchedule";
 import ThemeControl from "../components/ThemeControl";
@@ -209,6 +210,9 @@ function Automation() {
       <div className="mb-6 flex max-w-3xl flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-surface p-4">
         <p className="text-sm">Publishing pause: stops all posting on every account. Making content keeps working.</p>
         <PauseButton />
+      </div>
+      <div className="mb-6 max-w-3xl rounded-xl border border-line bg-surface p-4">
+        <PostWithoutChecks />
       </div>
       <p className="mb-6 max-w-3xl text-sm text-muted">To run research, the weekly batch or due posts now, use <Link to="/activity#quick-actions" className="text-pixel underline">Activity → Quick actions</Link>.</p>
       <div className="mb-6 max-w-3xl rounded-xl border border-line bg-surface p-4">

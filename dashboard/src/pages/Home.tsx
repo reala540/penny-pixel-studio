@@ -6,6 +6,7 @@ import { Link } from "react-router-dom";
 import ClearButton from "../components/ClearButton";
 import DraftList from "../components/Drafts";
 import { AutoPostBadge } from "../components/AutoPostToggle";
+import PostWithoutChecks from "../components/PostWithoutChecks";
 import Rundown from "../components/Rundown";
 import { Confirm, ErrorNote, HostTag, Loading, NotConfirmed, PageHeader, StatusBadge, useToast } from "../components/ui";
 import { must, useAccounts, useSaveSetting, useSetting, useTimezone } from "../lib/api";
@@ -50,7 +51,10 @@ export default function Home() {
     <>
       <PageHeader title="Home" intro={posts.isSuccess ? summaryLine(counts) : posts.isError ? "Couldn't load this week's posts." : "Loading this week…"}
         actions={<CreateButton canCreate={ready.canCreate} reason={ready.blockers[0]?.text} />} />
-      <div className="-mt-3 mb-6 max-w-md"><AutoPostBadge /></div>
+      <div className="-mt-3 mb-6 flex flex-wrap items-center gap-4">
+        <div className="max-w-md"><AutoPostBadge /></div>
+        <div className="rounded-lg border border-line bg-surface px-3 py-2"><PostWithoutChecks compact /></div>
+      </div>
       <NeedsYou readiness={ready} />
       <div className="mt-8"><DraftList title="Unfinished" compact /></div>
       <div className="mt-8 grid grid-cols-1 gap-8 lg:grid-cols-2">
