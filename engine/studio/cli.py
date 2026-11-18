@@ -144,6 +144,11 @@ def cmd_maintain(a):
         from . import notify
         notify.retry_pending(conn)
         out = {"cleanup": maintenance.cleanup(conn, default_storage()), "expired": maintenance.expire_stale(conn)}
+        try:  # the owner's Full auto-posting switch: daily catch-up (does nothing while it's off)
+            from .review import owner_auto
+            out["full_auto"] = owner_auto.approve_ready(conn)
+        except Exception as exc:
+            out["full_auto"] = {"error": str(exc)[:200]}
         if config.runtime().token_key:
             out["tokens"] = oauth.check_health(conn)
             for t in out["tokens"]:

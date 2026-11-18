@@ -558,8 +558,10 @@ def _review_project(conn, router, project_id, now=None):
 
 
 def run(conn, router: Router, project_ids: list | None = None) -> list[dict]:
-    """Review every finished, unreviewed package. Does nothing while the mode is OFF."""
-    if not mode_on(conn):
+    """Review every finished, unreviewed package. Does nothing while the mode is OFF, or while the owner's Full
+    auto-posting switch approves everything (its repairs would otherwise withdraw those approvals)."""
+    from .owner_auto import full_auto
+    if not mode_on(conn) or full_auto(conn):
         return []
     rows = db.all_(conn, """
         select p.id from content_projects p
