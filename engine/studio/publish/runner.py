@@ -371,6 +371,11 @@ def publish_post(conn, storage, post: dict, adapters: dict | None = None, now: d
 def run_due(conn, storage, adapters=None, now: datetime | None = None, router=None) -> dict:
     now = now or datetime.now(timezone.utc)
     out: dict[str, int] = {}
+    try:  # the owner's Full auto-posting switch (does nothing while it's off; never stops a publishing run)
+        from ..review import owner_auto
+        owner_auto.approve_ready(conn, now)
+    except Exception:
+        pass
     # release locks from crashed runs, but never auto-retry 'publishing' rows that may have gone out
     db.run(conn, """update scheduled_posts set status='needs_review',
                     last_error='Runner stopped mid-publish; check the platform before retrying'

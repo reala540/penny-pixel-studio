@@ -336,3 +336,60 @@ def test_ambiguous_upload_goes_to_review_not_retry(produced):
     yt = db.all_(conn, """select sp.status from scheduled_posts sp join content_variants v on v.id=sp.variant_id
                           join social_accounts a on a.id=sp.social_account_id where a.platform='youtube'""")
     assert yt and all(p["status"] == "needs_review" for p in yt)
+
+
+def _full_auto(conn, on: bool):
+    db.run(conn, "insert into settings (key, value) values ('publish_without_checks', %s) on conflict (key) do update set value=excluded.value",
+           (db.j({"on": on, "auto_approve": on}),))
+
+
+def test_full_auto_posting_switch_approves_everything_and_off_stops_it(synced, monkeypatch, silent_tts):
+    from studio.review import owner_auto
+
+    _produce_week(synced, monkeypatch)
+    # OFF (the default, or checks-off without auto_approve): nothing is approved for the owner
+    assert owner_auto.approve_ready(synced) == {}
+    db.run(synced, "insert into settings (key, value) values ('publish_without_checks', %s) on conflict (key) do update set value=excluded.value",
+           (db.j({"on": True}),))
+    assert owner_auto.approve_ready(synced) == {}
+    assert all(p["status"] == "pending_approval" for p in db.all_(synced, "select status from scheduled_posts"))
+    # a queued automatic rewrite would withdraw the approval: it's cancelled, a running job makes the package wait
+    head = db.one(synced, "select id from content_projects where format='long' order by created_at limit 1")["id"]
+    db.run(synced, """insert into generation_jobs (job_type, project_id, idempotency_key, status, requested_by, input)
+                      values ('regenerate_script', %s, 'autofix:test', 'queued', 'owner', '{}')""", (head,))
+    _full_auto(synced, True)
+    out = owner_auto.approve_ready(synced)
+    assert len(out["approved"]) == 2
+    projects = db.all_(synced, "select status, approved_script_version_id = current_script_version_id ok from content_projects")
+    assert projects and all(p["status"] == "approved" and p["ok"] for p in projects)
+    assert db.one(synced, "select status from generation_jobs where idempotency_key='autofix:test'")["status"] == "cancelled"
+    posts = db.all_(synced, "select status from scheduled_posts")
+    assert posts and all(p["status"] == "scheduled" for p in posts)
+    notes = {a["notes"] for a in db.all_(synced, "select notes from approvals where decision='approved'")}
+    assert notes == {owner_auto.NOTE}
+    assert db.one(synced, "select count(*) n from audit_logs where action='full_auto_posting'")["n"] == 1
+    # posts a last-minute check stopped earlier are restarted, never ones already sent
+    post = db.one(synced, "select id from scheduled_posts limit 1")["id"]
+    db.run(synced, "update scheduled_posts set status='blocked', last_error='content expired' where id=%s", (post,))
+    assert owner_auto.approve_ready(synced)["posts_restarted"] == 1
+    assert db.one(synced, "select status from scheduled_posts where id=%s", (post,))["status"] == "scheduled"
+    # Auto Review & Post stands aside while the switch is on (its repairs would withdraw the approvals)
+    from studio.review import auto
+    db.run(synced, "insert into settings (key, value) values ('auto_review_post', 'true') on conflict (key) do update set value=excluded.value")
+    assert auto.run(synced, None) == []
+    # OFF again: nothing more is approved automatically, and the last-minute checks apply
+    _full_auto(synced, False)
+    assert owner_auto.approve_ready(synced) == {} and runner.checks_off(synced) is False
+
+
+def test_full_auto_posting_waits_for_a_package_still_being_made(synced, monkeypatch, silent_tts):
+    from studio.review import owner_auto
+
+    _produce_week(synced, monkeypatch)
+    heads = db.all_(synced, "select id from content_projects where format='long' order by created_at")
+    db.run(synced, """insert into generation_jobs (job_type, project_id, idempotency_key, status, requested_by, input)
+                      values ('render_preview', %s, 'busy:test', 'running', 'owner', '{}')""", (heads[0]["id"],))
+    _full_auto(synced, True)
+    out = owner_auto.approve_ready(synced)
+    assert out["approved"] == [str(heads[1]["id"])]
+    assert db.one(synced, "select status from content_projects where id=%s", (heads[0]["id"],))["status"] == "ready_for_review"

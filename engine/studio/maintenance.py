@@ -55,6 +55,7 @@ def process_owner_jobs(conn, router: Router, storage, limit: int = 10, rounds: i
         done += batch
         if not batch:
             break
+    _full_auto(conn, done)
     from .review import replace
 
     try:  # held packages: reminders, and safer replacements when the owner hasn't decided in time
@@ -65,6 +66,18 @@ def process_owner_jobs(conn, router: Router, storage, limit: int = 10, rounds: i
         notify.send(conn, "job_failed", "Automatic replacement couldn't run", str(exc)[:300],
                     link=links.needs_you(), dedupe_key=f"replacefail:{datetime.now(timezone.utc):%Y%m%d%H}")
     return done
+
+
+def _full_auto(conn, done: list) -> None:
+    """The owner's Full auto-posting switch: approve finished packages and restart held posts (never stops a run)."""
+    from .review import owner_auto
+    try:
+        out = owner_auto.approve_ready(conn)
+        if out.get("approved") or out.get("posts_restarted"):
+            done.append({"type": "full_auto_posting", "status": "completed", **out})
+    except Exception as exc:
+        notify.send(conn, "job_failed", "Full auto-posting couldn't approve packages", str(exc)[:300],
+                    link=links.needs_you(), dedupe_key=f"fullauto:{datetime.now(timezone.utc):%Y%m%d%H}")
 
 
 def _review_completed_job(conn, router, job):
